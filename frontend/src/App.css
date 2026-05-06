@@ -1,0 +1,83 @@
+/* ===== GLOBAL ===== */
+* { margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
+
+/* ===== NAVBAR ===== */
+.navbar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #1a1a2e; padding: 0 30px; height: 60px; position: sticky; top: 0; z-index: 100;
+}
+.navbar-logo { color: white; font-size: 1.2rem; font-weight: bold; letter-spacing: 1px; }
+.navbar-links { display: flex; gap: 8px; align-items: center; }
+.nav-btn {
+  background: none; border: none; color: #ccc; padding: 8px 16px;
+  cursor: pointer; border-radius: 6px; font-size: 0.95rem; transition: all 0.2s;
+}
+.nav-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+.nav-btn.activo { background: #646cff; color: white; }
+.nav-btn.cerrar-sesion { color: #ff6b6b; border: 1px solid #ff6b6b; margin-left: 10px; }
+.nav-btn.cerrar-sesion:hover { background: #ff6b6b; color: white; }
+
+/* ===== CONTENIDO ===== */
+.contenido-principal { max-width: 900px; margin: 40px auto; padding: 0 20px; }
+
+/* ===== LOGIN ===== */
+.login-wrapper { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+.login-card {
+  background: white; padding: 40px; border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center;
+}
+.login-icono { font-size: 3rem; margin-bottom: 10px; }
+.login-card h2 { margin-bottom: 20px; color: #666; }
+.login-form { display: flex; flex-direction: column; gap: 12px; }
+.login-form input { padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
+.btn-toggle { margin-top: 15px; background: none; border: none; color: #646cff; cursor: pointer; text-decoration: underline; }
+
+/* ===== HOME ===== */
+.home-wrapper { text-align: center; padding: 20px 0; }
+.home-bienvenida { font-size: 2rem; margin-bottom: 10px; color: #646cff; }
+.nombre-usuario { color: #646cff; }
+.home-subtitulo { color: #666; margin-bottom: 40px; font-size: 1.1rem; }
+.home-tarjetas { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+.tarjeta {
+  background: white; border-radius: 16px; padding: 30px; width: 280px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.08); cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s; text-align: left;
+}
+.tarjeta:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.12); }
+.tarjeta-icono { font-size: 2.5rem; margin-bottom: 15px; }
+.tarjeta h2 { font-size: 1.1rem; margin-bottom: 10px; color: #666;}
+.tarjeta p { color: #666; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px; }
+.tarjeta-btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; color: white; }
+.tarjeta-btn.azul { background: #646cff; }
+.tarjeta-btn.verde { background: #4caf50; }
+
+/* ===== SECCIONES ===== */
+.seccion-wrapper { background: white; border-radius: 16px; padding: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+.seccion-wrapper h2 { margin-bottom: 8px; color: #666;}
+.seccion-subtitulo { color: #666; margin-bottom: 24px; }
+.formulario { display: flex; flex-direction: column; gap: 10px; max-width: 450px; }
+.formulario label { font-size: 0.9rem; font-weight: 600; color: #444; }
+.formulario input, .formulario select { padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
+
+/* ===== BOTONES ===== */
+.btn-primary { padding: 10px 20px; border: none; border-radius: 8px; background: #646cff; color: white; font-size: 1rem; cursor: pointer; margin-top: 8px; }
+.btn-primary.verde { background: #4caf50; }
+.btn-ejecutar { padding: 5px 10px; border: none; border-radius: 6px; background: #646cff; color: white; cursor: pointer; font-size: 0.85rem; }
+.btn-borrar { padding: 5px 10px; border: none; border-radius: 6px; background: #e53935; color: white; cursor: pointer; font-size: 0.85rem; margin-left: 6px; }
+
+/* ===== TABLA ===== */
+.tabla-peticiones { width: 100%; border-collapse: collapse; margin-top: 16px; }
+.tabla-peticiones th { background: #f0f4f8; padding: 12px; text-align: left; font-size: 0.9rem; border-bottom: 2px solid #ddd; }
+.tabla-peticiones td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+.acciones-celda { white-space: nowrap; }
+.tabla-vacia { text-align: center; color: #999; padding: 20px !important; }
+.badge { padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; }
+.badge.pendiente { background: #fff3e0; color: #e65100; }
+.badge.completado { background: #e8f5e9; color: #2e7d32; }
+.badge.error { background: #ffebee; color: #c62828; }
+.badge.procesando { background: #e3f2fd; color: #1565c0; }
+
+/* ===== MENSAJES ===== */
+.exito-msg { color: #2e7d32; margin-top: 12px; font-size: 0.95rem; }
+.error-msg { color: #c62828; margin-top: 12px; font-size: 0.95rem; }
