@@ -5,7 +5,10 @@ from app.database import engine, SessionLocal
 from app import models, schemas
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from ejecutor import ejecutar_algoritmo
+from app.ejecutor import ejecutar_algoritmo
+from app.workflow_executor import WorkflowExecutor
+from datetime import datetime
+import time
 
 # Creamos las tablas en la base de datos (si no existen)
 models.Base.metadata.create_all(bind=engine)
@@ -244,3 +247,167 @@ def borrar_peticion(peticion_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"mensaje": f"Petición {peticion_id} eliminada correctamente"}
+
+
+# --- ENDPOINTS DE WORKFLOWS (KNIME) ---
+
+@app.post("/workflows", response_model=schemas.WorkflowRespuesta)
+def crear_workflow(workflow: schemas.WorkflowCreate, usuario_id: int = Form(...), db: Session = Depends(get_db)):
+    """
+    Crea un nuevo workflow vacío o con grafo inicial.
+    """
+    nuevo_workflow = models.Workflow(
+        nombre=workflow.nombre,
+        descripcion=workflow.descripcion,
+        grafo_json=workflow.grafo_json or {"nodes": [], "edges": []},
+        usuario_id=usuario_id,
+        estado="borrador"
+    )
+    db.add(nuevo_workflow)
+    db.commit()
+    db.refresh(nuevo_workflow)
+    return nuevo_workflow
+
+
+@app.get("/workflows/usuario/{usuario_id}")
+def listar_workflows_usuario(usuario_id: int, db: Session = Depends(get_db)):
+    """
+    Lista todos los workflows de un usuario.
+    """
+    workflows = db.query(models.Workflow).filter(models.Workflow.usuario_id == usuario_id).all()
+    return workflows
+
+
+@app.get("/workflows/{workflow_id}", response_model=schemas.WorkflowRespuesta)
+def obtener_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    """
+    Obtiene un workflow por su ID.
+    """
+    workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow no encontrado")
+    
+    return workflow
+
+
+@app.put("/workflows/{workflow_id}", response_model=schemas.WorkflowRespuesta)
+def actualizar_workflow(workflow_id: int, workflow_update: schemas.WorkflowCreate, db: Session = Depends(get_db)):
+    """
+    Actualiza la estructura (grafo) de un workflow existente.
+    """
+    workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow no encontrado")
+    
+    workflow.nombre = workflow_update.nombre
+    workflow.descripcion = workflow_update.descripcion
+    workflow.grafo_json = workflow_update.grafo_json
+    workflow.fecha_actualizacion = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(workflow)
+    return workflow
+
+
+@app.delete("/workflows/{workflow_id}")
+def borrar_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    """
+    Borra un workflow y todas sus ejecuciones.
+    """
+    workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow no encontrado")
+    
+    # Borrar ejecuciones asociadas
+    db.query(models.WorkflowExecution).filter(models.WorkflowExecution.workflow_id == workflow_id).delete()
+    db.delete(workflow)
+    db.commit()
+    
+    return {"mensaje": f"Workflow {workflow_id} eliminado correctamente"}
+
+
+@app.post("/workflows/{workflow_id}/ejecutar")
+def ejecutar_workflow(workflow_id: int, usuario_id: int = Form(...), db: Session = Depends(get_db)):
+    """
+    Ejecuta un workflow completo de forma síncrona.
+    Retorna los resultados de cada nodo.
+    """
+    # Obtener workflow
+    workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow no encontrado")
+    
+    # Crear registro de ejecución
+    inicio = datetime.utcnow()
+    ejecucion = models.WorkflowExecution(
+        workflow_id=workflow_id,
+        usuario_id=usuario_id,
+        estado="procesando"
+    )
+    db.add(ejecucion)
+    db.commit()
+    db.refresh(ejecucion)
+    
+    try:
+        # Ejecutar workflow
+        executor = WorkflowExecutor(workflow.grafo_json, usuario_id)
+        resultado_ejecucion = executor.ejecutar()
+        
+        # Actualizar estado de workflow
+        workflow.estado = resultado_ejecucion.get("estado", "completado")
+        
+        # Guardar resultados de ejecución
+        ejecucion.estado = resultado_ejecucion.get("estado", "completado")
+        ejecucion.resultados_json = resultado_ejecucion
+        ejecucion.duracion_segundos = int(resultado_ejecucion.get("duracion_segundos", 0))
+        
+        db.commit()
+        db.refresh(ejecucion)
+        
+        return {
+            "exito": resultado_ejecucion.get("exito"),
+            "ejecucion_id": ejecucion.id,
+            "estado": resultado_ejecucion.get("estado"),
+            "resultados": resultado_ejecucion.get("resultados"),
+            "errores": resultado_ejecucion.get("errores"),
+            "duracion_segundos": resultado_ejecucion.get("duracion_segundos")
+        }
+    
+    except Exception as e:
+        # Registrar error
+        ejecucion.estado = "error"
+        ejecucion.resultados_json = {"error": str(e)}
+        workflow.estado = "fallido"
+        db.commit()
+        
+        raise HTTPException(status_code=500, detail=f"Error ejecutando workflow: {str(e)}")
+
+
+@app.get("/workflows/{workflow_id}/ejecuciones")
+def obtener_ejecuciones_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    """
+    Obtiene el historial de ejecuciones de un workflow.
+    """
+    ejecuciones = db.query(models.WorkflowExecution).filter(
+        models.WorkflowExecution.workflow_id == workflow_id
+    ).all()
+    return ejecuciones
+
+
+@app.get("/workflows/ejecuciones/{ejecucion_id}", response_model=schemas.WorkflowExecutionRespuesta)
+def obtener_ejecucion(ejecucion_id: int, db: Session = Depends(get_db)):
+    """
+    Obtiene los detalles de una ejecución específica.
+    """
+    ejecucion = db.query(models.WorkflowExecution).filter(
+        models.WorkflowExecution.id == ejecucion_id
+    ).first()
+    
+    if not ejecucion:
+        raise HTTPException(status_code=404, detail="Ejecución no encontrada")
+    
+    return ejecucion

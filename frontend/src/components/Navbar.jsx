@@ -3,6 +3,7 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, cerrarS
     { id: 'home',       label: 'Home' },
     { id: 'algoritmos', label: 'Algoritmos' },
     { id: 'peticiones', label: 'Realizar Petición' },
+    { id: 'knime',      label: 'KNIME Builder' },
   ];
 
   return (

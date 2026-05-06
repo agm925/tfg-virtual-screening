@@ -19,6 +19,12 @@ class EstadoPeticion(enum.Enum):
     resuelto = "resuelto"
     fallido = "fallido"
 
+class EstadoWorkflow(enum.Enum):
+    borrador = "borrador"
+    procesando = "procesando"
+    completado = "completado"
+    fallido = "fallido"
+
 # --- TABLA 1: USUARIOS ---
 class Usuario(Base):
     __tablename__ = "usuarios"
@@ -33,6 +39,8 @@ class Usuario(Base):
     # Relaciones (Un usuario puede tener muchos algoritmos y muchas peticiones)
     algoritmos = relationship("Algoritmo", back_populates="autor")
     peticiones = relationship("Peticion", back_populates="usuario")
+    workflows = relationship("Workflow", back_populates="usuario")
+    workflow_executions = relationship("WorkflowExecution", back_populates="usuario")
 
 # --- TABLA 2: ALGORITMOS (Scripts) ---
 class Algoritmo(Base):
@@ -66,4 +74,38 @@ class Peticion(Base):
     usuario = relationship("Usuario", back_populates="peticiones")
     algoritmo = relationship("Algoritmo", back_populates="peticiones")
 
+
+# --- TABLA 4: WORKFLOWS (Flujos de trabajo visual tipo KNIME) ---
+class Workflow(Base):
+    __tablename__ = "workflows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, nullable=False)
+    descripcion = Column(String, nullable=True)
+    grafo_json = Column(JSON, nullable=False)  # { nodes: [...], edges: [...] }
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    estado = Column(String, default="borrador")  # borrador, procesando, completado, fallido
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relaciones
+    usuario = relationship("Usuario", back_populates="workflows")
+    ejecuciones = relationship("WorkflowExecution", back_populates="workflow")
+
+
+# --- TABLA 5: WORKFLOW_EXECUTIONS (Registro de ejecuciones de workflows) ---
+class WorkflowExecution(Base):
+    __tablename__ = "workflow_executions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(Integer, ForeignKey("workflows.id"))
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    estado = Column(String, default="pendiente")  # pendiente, procesando, completado, error
+    resultados_json = Column(JSON, nullable=True)  # { nodo_id: { resultado, logs, error } }
+    fecha_ejecucion = Column(DateTime, default=datetime.utcnow)
+    duracion_segundos = Column(Integer, nullable=True)
+
+    # Relaciones
+    workflow = relationship("Workflow", back_populates="ejecuciones")
+    usuario = relationship("Usuario", back_populates="workflow_executions")
 

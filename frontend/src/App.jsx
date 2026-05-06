@@ -4,6 +4,7 @@ import Login from './components/Login'
 import Home from './components/Home'
 import Algoritmos from './components/Algoritmos'
 import RealizarPeticion from './components/RealizarPeticion'
+import KnimeBuilder from './components/KnimeBuilder'
 import './App.css'
 
 function App() {
@@ -40,6 +41,7 @@ function App() {
         {paginaActual === 'home'      && <Home usuario={usuario} setPaginaActual={setPaginaActual} />}
         {paginaActual === 'algoritmos' && <Algoritmos usuario={usuario} />}
         {paginaActual === 'peticiones' && <RealizarPeticion usuario={usuario} />}
+        {paginaActual === 'knime' && <KnimeBuilder usuario={usuario} />}
       </main>
     </div>
   );

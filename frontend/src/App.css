@@ -19,7 +19,12 @@ body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
 .nav-btn.cerrar-sesion:hover { background: #ff6b6b; color: white; }
 
 /* ===== CONTENIDO ===== */
-.contenido-principal { max-width: 900px; margin: 40px auto; padding: 0 20px; }
+.contenido-principal { 
+  width: 100%; 
+  margin: 0; 
+  padding: 0;
+  display: flex;
+}
 
 /* ===== LOGIN ===== */
 .login-wrapper { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
@@ -34,11 +39,11 @@ body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
 .btn-toggle { margin-top: 15px; background: none; border: none; color: #646cff; cursor: pointer; text-decoration: underline; }
 
 /* ===== HOME ===== */
-.home-wrapper { text-align: center; padding: 20px 0; }
+.home-wrapper { text-align: center; padding: 40px 20px; width: 100%; }
 .home-bienvenida { font-size: 2rem; margin-bottom: 10px; color: #646cff; }
 .nombre-usuario { color: #646cff; }
 .home-subtitulo { color: #666; margin-bottom: 40px; font-size: 1.1rem; }
-.home-tarjetas { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+.home-tarjetas { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; width: 100%; padding: 0 20px; }
 .tarjeta {
   background: white; border-radius: 16px; padding: 30px; width: 280px;
   box-shadow: 0 4px 15px rgba(0,0,0,0.08); cursor: pointer;
@@ -53,7 +58,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
 .tarjeta-btn.verde { background: #4caf50; }
 
 /* ===== SECCIONES ===== */
-.seccion-wrapper { background: white; border-radius: 16px; padding: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+.seccion-wrapper { background: white; border-radius: 0; padding: 30px; box-shadow: none; width: 100%; height: 100%; }
 .seccion-wrapper h2 { margin-bottom: 8px; color: #666;}
 .seccion-subtitulo { color: #666; margin-bottom: 24px; }
 .formulario { display: flex; flex-direction: column; gap: 10px; max-width: 450px; }

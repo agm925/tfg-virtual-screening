@@ -1,0 +1,192 @@
+/* Estilos para nodos KNIME */
+
+.nodo {
+  background: white;
+  border-radius: 8px;
+  border: 2px solid #ddd;
+  padding: 0;
+  min-width: 180px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  font-size: 12px;
+}
+
+.nodo:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+.nodo.selected {
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+/* Header del nodo */
+.nodo-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 10px 12px;
+  border-radius: 6px 6px 0 0;
+  font-weight: 600;
+  text-align: center;
+  font-size: 13px;
+}
+
+/* Body del nodo */
+.nodo-body {
+  padding: 12px;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nodo-body p {
+  margin: 0;
+  font-size: 12px;
+  color: #666;
+}
+
+/* Inputs y selects */
+.file-input,
+.select-input,
+.select-algo {
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  background: white;
+  cursor: pointer;
+}
+
+.file-input:focus,
+.select-input:focus,
+.select-algo:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.file-name {
+  margin: 0;
+  padding: 6px;
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  border-radius: 4px;
+  color: #155724;
+  font-size: 11px;
+}
+
+.upload-btn {
+  padding: 6px 10px;
+  background: #27ae60;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.upload-btn:hover:not(:disabled) {
+  background: #229954;
+}
+
+.upload-btn:disabled {
+  background: #bdc3c7;
+  cursor: not-allowed;
+}
+
+.algo-desc {
+  margin: 0;
+  font-size: 11px;
+  color: #7f8c8d;
+  font-style: italic;
+}
+
+/* Tipos específicos de nodos */
+.upload-nodo .nodo-header {
+  background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+}
+
+.algoritmo-nodo .nodo-header {
+  background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+}
+
+.comparacion-nodo .nodo-header {
+  background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+}
+
+.ejecutar-nodo .nodo-header {
+  background: linear-gradient(135deg, #1abc9c 0%, #16a085 100%);
+}
+
+.descargar-nodo .nodo-header {
+  background: linear-gradient(135deg, #34495e 0%, #2c3e50 100%);
+}
+
+.selectdb-nodo .nodo-header {
+  background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+}
+
+.selectmol-nodo .nodo-header {
+  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+}
+
+/* Handles (puertos de conexión) */
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #667eea;
+  border: 2px solid white;
+}
+
+.react-flow__handle:hover {
+  background: #764ba2;
+}
+
+.react-flow__handle.connectingNode {
+  background: #f39c12;
+}
+
+/* Edges (conexiones) */
+.react-flow__edge {
+  stroke: #95a5a6;
+  stroke-width: 2;
+}
+
+.react-flow__edge.animated {
+  stroke-dasharray: 5;
+  animation: dash 0.5s linear infinite;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+/* Estados de ejecución */
+.nodo.ejecutado {
+  border-color: #27ae60;
+  background: #d4edda;
+}
+
+.nodo.error {
+  border-color: #e74c3c;
+  background: #f8d7da;
+}
+
+.nodo.procesando {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.3);
+  }
+}
