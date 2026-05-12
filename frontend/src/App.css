@@ -1,6 +1,18 @@
 /* ===== GLOBAL ===== */
-* { margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.app-wrapper {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
 
 /* ===== NAVBAR ===== */
 .navbar {
