@@ -40,6 +40,14 @@ EMAIL_FROM    = os.getenv("EMAIL_FROM",    SMTP_USER)
 # --- Modo de ejecución de algoritmos: "local" (subprocess) o "slurm" (clúster Picasso/UAL) ---
 EXECUTION_MODE = os.getenv("EXECUTION_MODE", "local")
 
+# Tiempo máximo (segundos) que se le concede a un algoritmo en modo local antes
+# de darlo por colgado y abortarlo. El equivalente en modo slurm es
+# SLURM_JOB_TIMEOUT (más abajo), que ya existía; el modo local no tenía ninguno:
+# subprocess.run() esperaba indefinidamente, así que con WORKER_CONCURRENCY=1
+# (el valor por defecto) un único script que no terminase dejaba la cola de
+# Celery bloqueada entera, sin más forma de recuperarla que matar el worker.
+ALGORITMO_TIMEOUT = int(os.getenv("ALGORITMO_TIMEOUT", "1800"))   # 30 min
+
 # --- SLURM / Clúster Picasso (UAL) — solo se usan si EXECUTION_MODE=slurm ---
 SLURM_HOST            = os.getenv("SLURM_HOST", "picasso.ual.es")
 SLURM_PORT            = int(os.getenv("SLURM_PORT", "22"))

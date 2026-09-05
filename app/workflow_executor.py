@@ -552,13 +552,22 @@ class BatchWorkflowExecutor:
             if not isinstance(nodo_res, dict):
                 continue
             tipo = nodo_res.get("tipo")
-            rj   = nodo_res.get("resultado_json", {})
+            # "or {}" y no get(..., {}): si la clave existe con valor None
+            # (nodo que falló antes de escribir su JSON), el "in" de abajo
+            # reventaría con TypeError.
+            rj   = nodo_res.get("resultado_json") or {}
 
             if tipo == "comparacion":
                 if "similitud" in rj:
                     return float(rj["similitud"]), "similitud"
-                if "rmsd" in rj:
-                    return float(rj["rmsd"]), "rmsd"
+                # rmsdConformaciones.py escribe la clave "rmsd_angstroms", no
+                # "rmsd": buscar solo "rmsd" hacía que el score saliera None
+                # para TODAS las moléculas y el cribado por RMSD terminara
+                # siempre en "error" con el ranking vacío. Se acepta también
+                # "rmsd" por si un algoritmo de comparación propio la emite así.
+                for clave in ("rmsd_angstroms", "rmsd"):
+                    if clave in rj:
+                        return float(rj[clave]), "rmsd"
 
             elif tipo == "docking":
                 energias = nodo_res.get("energias", {})
@@ -566,7 +575,18 @@ class BatchWorkflowExecutor:
                     return float(energias["mejor_afinidad"]), "docking"
 
             elif tipo == "preprocesado":
-                if isinstance(rj, dict) and "MW" in rj:
+                if not isinstance(rj, dict):
+                    continue
+                # filtroLipinski.py soporta bibliotecas multi-molécula, así que
+                # anida las propiedades bajo "moleculas": [{...}] y en la raíz
+                # solo deja el recuento (total/pass/fail). Buscar "MW" en la
+                # raíz no encontraba nada nunca. En batch cada fichero temporal
+                # tiene exactamente una molécula, así que el score es su MW.
+                moleculas = rj.get("moleculas")
+                if isinstance(moleculas, list) and moleculas and isinstance(moleculas[0], dict):
+                    if "MW" in moleculas[0]:
+                        return float(moleculas[0]["MW"]), "lipinski"
+                if "MW" in rj:
                     return float(rj["MW"]), "lipinski"
 
         return None, None
