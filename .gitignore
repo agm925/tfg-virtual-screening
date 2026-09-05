@@ -1,5 +1,32 @@
 venv/
+.venv/
 __pycache__/
+*.pyc
 *.db
 temp_*.mol2
 *_aligned.mol2
+
+# Variables de entorno (credenciales)
+.env
+*.env
+
+# Claves SSH / credenciales del clúster HPC (SLURM_SSH_KEY_PATH, etc.)
+secrets/
+
+# Archivos subidos por usuarios
+uploads/
+
+# Node modules y build del frontend
+node_modules/
+frontend/dist/
+
+# Cache y cobertura de pytest (suite del Día 2)
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Archivos del sistema operativo / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

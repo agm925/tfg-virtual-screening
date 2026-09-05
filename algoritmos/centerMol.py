@@ -1,3 +1,4 @@
+# TIPO_ALGORITMO: alineacion
 #
 # prePCA.py
 # Example code demonstrating PCA-based preprocessing for molecules
@@ -211,7 +212,13 @@ def main():
     for f in sys.argv[1:]:
         try:
             mol = read_and_align_mol2(f)
-        except ValueError as e:
+        except Exception as e:
+            # RDKit no siempre lanza ValueError ante un fichero invalido o
+            # inexistente (p. ej. MolFromMol2File lanza OSError); se captura
+            # Exception en general para que un fichero de entrada problematico
+            # se reporte con un mensaje "Error: ..." legible, en vez de un
+            # traceback sin controlar, igual que el resto de algoritmos del
+            # catalogo.
             print(f"Error: {e}", file=sys.stderr)
             continue
         base, ext = os.path.splitext(f)

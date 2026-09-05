@@ -2,8 +2,13 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, cerrarS
   const enlaces = [
     { id: 'home',       label: 'Home' },
     { id: 'algoritmos', label: 'Algoritmos' },
-    { id: 'peticiones', label: 'Realizar Petición' },
-    { id: 'knime',      label: 'KNIME Builder' },
+    { id: 'moleculas',  label: 'Moléculas' },
+    { id: 'peticiones', label: 'Peticiones' },
+    { id: 'visual',     label: 'Constructor Visual' },
+    { id: 'tutorial',   label: 'Tutorial' },
+    // Solo visible para admin: el backend igualmente rechaza con 403 a
+    // cualquier otro rol, esto es solo para no ofrecer un enlace roto.
+    ...(usuario.rol === 'admin' ? [{ id: 'sistema', label: '🛠️ Sistema' }] : []),
   ];
 
   return (

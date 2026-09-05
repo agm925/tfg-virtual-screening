@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+# Dependencias del sistema
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    openbabel \
+    libopenbabel-dev \
+    wget \
+    curl \
+    openssh-client \
+    libxrender1 \
+    libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Smina — no está en apt, se instala el binario estático de GitHub
+COPY bin/smina /usr/local/bin/smina
+RUN chmod +x /usr/local/bin/smina
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install flower==2.0.1
+
+COPY . .
+RUN mkdir -p uploads algoritmos secrets
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

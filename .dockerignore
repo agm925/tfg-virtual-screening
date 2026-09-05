@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.db
+temp_*.mol2
+*_aligned.mol2
+.env
+*.env
+uploads/
+frontend/node_modules/
+frontend/dist/
+.git/

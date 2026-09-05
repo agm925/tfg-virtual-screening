@@ -25,6 +25,12 @@ class EstadoWorkflow(enum.Enum):
     completado = "completado"
     fallido = "fallido"
 
+class TipoAlgoritmo(enum.Enum):
+    alineacion   = "alineacion"
+    comparacion  = "comparacion"
+    preprocesado = "preprocesado"
+    docking      = "docking"
+
 # --- TABLA 1: USUARIOS ---
 class Usuario(Base):
     __tablename__ = "usuarios"
@@ -35,6 +41,8 @@ class Usuario(Base):
     password_hash = Column(String, nullable=False)
     rol = Column(Enum(RolUsuario), default=RolUsuario.biologo, nullable=False)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+    email_verificado = Column(Boolean, default=False, nullable=False)
+    token_verificacion = Column(String, nullable=True)
 
     # Relaciones (Un usuario puede tener muchos algoritmos y muchas peticiones)
     algoritmos = relationship("Algoritmo", back_populates="autor")
@@ -49,6 +57,7 @@ class Algoritmo(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, nullable=False)
     descripcion = Column(String)
+    tipo = Column(Enum(TipoAlgoritmo), nullable=False)  # alineacion o comparacion
     ruta_archivo = Column(String, nullable=False) # Dónde guardaremos el .py
     es_publico = Column(Boolean, default=False)
     autor_id = Column(Integer, ForeignKey("usuarios.id"))
@@ -63,8 +72,10 @@ class Peticion(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     estado = Column(String, default="PENDIENTE")  # PENDIENTE, PROCESANDO, COMPLETADO, ERROR
-    ruta_mol_original = Column(String, nullable=False) # Dónde guardamos el .mol2 que sube el biólogo
-    ruta_mol_resultado = Column(String, nullable=True) # Aquí guardaremos el _aligned.mol2 cuando termine
+    ruta_mol_original = Column(String, nullable=False)
+    ruta_mol_resultado = Column(String, nullable=True)
+    celery_task_id = Column(String, nullable=True)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
     
     # Claves foráneas para conectar las tablas
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
@@ -100,8 +111,9 @@ class WorkflowExecution(Base):
     id = Column(Integer, primary_key=True, index=True)
     workflow_id = Column(Integer, ForeignKey("workflows.id"))
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
-    estado = Column(String, default="pendiente")  # pendiente, procesando, completado, error
-    resultados_json = Column(JSON, nullable=True)  # { nodo_id: { resultado, logs, error } }
+    estado = Column(String, default="pendiente")  # pendiente, procesando, completado, error, cancelado
+    celery_task_id = Column(String, nullable=True)
+    resultados_json = Column(JSON, nullable=True)
     fecha_ejecucion = Column(DateTime, default=datetime.utcnow)
     duracion_segundos = Column(Integer, nullable=True)
 

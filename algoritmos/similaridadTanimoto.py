@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# TIPO_ALGORITMO: comparacion
 """
 Algoritmo de Similitud Química - Tanimoto
 Compara dos moléculas usando fingerprints de Tanimoto (RDKit)

@@ -1,6 +1,6 @@
-/* KnimeBuilder.css */
+/* visualBuilder.css */
 
-.knime-container {
+.visual-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -10,7 +10,7 @@
 }
 
 /* Barra superior */
-.knime-toolbar {
+.visual-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -83,14 +83,14 @@
 }
 
 /* Contenido principal */
-.knime-content {
+.visual-content {
   display: flex;
   flex: 1;
   gap: 0;
 }
 
 /* Sidebar izquierda - Paleta de nodos */
-.knime-sidebar-left {
+.visual-sidebar-left {
   width: 200px;
   background: white;
   border-right: 1px solid #ddd;
@@ -99,7 +99,7 @@
   box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
 }
 
-.knime-sidebar-left h3 {
+.visual-sidebar-left h3 {
   margin: 0 0 16px 0;
   font-size: 14px;
   color: #333;
@@ -142,7 +142,7 @@
 }
 
 /* Canvas central */
-.knime-canvas-wrapper {
+.visual-canvas-wrapper {
   flex: 1;
   background: #fafafa;
   position: relative;
@@ -165,7 +165,7 @@
 }
 
 /* Sidebar derecha - Resultados */
-.knime-sidebar-right {
+.visual-sidebar-right {
   width: 280px;
   background: white;
   border-left: 1px solid #ddd;
@@ -174,7 +174,7 @@
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05);
 }
 
-.knime-sidebar-right h3 {
+.visual-sidebar-right h3 {
   margin: 0 0 16px 0;
   font-size: 14px;
   color: #333;
@@ -263,6 +263,8 @@
   background: #3498db;
   color: white;
   text-decoration: none;
+  border: none;
+  cursor: pointer;
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
@@ -305,24 +307,208 @@
   border: 1px solid #ddd;
 }
 
+/* ── Batch processing ─────────────────────────────────────────────────── */
+
+.batch-progress {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.batch-progress-label {
+  font-size: 12px;
+  color: #3730a3;
+  margin: 0 0 6px;
+}
+
+.batch-progress-bar {
+  height: 8px;
+  background: #c7d2fe;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.batch-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.batch-progress-mol {
+  font-size: 11px;
+  color: #6366f1;
+  margin: 4px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.batch-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.batch-stat {
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.batch-stat.ok  { background: #d4edda; color: #155724; }
+.batch-stat.err { background: #f8d7da; color: #721c24; }
+.batch-stat.bd  { background: #e2e3e5; color: #383d41; }
+
+.btn-csv-download {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  transition: opacity 0.2s;
+}
+
+.btn-csv-download:hover { opacity: 0.85; }
+
+.batch-ranking {
+  overflow-x: auto;
+}
+
+.ranking-tipo {
+  font-size: 11px;
+  color: #7f8c8d;
+  margin: 0 0 6px;
+}
+
+.ranking-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.ranking-table th {
+  background: #f0f0f5;
+  padding: 4px 6px;
+  text-align: left;
+  color: #555;
+  font-weight: 600;
+  border-bottom: 1px solid #ddd;
+}
+
+.ranking-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+}
+
+.ranking-table tr:hover td { background: #f8f9ff; }
+
+.ranking-table tr.row-error td { color: #999; font-style: italic; }
+
+.ranking-more {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  margin: 4px 0 0;
+}
+
+/* Ranking barras visuales */
+.ranking-barras {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.ranking-fila {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.ranking-pos {
+  width: 18px;
+  text-align: right;
+  color: #94a3b8;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ranking-barra-wrap {
+  flex: 1;
+  position: relative;
+  height: 18px;
+  background: #f0f0f5;
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.ranking-barra {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  min-width: 3px;
+}
+
+.ranking-nombre {
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: #1e293b;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 3px rgba(255,255,255,0.8);
+}
+
+.ranking-score {
+  width: 40px;
+  text-align: right;
+  color: #475569;
+  font-weight: 600;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
-  .knime-sidebar-left {
+  .visual-sidebar-left {
     width: 160px;
   }
 
-  .knime-sidebar-right {
+  .visual-sidebar-right {
     width: 240px;
   }
 }
 
 @media (max-width: 768px) {
-  .knime-content {
+  .visual-content {
     flex-direction: column;
   }
 
-  .knime-sidebar-left,
-  .knime-sidebar-right {
+  .visual-sidebar-left,
+  .visual-sidebar-right {
     width: 100%;
     border: none;
     border-top: 1px solid #ddd;

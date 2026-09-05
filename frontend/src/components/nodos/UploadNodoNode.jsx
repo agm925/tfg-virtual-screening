@@ -1,10 +1,18 @@
 import React, { useState } from 'react';
-import { Handle, Position } from 'reactflow';
+import { Handle, Position, useReactFlow } from 'reactflow';
+import { apiFetch } from '../../api/client';
 import '../../styles/Nodos.css';
 
 const UploadNodoNode = ({ data, id }) => {
+  const { setNodes, setEdges } = useReactFlow();
   const [archivo, setArchivo] = useState(null);
   const [cargando, setCargando] = useState(false);
+
+  const eliminar = (e) => {
+    e.stopPropagation();
+    setNodes(nds => nds.filter(n => n.id !== id));
+    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
+  };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -17,23 +25,13 @@ const UploadNodoNode = ({ data, id }) => {
   };
 
   const uploadMolecula = async () => {
-    if (!archivo) {
-      alert('Selecciona un archivo primero');
-      return;
-    }
-
+    if (!archivo) { alert('Selecciona un archivo primero'); return; }
     setCargando(true);
     const formData = new FormData();
     formData.append('archivo_mol', archivo);
-    formData.append('usuario_id', 1); // TODO: obtener del contexto
     formData.append('algoritmo_id', 1);
-
     try {
-      const response = await fetch('http://localhost:8000/peticiones', {
-        method: 'POST',
-        body: formData
-      });
-
+      const response = await apiFetch('/peticiones', { method: 'POST', body: formData });
       if (response.ok) {
         const result = await response.json();
         data.archivo_id = result.id;
@@ -51,28 +49,18 @@ const UploadNodoNode = ({ data, id }) => {
 
   return (
     <div className="nodo upload-nodo">
-      <div className="nodo-header">📤 Upload Molécula</div>
-      
+      <div className="nodo-header">
+        📤 Upload Molécula
+        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
+      </div>
       <div className="nodo-body">
-        <input 
-          type="file" 
-          accept=".mol2" 
-          onChange={handleFileChange}
-          className="file-input"
-        />
-        
+        <input type="file" accept=".mol2" onChange={handleFileChange} className="file-input" />
         {archivo && <p className="file-name">✓ {archivo.name}</p>}
-        
-        <button 
-          onClick={uploadMolecula}
-          disabled={!archivo || cargando}
-          className="upload-btn"
-        >
+        <button onClick={uploadMolecula} disabled={!archivo || cargando} className="upload-btn">
           {cargando ? 'Cargando...' : 'Cargar'}
         </button>
       </div>
-
-      <Handle type="output" position={Position.Right} />
+      <Handle type="source" position={Position.Right} id="output" />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-/* Estilos para nodos KNIME */
+/* Estilos para nodos del Constructor Visual */
 
 .nodo {
   background: white;
@@ -28,8 +28,34 @@
   padding: 10px 12px;
   border-radius: 6px 6px 0 0;
   font-weight: 600;
+  position: relative;
   text-align: center;
   font-size: 13px;
+}
+
+/* Botón eliminar nodo */
+.nodo-btn-borrar {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.nodo-btn-borrar:hover {
+  background: rgba(231, 76, 60, 0.75);
 }
 
 /* Body del nodo */
@@ -51,12 +77,15 @@
 .file-input,
 .select-input,
 .select-algo {
+  width: 100%;
   padding: 6px 8px;
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 12px;
+  color: #333;
   background: white;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .file-input:focus,
@@ -105,9 +134,32 @@
   font-style: italic;
 }
 
+.opciones-checkbox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.opciones-checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #444;
+  cursor: pointer;
+}
+
+.opciones-checkbox input[type="checkbox"] {
+  cursor: pointer;
+}
+
 /* Tipos específicos de nodos */
 .upload-nodo .nodo-header {
   background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+}
+
+.alineacion-nodo .nodo-header {
+  background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
 }
 
 .algoritmo-nodo .nodo-header {
@@ -132,6 +184,14 @@
 
 .selectmol-nodo .nodo-header {
   background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+}
+
+.preprocesado-nodo .nodo-header {
+  background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
+}
+
+.docking-nodo .nodo-header {
+  background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
 }
 
 /* Handles (puertos de conexión) */

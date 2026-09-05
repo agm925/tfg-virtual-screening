@@ -1,11 +1,18 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 # 1. Lo que el usuario nos envía desde la web
+#
+# Validacion real (antes: email/password_hash eran "str" sin mas, asi que
+# "no-es-un-email" o una contraseña vacia pasaban el esquema y solo fallaban
+# --si fallaban-- mas adelante, con errores menos claros). EmailStr exige un
+# formato de correo valido: rechaza el registro con 422 antes de que la
+# peticion llegue a tocar la base de datos.
 class UsuarioRegistro(BaseModel):
-    email: str
-    nombre: str
-    password_hash: str
+    email: EmailStr
+    nombre: str = Field(min_length=1, max_length=120)
+    password_hash: str = Field(min_length=8, max_length=128)  # contraseña en texto plano (ver Seccion 2.7.1 de la memoria)
 
 # 2. Lo que nosotros le devolvemos tras crearlo en la Base de Datos
 class UsuarioRespuesta(BaseModel):
@@ -21,7 +28,8 @@ class AlgoritmoRespuesta(BaseModel):
     id: int
     nombre: str
     descripcion: str
-    ruta_mol_resultado: str
+    tipo: str  # "alineacion", "comparacion", "preprocesado" o "docking"
+    ruta_archivo: str
     es_publico: bool
     autor_id: int
 
@@ -39,13 +47,28 @@ class PeticionRespuesta(BaseModel):
         from_attributes = True
 
 class UsuarioLogin(BaseModel):
+    email: EmailStr
+    password_hash: str = Field(min_length=1, max_length=128)  # min_length=1: no bloquear el rate limit con un 422 antes de contar el intento
+
+
+class UsuarioSesion(BaseModel):
+    id: int
+    nombre: str
     email: str
-    password_hash: str
+    rol: str
+
+
+class TokenRespuesta(BaseModel):
+    """Respuesta de POST /login: JWT firmado + datos basicos del usuario."""
+    access_token: str
+    token_type: str = "bearer"
+    usuario: UsuarioSesion
 
 # Añade esto al final de app/schemas.py
 class AlgoritmoCreate(BaseModel):
     nombre: str
     descripcion: str
+    tipo: str  # "alineacion" o "comparacion"
 
 # --- ESQUEMAS PARA WORKFLOWS ---
 
@@ -73,8 +96,8 @@ class GrafoWorkflow(BaseModel):
 
 class WorkflowCreate(BaseModel):
     """Crear nuevo workflow"""
-    nombre: str
-    descripcion: Optional[str] = None
+    nombre: str = Field(min_length=1, max_length=200)
+    descripcion: Optional[str] = Field(default=None, max_length=2000)
     grafo_json: Dict[str, Any]  # { nodos: [...], edges: [...] }
 
 
@@ -86,8 +109,8 @@ class WorkflowRespuesta(BaseModel):
     grafo_json: Dict[str, Any]
     usuario_id: int
     estado: str
-    fecha_creacion: str
-    fecha_actualizacion: str
+    fecha_creacion: datetime
+    fecha_actualizacion: datetime
 
     class Config:
         from_attributes = True
@@ -100,7 +123,7 @@ class WorkflowExecutionRespuesta(BaseModel):
     usuario_id: int
     estado: str
     resultados_json: Optional[Dict[str, Any]]
-    fecha_ejecucion: str
+    fecha_ejecucion: datetime
     duracion_segundos: Optional[int]
 
     class Config:

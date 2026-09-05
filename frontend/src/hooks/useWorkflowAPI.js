@@ -1,21 +1,20 @@
 import { useState, useCallback } from 'react';
-
-const API_BASE = 'http://localhost:8000';
+import { apiFetch, API_BASE, descargarConToken } from '../api/client';
 
 const useWorkflowAPI = () => {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState(null);
 
   // Crear workflow
-  const crearWorkflow = useCallback(async (workflow, usuarioId) => {
+  // (usuarioId ya no se envía: el backend toma el propietario del token JWT)
+  const crearWorkflow = useCallback(async (workflow) => {
     setCargando(true);
     try {
       const formData = new FormData();
       formData.append('nombre', workflow.nombre);
       formData.append('descripcion', workflow.descripcion);
-      formData.append('usuario_id', usuarioId);
 
-      const response = await fetch(`${API_BASE}/workflows`, {
+      const response = await apiFetch('/workflows', {
         method: 'POST',
         body: formData,
       });
@@ -37,7 +36,7 @@ const useWorkflowAPI = () => {
   const obtenerWorkflows = useCallback(async (usuarioId) => {
     setCargando(true);
     try {
-      const response = await fetch(`${API_BASE}/workflows/usuario/${usuarioId}`);
+      const response = await apiFetch(`/workflows/usuario/${usuarioId}`);
 
       if (!response.ok) throw new Error('Error obteniendo workflows');
 
@@ -56,7 +55,7 @@ const useWorkflowAPI = () => {
   const obtenerWorkflow = useCallback(async (workflowId) => {
     setCargando(true);
     try {
-      const response = await fetch(`${API_BASE}/workflows/${workflowId}`);
+      const response = await apiFetch(`/workflows/${workflowId}`);
 
       if (!response.ok) throw new Error('Error obteniendo workflow');
 
@@ -75,7 +74,7 @@ const useWorkflowAPI = () => {
   const actualizarWorkflow = useCallback(async (workflowId, workflow) => {
     setCargando(true);
     try {
-      const response = await fetch(`${API_BASE}/workflows/${workflowId}`, {
+      const response = await apiFetch(`/workflows/${workflowId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -98,26 +97,23 @@ const useWorkflowAPI = () => {
     }
   }, []);
 
-  // Ejecutar workflow
-  const ejecutarWorkflow = useCallback(async (workflowId, usuarioId) => {
+  // Ejecutar workflow — encola la tarea y devuelve { ejecucion_id }
+  // (usuarioId ya no se envía: el backend toma el propietario del token JWT)
+  const ejecutarWorkflow = useCallback(async (workflowId) => {
     setCargando(true);
     try {
-      const formData = new FormData();
-      formData.append('usuario_id', usuarioId);
-
-      const response = await fetch(`${API_BASE}/workflows/${workflowId}/ejecutar`, {
+      const response = await apiFetch(`/workflows/${workflowId}/ejecutar`, {
         method: 'POST',
-        body: formData,
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Error ejecutando workflow');
+        throw new Error(errorData.detail || 'Error encolando workflow');
       }
 
       const data = await response.json();
       setError(null);
-      return data;
+      return data; // { ejecucion_id, estado: 'pendiente', ... }
     } catch (err) {
       setError(err.message);
       throw err;
@@ -126,11 +122,33 @@ const useWorkflowAPI = () => {
     }
   }, []);
 
+  // Polling: espera hasta que la ejecución termine (completado | error)
+  // onProgreso recibe el objeto completo { estado, resultados_json: { progreso, total, molecula_actual, ... } }
+  const esperarEjecucion = useCallback(async (ejecucionId, onProgreso) => {
+    const INTERVALO = 3000; // 3 s
+    return new Promise((resolve, reject) => {
+      const tick = async () => {
+        try {
+          const resp = await apiFetch(`/workflows/ejecuciones/${ejecucionId}`);
+          if (!resp.ok) { reject(new Error('Error consultando estado')); return; }
+          const datos = await resp.json();
+          if (onProgreso) onProgreso(datos);
+          if (['completado', 'error', 'fallido', 'cancelado'].includes(datos.estado)) {
+            resolve(datos.resultados_json || {});
+          } else {
+            setTimeout(tick, INTERVALO);
+          }
+        } catch (e) { reject(e); }
+      };
+      tick();
+    });
+  }, []);
+
   // Obtener ejecuciones de un workflow
   const obtenerEjecuciones = useCallback(async (workflowId) => {
     setCargando(true);
     try {
-      const response = await fetch(`${API_BASE}/workflows/${workflowId}/ejecuciones`);
+      const response = await apiFetch(`/workflows/${workflowId}/ejecuciones`);
 
       if (!response.ok) throw new Error('Error obteniendo ejecuciones');
 
@@ -149,7 +167,7 @@ const useWorkflowAPI = () => {
   const obtenerEjecucion = useCallback(async (ejecucionId) => {
     setCargando(true);
     try {
-      const response = await fetch(`${API_BASE}/workflows/ejecuciones/${ejecucionId}`);
+      const response = await apiFetch(`/workflows/ejecuciones/${ejecucionId}`);
 
       if (!response.ok) throw new Error('Error obteniendo ejecución');
 
@@ -164,10 +182,11 @@ const useWorkflowAPI = () => {
     }
   }, []);
 
-  // Descargar resultado
+  // Descargar resultado (autenticado: /uploads/{nombre} es publico, pero se
+  // centraliza aqui igualmente por si en el futuro deja de serlo)
   const descargarResultado = useCallback(async (nombreArchivo) => {
     try {
-      window.location.href = `${API_BASE}/descargar?archivo=${nombreArchivo}`;
+      await descargarConToken(`/uploads/${nombreArchivo}`, nombreArchivo);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -179,7 +198,7 @@ const useWorkflowAPI = () => {
   const borrarWorkflow = useCallback(async (workflowId) => {
     setCargando(true);
     try {
-      const response = await fetch(`${API_BASE}/workflows/${workflowId}`, {
+      const response = await apiFetch(`/workflows/${workflowId}`, {
         method: 'DELETE',
       });
 
@@ -202,6 +221,7 @@ const useWorkflowAPI = () => {
     obtenerWorkflow,
     actualizarWorkflow,
     ejecutarWorkflow,
+    esperarEjecucion,
     obtenerEjecuciones,
     obtenerEjecucion,
     descargarResultado,

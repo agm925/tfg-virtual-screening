@@ -1,22 +1,75 @@
-import React from 'react';
-import { Handle, Position } from 'reactflow';
+import React, { useState, useEffect } from 'react';
+import { Handle, Position, useReactFlow } from 'reactflow';
+import { apiFetch } from '../../api/client';
 import '../../styles/Nodos.css';
 
 const SelectMolNodoNode = ({ data, id }) => {
+  const { setNodes, setEdges } = useReactFlow();
+  const [moleculas, setMoleculas] = useState([]);
+  const [seleccionada, setSeleccionada] = useState(data.nombre_archivo || '');
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState(null);
+
+  const eliminar = (e) => {
+    e.stopPropagation();
+    setNodes(nds => nds.filter(n => n.id !== id));
+    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
+  };
+
+  useEffect(() => { cargarMoleculas(); }, []);
+
+  const cargarMoleculas = async () => {
+    setCargando(true); setError(null);
+    try {
+      const resp = await apiFetch('/moleculas');
+      if (!resp.ok) throw new Error();
+      const lista = await resp.json();
+      setMoleculas(lista);
+      if (data.nombre_archivo && lista.find(m => m.nombre === data.nombre_archivo)) {
+        setSeleccionada(data.nombre_archivo);
+      } else if (lista.length > 0) {
+        setSeleccionada(lista[0].nombre);
+        data.nombre_archivo = lista[0].nombre;
+      }
+    } catch { setError('No se pudo cargar la lista de moléculas'); }
+    finally { setCargando(false); }
+  };
+
+  const handleCambio = (nombre) => { setSeleccionada(nombre); data.nombre_archivo = nombre; };
+
   return (
     <div className="nodo selectmol-nodo">
-      <div className="nodo-header">🧬 Seleccionar Molécula</div>
-      
-      <div className="nodo-body">
-        <select className="select-input">
-          <option>Molécula 1</option>
-          <option>Molécula 2</option>
-          <option>Molécula 3</option>
-        </select>
+      <div className="nodo-header">
+        🧬 Seleccionar Molécula
+        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
       </div>
-
-      <Handle type="input" position={Position.Left} />
-      <Handle type="output" position={Position.Right} />
+      <div className="nodo-body">
+        {cargando ? (
+          <p style={{ fontSize: '11px', color: '#7f8c8d', margin: 0 }}>Cargando moléculas...</p>
+        ) : error ? (
+          <p style={{ fontSize: '11px', color: '#e74c3c', margin: 0 }}>{error}</p>
+        ) : moleculas.length === 0 ? (
+          <p style={{ fontSize: '11px', color: '#e74c3c', margin: 0 }}>Sin moléculas disponibles</p>
+        ) : (
+          <>
+            <select className="select-input" value={seleccionada} onChange={e => handleCambio(e.target.value)} style={{ width: '100%' }}>
+              {moleculas.map(m => (
+                <option key={m.nombre} value={m.nombre}>
+                  {m.origen === 'base_de_datos' ? '🗄️' : '📁'} {m.nombre} ({m.tamano_kb} KB)
+                </option>
+              ))}
+            </select>
+            <p style={{ fontSize: '10px', color: '#7f8c8d', margin: '4px 0 0' }}>
+              {moleculas.length} molécula{moleculas.length !== 1 ? 's' : ''} ·{' '}
+              <span style={{ color: '#3498db', cursor: 'pointer', textDecoration: 'underline' }} onClick={cargarMoleculas}>
+                actualizar
+              </span>
+            </p>
+          </>
+        )}
+      </div>
+      <Handle type="target" position={Position.Left}  id="input"  />
+      <Handle type="source" position={Position.Right} id="output" />
     </div>
   );
 };

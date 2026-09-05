@@ -1,0 +1,131 @@
+# Orquestación local/producción del TFG de cribado virtual.
+# Uso:
+#   docker compose up --build
+#   docker compose up --build --scale worker=3   # varios workers Celery en paralelo
+#
+# Las variables se toman de un fichero ".env" en esta misma carpeta (ver .env.example).
+
+x-backend-env: &backend-env
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
+  DATABASE_URL: postgresql://${POSTGRES_USER:-tfg_user}:${POSTGRES_PASSWORD:-tfg_password}@db:5432/${POSTGRES_DB:-tfg_virtual_screening}
+  REDIS_URL: redis://redis:6379/0
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+  EXECUTION_MODE: ${EXECUTION_MODE:-local}
+  SLURM_HOST: ${SLURM_HOST:-picasso.ual.es}
+  SLURM_PORT: ${SLURM_PORT:-22}
+  SLURM_USER: ${SLURM_USER:-}
+  SLURM_SSH_KEY_PATH: ${SLURM_SSH_KEY_PATH:-}
+  SLURM_PASSWORD: ${SLURM_PASSWORD:-}
+  SLURM_REMOTE_DIR: ${SLURM_REMOTE_DIR:-}
+  SLURM_PARTITION: ${SLURM_PARTITION:-generic}
+  SLURM_TIME_LIMIT: ${SLURM_TIME_LIMIT:-00:30:00}
+  SLURM_CPUS_PER_TASK: ${SLURM_CPUS_PER_TASK:-1}
+  SLURM_MEM: ${SLURM_MEM:-4G}
+  SLURM_MODULES: ${SLURM_MODULES:-}
+  SLURM_CONDA_ENV: ${SLURM_CONDA_ENV:-}
+  SLURM_POLL_INTERVAL: ${SLURM_POLL_INTERVAL:-10}
+  SLURM_JOB_TIMEOUT: ${SLURM_JOB_TIMEOUT:-3600}
+  SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  EMAIL_FROM: ${EMAIL_FROM:-}
+
+services:
+  db:
+    image: postgres:16
+    container_name: tfg_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tfg_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfg_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tfg_virtual_screening}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tfg_user} -d ${POSTGRES_DB:-tfg_virtual_screening}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: tfg_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: tfg_backend
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./algoritmos:/app/algoritmos
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./algoritmos:/app/algoritmos
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Sin container_name ni puertos publicados: necesario para poder escalar
+    # con `docker compose up --scale worker=N` (varias réplicas en paralelo).
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: tfg_flower
+    restart: unless-stopped
+    command: celery -A app.celery_app.celery_app flower --port=5555
+    environment:
+      <<: *backend-env
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: tfg_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
