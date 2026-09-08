@@ -20,6 +20,21 @@ sys.path.insert(0, str(ROOT))
 TEST_DB_PATH = ROOT / "tests" / "_test_tfg.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
 
+# Primera barrera contra el envio de correo real durante los tests.
+#
+# app/email_utils.py::enviar_correo hace no-op si SMTP_USER o SMTP_PASSWORD
+# estan vacios. Vaciarlos aqui -- antes de que app/config.py los lea, igual que
+# con DATABASE_URL -- desactiva el envio a nivel de configuracion, de forma que
+# ni siquiera un test que se salte el fixture de mas abajo pueda mandar nada.
+#
+# Sin esto, cada fixture de usuario hacia POST /registro -> correo_verificacion(),
+# y con las credenciales reales del .env la suite enviaba del orden de 50 correos
+# por pasada a direcciones test_<uuid>@example.com que rebotan todas: lento,
+# dependiente de la red, y el patron exacto de envio masivo a destinatarios
+# inexistentes por el que un proveedor restringe una cuenta.
+os.environ["SMTP_USER"] = ""
+os.environ["SMTP_PASSWORD"] = ""
+
 import pytest  # noqa: E402
 
 # Se importan DESPUES de fijar DATABASE_URL para que app/config.py lea la
@@ -50,6 +65,34 @@ MOLBLOCK_INVALIDO = """molecula_rota
   1  5  1  0
 M  END
 """
+
+
+@pytest.fixture(autouse=True)
+def correos_enviados(monkeypatch):
+    """
+    Segunda barrera: sustituye enviar_correo por un doble que no abre ninguna
+    conexion SMTP, siguiendo la misma convencion que mock_celery.
+
+    Se parchea enviar_correo y no cada correo_*() porque las cinco funciones de
+    app/email_utils.py lo resuelven como global de su propio modulo en el
+    momento de la llamada: un unico punto cubre registro, peticiones y
+    workflows, y seguira cubriendo los avisos que se anadan despues.
+
+    Ademas de cortar el envio, deja constancia de lo que se habria mandado, asi
+    que un test puede afirmar sobre las notificaciones sin tocar la red:
+
+        def test_registro_avisa_por_correo(client, correos_enviados):
+            client.post("/registro", json={...})
+            assert correos_enviados[0]["destinatario"] == "..."
+    """
+    enviados = []
+
+    def _enviar_correo_falso(destinatario: str, asunto: str, cuerpo_html: str) -> bool:
+        enviados.append({"destinatario": destinatario, "asunto": asunto})
+        return True
+
+    monkeypatch.setattr("app.email_utils.enviar_correo", _enviar_correo_falso)
+    return enviados
 
 
 @pytest.fixture()
