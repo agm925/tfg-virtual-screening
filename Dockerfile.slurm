@@ -29,7 +29,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libxext6 \
     procps \
+    curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Smina, igual que en la imagen del backend y por el mismo motivo: los
+# algoritmos se ejecutan EN ESTE NODO, así que un workflow de docking enviado
+# al clúster necesita el binario aquí, no en el worker de Celery.
+ARG SMINA_URL="https://sourceforge.net/projects/smina/files/smina.static/download"
+ARG SMINA_SHA256="ffe5e1e78c947f76b0df8805e2c54383d0bbaf2e827a633b643a708cf682a958"
+RUN curl -fsSL -o /usr/local/bin/smina "${SMINA_URL}" \
+    && echo "${SMINA_SHA256}  /usr/local/bin/smina" | sha256sum -c - \
+    && chmod +x /usr/local/bin/smina \
+    && smina --version
 
 # Mismas dependencias Python que el backend: si un algoritmo funciona en local,
 # tiene que funcionar en el nodo. Instalarlas aquí evita que la simulación

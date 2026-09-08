@@ -44,11 +44,48 @@ import shutil
 
 
 def verificar_smina() -> None:
-    if not shutil.which("smina"):
+    """
+    Comprueba que smina está y que además ES EJECUTABLE.
+
+    Antes esto era solo `if not shutil.which("smina")`, y esa comprobación
+    tiene un punto ciego serio: which() se limita a buscar un fichero con el
+    bit de ejecución puesto, sin mirar su contenido. El binario que venía en
+    el repositorio eran 9 bytes con el texto "Not Found" — restos de una
+    descarga fallida — y como el Dockerfile le daba chmod +x, which() lo
+    encontraba y esta función daba el visto bueno. El error real aparecía
+    después, al lanzar el subproceso, como un "Exec format error" que no
+    apuntaba a la causa por ningún lado.
+
+    Ejecutar `smina --version` es la única forma de distinguir un smina de
+    verdad de un fichero que se le parece.
+    """
+    ruta = shutil.which("smina")
+    if not ruta:
         raise RuntimeError(
             "Smina no está instalado o no se encuentra en el PATH.\n"
             "Instálalo con:  conda install -c conda-forge smina\n"
-            "o descarga el binario desde https://github.com/mwojcikowski/smina"
+            "o descarga el binario estático desde https://sourceforge.net/projects/smina/"
+        )
+
+    try:
+        resultado = subprocess.run(
+            ["smina", "--version"], capture_output=True, text=True, timeout=30
+        )
+    except OSError as e:
+        # OSError cubre el "Exec format error" (ENOEXEC) de un fichero que
+        # tiene permiso de ejecución pero no es un binario válido.
+        raise RuntimeError(
+            f"'{ruta}' existe pero no se puede ejecutar: {e}\n"
+            f"Lo más probable es que no sea un binario de smina (una descarga "
+            f"fallida guardada como fichero, por ejemplo). Comprueba su "
+            f"contenido y vuelve a instalarlo."
+        ) from e
+
+    if resultado.returncode != 0:
+        raise RuntimeError(
+            f"'{ruta}' no responde como un smina válido "
+            f"(código {resultado.returncode}).\n"
+            f"stderr: {resultado.stderr[:300]}"
         )
 
 

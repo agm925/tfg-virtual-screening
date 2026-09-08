@@ -12,9 +12,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Smina — no está en apt, se instala el binario estático de GitHub
-COPY bin/smina /usr/local/bin/smina
-RUN chmod +x /usr/local/bin/smina
+# Smina — no está empaquetado en Debian, así que se descarga la build estática
+# oficial durante la construcción de la imagen.
+#
+# Antes esto era `COPY bin/smina`, con el binario versionado en el repositorio.
+# El fichero que había commiteado NO era un binario: eran 9 bytes con el texto
+# "Not Found", restos de una descarga fallida. Como el COPY y el chmod +x
+# funcionaban igual, shutil.which("smina") lo encontraba, verificar_smina()
+# daba el visto bueno, y el fallo aparecía mucho después como un
+# "Exec format error" imposible de relacionar con la causa.
+#
+# La verificación del checksum es la pieza que faltaba: si la descarga falla o
+# devuelve una página de error, sha256sum aborta la construcción en el acto en
+# vez de dejar pasar basura. El `smina --version` final es una prueba de humo:
+# una imagen no puede construirse con un smina que no ejecuta.
+ARG SMINA_URL="https://sourceforge.net/projects/smina/files/smina.static/download"
+ARG SMINA_SHA256="ffe5e1e78c947f76b0df8805e2c54383d0bbaf2e827a633b643a708cf682a958"
+RUN curl -fsSL -o /usr/local/bin/smina "${SMINA_URL}" \
+    && echo "${SMINA_SHA256}  /usr/local/bin/smina" | sha256sum -c - \
+    && chmod +x /usr/local/bin/smina \
+    && smina --version
 
 WORKDIR /app
 

@@ -543,6 +543,30 @@ class BatchWorkflowExecutor:
             moleculas.append({"nombre": nombre, "ruta": ruta_temp, "indice": i})
         return moleculas
 
+    @staticmethod
+    def _como_score(valor) -> float:
+        """
+        Convierte un valor del JSON de un algoritmo en score, o None si no lo es.
+
+        Existe porque comprobar que la clave está no basta: puede estar con
+        valor null. dockingSmina.py escribe "mejor_afinidad": null cuando el
+        docking se ejecuta correctamente pero no encuentra ninguna pose, y el
+        float(None) que había antes lanzaba TypeError. En modo lote ese
+        TypeError lo capturaba el except por molécula, así que la molécula se
+        marcaba como fallida cuando en realidad el resultado legítimo era
+        "sin afinidad": debe quedar sin puntuar y caer al final del ranking,
+        no contarse como error de ejecución.
+
+        Se descarta bool aparte porque en Python es subclase de int y
+        float(True) daría 1.0, convirtiendo un "exito": true en un score.
+        """
+        if valor is None or isinstance(valor, bool):
+            return None
+        try:
+            return float(valor)
+        except (TypeError, ValueError):
+            return None
+
     def _extraer_score(self, resultado_workflow: Dict) -> Tuple:
         """
         Extrae el score numérico principal del resultado de un workflow de molécula única.
@@ -557,22 +581,29 @@ class BatchWorkflowExecutor:
             # reventaría con TypeError.
             rj   = nodo_res.get("resultado_json") or {}
 
+            # En todas las ramas se usa _como_score y solo se devuelve si dio un
+            # número: si un nodo trae la clave a null, se sigue buscando en los
+            # demás nodos en vez de abortar la extracción entera.
             if tipo == "comparacion":
-                if "similitud" in rj:
-                    return float(rj["similitud"]), "similitud"
+                score = self._como_score(rj.get("similitud"))
+                if score is not None:
+                    return score, "similitud"
                 # rmsdConformaciones.py escribe la clave "rmsd_angstroms", no
                 # "rmsd": buscar solo "rmsd" hacía que el score saliera None
                 # para TODAS las moléculas y el cribado por RMSD terminara
                 # siempre en "error" con el ranking vacío. Se acepta también
                 # "rmsd" por si un algoritmo de comparación propio la emite así.
                 for clave in ("rmsd_angstroms", "rmsd"):
-                    if clave in rj:
-                        return float(rj[clave]), "rmsd"
+                    score = self._como_score(rj.get(clave))
+                    if score is not None:
+                        return score, "rmsd"
 
             elif tipo == "docking":
-                energias = nodo_res.get("energias", {})
-                if isinstance(energias, dict) and "mejor_afinidad" in energias:
-                    return float(energias["mejor_afinidad"]), "docking"
+                energias = nodo_res.get("energias") or {}
+                if isinstance(energias, dict):
+                    score = self._como_score(energias.get("mejor_afinidad"))
+                    if score is not None:
+                        return score, "docking"
 
             elif tipo == "preprocesado":
                 if not isinstance(rj, dict):
@@ -584,10 +615,12 @@ class BatchWorkflowExecutor:
                 # tiene exactamente una molécula, así que el score es su MW.
                 moleculas = rj.get("moleculas")
                 if isinstance(moleculas, list) and moleculas and isinstance(moleculas[0], dict):
-                    if "MW" in moleculas[0]:
-                        return float(moleculas[0]["MW"]), "lipinski"
-                if "MW" in rj:
-                    return float(rj["MW"]), "lipinski"
+                    score = self._como_score(moleculas[0].get("MW"))
+                    if score is not None:
+                        return score, "lipinski"
+                score = self._como_score(rj.get("MW"))
+                if score is not None:
+                    return score, "lipinski"
 
         return None, None
 
