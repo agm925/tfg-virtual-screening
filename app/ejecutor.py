@@ -28,7 +28,7 @@ def ejecutar_algoritmo(ruta_algoritmo: str, *archivos) -> dict:
     Enruta según EXECUTION_MODE (app/config.py):
         - "local" (por defecto): ejecuta el script con subprocess en esta misma máquina.
         - "slurm": delega en SlurmExecutor (app/slurm_executor.py), que envía el trabajo
-          al clúster Picasso de la UAL vía SSH + sbatch.
+          al clúster Picasso (SCBI, Universidad de Málaga) vía SSH + sbatch.
 
     Devuelve un dict con:
         - exito (bool)

@@ -1,5 +1,5 @@
 """
-Ejecución remota de algoritmos en el clúster Picasso (UAL) vía SSH + SLURM.
+Ejecución remota de algoritmos en el clúster Picasso (SCBI, Universidad de Málaga) vía SSH + SLURM.
 
 Se activa cuando EXECUTION_MODE=slurm (ver app/config.py). Expone la misma
 interfaz que app.ejecutor._ejecutar_local: ejecutar_algoritmo(ruta_algoritmo, *archivos)
