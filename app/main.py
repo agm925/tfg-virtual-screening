@@ -15,7 +15,7 @@ from app.auth import (
     obtener_usuario_actual, requiere_rol, es_admin,
 )
 from app.celery_app import celery_app
-from app.config import EXECUTION_MODE, WORKER_CONCURRENCY
+from app.config import CORS_ORIGINS, EXECUTION_MODE, WORKER_CONCURRENCY
 from app.rate_limit import verificar_no_bloqueado, registrar_intento_fallido, limpiar_intentos
 from app.logging_config import logger, configurar_logging
 from datetime import datetime, timezone
@@ -35,7 +35,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción aquí se pondría la URL exacta de tu web
+    # Lista explícita de orígenes (ver CORS_ORIGINS en app/config.py). Con la
+    # API servida bajo /api/ del mismo origen que la SPA, las peticiones del
+    # frontend no son cross-origin y no pasan por aquí: esta lista solo cubre
+    # despliegues donde el frontend viva en otro origen.
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],  # Permite GET, POST, PUT, DELETE...
     allow_headers=["*"],  # Permite cualquier cabecera

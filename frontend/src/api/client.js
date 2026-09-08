@@ -6,7 +6,14 @@
 // que llevar la cabecera Authorization: Bearer <token> — centralizarlo aquí
 // evita repetir esa lógica (y el manejo de expiración/401) en 13 sitios.
 
-export const API_BASE = 'http://localhost:8000';
+// Ruta relativa, no URL absoluta: la API se sirve bajo el mismo origen que la
+// SPA, vía el proxy de nginx en producción (frontend/nginx.conf) o el de Vite
+// en desarrollo (frontend/vite.config.js). Antes esto era
+// 'http://localhost:8000', lo que ataba la aplicación a esa máquina: abierta
+// desde la IP de red de otro equipo, el login fallaba y los desplegables de
+// algoritmos salían vacíos. VITE_API_BASE permite apuntar a un backend en otro
+// origen si algún despliegue lo necesita.
+export const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
 
 const TOKEN_KEY = 'access_token';
 

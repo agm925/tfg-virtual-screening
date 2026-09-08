@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { apiFetch } from '../api/client'
 
 export default function Login({ alLoguear }) {
   const [esRegistro,        setEsRegistro]        = useState(false);
@@ -15,7 +16,7 @@ export default function Login({ alLoguear }) {
     const body = esRegistro ? { nombre, email, password_hash } : { email, password_hash };
 
     try {
-      const resp = await fetch(`http://localhost:8000${ruta}`, {
+      const resp = await apiFetch(ruta, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)

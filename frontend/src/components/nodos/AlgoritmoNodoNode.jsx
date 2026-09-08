@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Handle, Position, useReactFlow } from 'reactflow';
+import { apiFetch } from '../../api/client';
 import '../../styles/Nodos.css';
 
 const AlgoritmoNodoNode = ({ data, id }) => {
@@ -18,7 +19,7 @@ const AlgoritmoNodoNode = ({ data, id }) => {
 
   const cargarAlgoritmos = async () => {
     try {
-      const todos = await fetch('http://localhost:8000/algoritmos').then(r => r.json());
+      const todos = await apiFetch('/algoritmos').then(r => r.json());
       const filtrados = todos.filter(a => a.tipo === 'alineacion');
       setAlgoritmos(filtrados);
       if (filtrados.length === 0) return;

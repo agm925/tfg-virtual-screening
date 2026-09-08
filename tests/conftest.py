@@ -106,6 +106,17 @@ def ejecutar_script():
         return subprocess.run(
             [sys.executable, str(ruta), *[str(a) for a in args]],
             capture_output=True, text=True,
+            # Mismo encoding explicito que _ejecutar_local, por dos razones.
+            # 1) Paridad: si el fixture decodificara distinto que produccion,
+            #    dejaria de probar el camino que dice probar.
+            # 2) Determinismo: sin esto, el resultado dependia de la codepage
+            #    heredada del shell. Los algoritmos imprimen acentos, asi que
+            #    lanzar la suite con PYTHONIOENCODING=utf-8 en el entorno hacia
+            #    que el hijo emitiera UTF-8 y el padre lo leyera como cp1252,
+            #    y assertions como "Moleculas leidas: 3" fallaban por mojibake
+            #    ("MolÃ©culas leÃ­das") sin que hubiera ningun fallo real.
+            encoding="utf-8", errors="replace",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
     return _ejecutar
 
@@ -137,6 +148,28 @@ def obabel_disponible() -> bool:
 @pytest.fixture(scope="session")
 def smina_disponible() -> bool:
     return shutil.which("smina") is not None
+
+
+@pytest.fixture(scope="session")
+def redis_disponible() -> bool:
+    """
+    Si hay un Redis al que conectarse.
+
+    El limitador de intentos de login se apoya en Redis. Desde que
+    verificar_no_bloqueado falla EN ABIERTO cuando Redis no responde (ver
+    app/rate_limit.py), un entorno sin Redis ya no rompe el login -- pero
+    tampoco puede bloquear una cuenta, asi que el test del limite se salta
+    en vez de fallar, igual que los tests que dependen de Open Babel o Smina.
+    """
+    try:
+        import redis
+
+        from app.config import REDIS_URL
+
+        redis.from_url(REDIS_URL, socket_connect_timeout=1).ping()
+        return True
+    except Exception:
+        return False
 
 
 def _generar_sdf_3d(ruta: Path, moleculas: dict) -> None:

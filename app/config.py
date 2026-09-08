@@ -23,6 +23,26 @@ if not JWT_SECRET_KEY:
 JWT_ALGORITHM      = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", str(60 * 24)))  # 24h por defecto
 
+# --- CORS ---
+# Origenes que pueden llamar a la API desde un navegador.
+#
+# Antes esto era allow_origins=["*"] junto a allow_credentials=True, una
+# combinacion que la propia especificacion de CORS declara invalida, y que en
+# la practica significaba que cualquier web podia llamar a esta API con un
+# token robado. Ya no hace falta ninguna excepcion amplia: la SPA se sirve bajo
+# el mismo origen que la API (proxy /api/ de nginx en produccion, proxy de Vite
+# en desarrollo), asi que sus peticiones ni siquiera son cross-origin. La lista
+# queda como valvula de escape para escenarios donde el frontend se sirva
+# aparte; se separan por comas en la variable de entorno.
+CORS_ORIGINS = [
+    origen.strip()
+    for origen in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+    ).split(",")
+    if origen.strip()
+]
+
 # --- Base de datos ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tfg_virtual_screening.db")
 

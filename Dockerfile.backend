@@ -26,4 +26,17 @@ COPY . .
 RUN mkdir -p uploads algoritmos secrets
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# Sin --reload y con varios procesos.
+#
+# --reload no es solo "innecesario en producción": vigila *.py bajo el
+# directorio de trabajo, y algoritmos/ está montado como volumen, así que
+# CADA subida de un algoritmo reiniciaba el backend y cortaba las peticiones
+# en vuelo. Además dejaba la API en un único proceso, donde cualquier endpoint
+# síncrono pesado bloqueaba a todos los usuarios a la vez.
+#
+# scripts/migrate.py espera a que la base de datos acepte conexiones y crea el
+# esquema una sola vez, antes de levantar los workers: con --workers N, los N
+# procesos ejecutarían create_all() en paralelo al importar app.main, y ese DDL
+# concurrente puede bloquearse entre sí en PostgreSQL.
+CMD ["sh", "-c", "python scripts/migrate.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]

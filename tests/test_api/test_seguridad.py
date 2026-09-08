@@ -12,6 +12,8 @@ regresion futura si alguien añadiera una consulta cruda sin parametrizar.
 import time
 import uuid
 
+import pytest
+
 from app import models
 
 
@@ -154,7 +156,13 @@ def test_borrar_molecula_con_path_traversal_no_borra_fuera_de_uploads(client, us
 
 # --- Rate limiting de /login -------------------------------------------------
 
-def test_rate_limit_login_bloquea_tras_varios_fallos(client, usuario_autenticado):
+def test_rate_limit_login_bloquea_tras_varios_fallos(client, usuario_autenticado, redis_disponible):
+    if not redis_disponible:
+        pytest.skip(
+            "Redis no está levantado: el limitador falla en abierto a propósito "
+            "(ver app/rate_limit.py), así que no puede bloquear la cuenta."
+        )
+
     from app.rate_limit import MAX_INTENTOS_LOGIN, limpiar_intentos
 
     email = usuario_autenticado["usuario"]["email"]

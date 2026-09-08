@@ -14,6 +14,7 @@ x-backend-env: &backend-env
   WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
   EXECUTION_MODE: ${EXECUTION_MODE:-local}
   ALGORITMO_TIMEOUT: ${ALGORITMO_TIMEOUT:-1800}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
   SLURM_HOST: ${SLURM_HOST:-picasso.ual.es}
   SLURM_PORT: ${SLURM_PORT:-22}
   SLURM_USER: ${SLURM_USER:-}
@@ -46,7 +47,10 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Atado a 127.0.0.1: sigue siendo accesible desde el host (pgAdmin, psql,
+      # DBeaver) pero deja de estar publicado a toda la red local, donde estaba
+      # expuesto con la contraseña por defecto del compose.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tfg_user} -d ${POSTGRES_DB:-tfg_virtual_screening}"]
       interval: 5s
@@ -58,7 +62,9 @@ services:
     container_name: tfg_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      # Solo desde el host: Redis no tiene contraseña, y publicado a la red
+      # cualquiera podría leer o borrar la cola de tareas.
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -109,11 +115,16 @@ services:
       dockerfile: Dockerfile.backend
     container_name: tfg_flower
     restart: unless-stopped
-    command: celery -A app.celery_app.celery_app flower --port=5555
+    # Flower permite inspeccionar Y REVOCAR cualquier tarea, así que no puede
+    # quedar abierto: se protege con usuario:contraseña (FLOWER_BASIC_AUTH en
+    # .env) y además se ata a 127.0.0.1.
+    command: >
+      celery -A app.celery_app.celery_app flower --port=5555
+      --basic_auth=${FLOWER_BASIC_AUTH:-admin:admin}
     environment:
       <<: *backend-env
     ports:
-      - "5555:5555"
+      - "127.0.0.1:5555:5555"
     depends_on:
       - redis
 

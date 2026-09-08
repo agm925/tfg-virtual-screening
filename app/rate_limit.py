@@ -11,6 +11,7 @@ bloqueada durante VENTANA_BLOQUEO_SEGUNDOS, independientemente de si se
 siguen intentando credenciales nuevas durante ese bloqueo.
 """
 import redis
+from redis.exceptions import RedisError
 from fastapi import HTTPException, status
 
 from app.config import REDIS_URL
@@ -26,12 +27,36 @@ def _clave(email: str) -> str:
     return f"login_intentos:{email.strip().lower()}"
 
 
+def _leer_intentos(email: str):
+    """
+    Devuelve (intentos, segundos_restantes), o None si Redis no responde.
+
+    El limitador tiene que fallar EN ABIERTO. Antes estas llamadas a Redis
+    estaban sin proteger, asi que una caida de Redis convertia /login en un
+    500 y nadie podia entrar aunque la base de datos estuviera perfecta: un
+    componente accesorio (contar intentos fallidos) tumbaba la autenticacion
+    entera. Se veia tambien en la suite de tests, donde los 42 tests de la API
+    daban error por ConnectionError si no habia un Redis levantado en local.
+    Perder temporalmente el limitador es mucho menos grave que perder el login.
+    """
+    try:
+        clave = _clave(email)
+        intentos = _redis.get(clave)
+        if intentos is None:
+            return 0, 0
+        return int(intentos), max(_redis.ttl(clave), 1)
+    except RedisError as e:
+        logger.warning("rate_limit_indisponible", extra={"error": str(e)})
+        return None
+
+
 def verificar_no_bloqueado(email: str) -> None:
     """Lanza 429 si la cuenta ha superado MAX_INTENTOS_LOGIN en la ventana actual."""
-    intentos = _redis.get(_clave(email))
-    if intentos is not None and int(intentos) >= MAX_INTENTOS_LOGIN:
-        ttl = _redis.ttl(_clave(email))
-        segundos_restantes = max(ttl, 1)
+    estado = _leer_intentos(email)
+    if estado is None:
+        return  # Redis caido: se deja pasar en vez de tumbar el login
+    intentos, segundos_restantes = estado
+    if intentos >= MAX_INTENTOS_LOGIN:
         logger.warning(
             "login_bloqueado_por_rate_limit",
             extra={"email": email, "segundos_restantes": segundos_restantes},
@@ -49,13 +74,20 @@ def verificar_no_bloqueado(email: str) -> None:
 
 def registrar_intento_fallido(email: str) -> None:
     """Incrementa el contador de fallos; el primer fallo abre una ventana de
-    VENTANA_BLOQUEO_SEGUNDOS durante la que se acumulan los siguientes."""
-    clave = _clave(email)
-    intentos = _redis.incr(clave)
-    if intentos == 1:
-        _redis.expire(clave, VENTANA_BLOQUEO_SEGUNDOS)
+    VENTANA_BLOQUEO_SEGUNDOS durante la que se acumulan los siguientes.
+    Si Redis no responde, no se contabiliza (ver _leer_intentos)."""
+    try:
+        clave = _clave(email)
+        intentos = _redis.incr(clave)
+        if intentos == 1:
+            _redis.expire(clave, VENTANA_BLOQUEO_SEGUNDOS)
+    except RedisError as e:
+        logger.warning("rate_limit_indisponible", extra={"error": str(e)})
 
 
 def limpiar_intentos(email: str) -> None:
     """Se llama tras un login correcto: la cuenta empieza de cero."""
-    _redis.delete(_clave(email))
+    try:
+        _redis.delete(_clave(email))
+    except RedisError as e:
+        logger.warning("rate_limit_indisponible", extra={"error": str(e)})
