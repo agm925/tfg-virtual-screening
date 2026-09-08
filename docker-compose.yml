@@ -128,6 +128,55 @@ services:
     depends_on:
       - redis
 
+  # --- Simulación local del clúster Picasso (perfil "slurm") ---
+  #
+  # No arrancan con `docker compose up` normal. Para levantarlos:
+  #     docker compose --profile slurm up --build
+  # con EXECUTION_MODE=slurm y SLURM_HOST=slurm en el .env (ver .env.example).
+  #
+  # Ojo a lo que NO hay aquí: el contenedor slurm no monta ./uploads. Es
+  # deliberado. SlurmExecutor sube los ficheros por SFTP y se descarga los
+  # resultados; compartir el volumen falsearía justo lo que se quiere simular,
+  # que es el modelo copy-in/copy-out de un clúster real y sus modos de fallo.
+
+  slurmdb:
+    image: mariadb:11
+    container_name: tfg_slurmdb
+    profiles: ["slurm"]
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: slurm_acct_db
+      MARIADB_USER: slurm
+      MARIADB_PASSWORD: slurm
+      MARIADB_ROOT_PASSWORD: ${SLURM_DB_ROOT_PASSWORD:-root}
+    volumes:
+      - slurmdb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  slurm:
+    build:
+      context: .
+      dockerfile: Dockerfile.slurm
+      args:
+        SLURM_SIM_USER: ${SLURM_USER:-tfg}
+        SLURM_SIM_PASSWORD: ${SLURM_PASSWORD:-tfg}
+    container_name: tfg_slurm
+    profiles: ["slurm"]
+    restart: unless-stopped
+    # Tiene que coincidir con NodeName y SlurmctldHost de docker/slurm/slurm.conf.
+    hostname: slurm
+    depends_on:
+      slurmdb:
+        condition: service_healthy
+    ports:
+      # Solo desde el host, para poder entrar a inspeccionar la cola con
+      # `ssh -p 2222 tfg@localhost` mientras depuras.
+      - "127.0.0.1:2222:22"
+
   frontend:
     build:
       context: .
@@ -141,3 +190,4 @@ services:
 
 volumes:
   db_data:
+  slurmdb_data:

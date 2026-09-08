@@ -23,9 +23,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install flower==2.0.1
 
 COPY . .
-RUN mkdir -p uploads algoritmos secrets
+RUN mkdir -p uploads algoritmos secrets \
+    && chmod +x scripts/docker-entrypoint.sh
 
 EXPOSE 8000
+
+# El entrypoint solo añade un paso: registrar la clave SSH del clúster en
+# known_hosts cuando EXECUTION_MODE=slurm (ver scripts/docker-entrypoint.sh).
+# En modo local no hace nada y ejecuta el comando tal cual.
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 
 # Sin --reload y con varios procesos.
 #
