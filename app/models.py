@@ -129,3 +129,62 @@ class WorkflowExecution(Base):
     workflow = relationship("Workflow", back_populates="ejecuciones")
     usuario = relationship("Usuario", back_populates="workflow_executions")
 
+
+
+# --- TABLA 6: ARCHIVOS (registro de propiedad de los ficheros de uploads/) ---
+class VisibilidadArchivo(str, enum.Enum):
+    """
+    biblioteca: molécula o base de datos del depósito compartido. Cualquier
+                usuario autenticado puede leerla y usarla en sus flujos; solo
+                su propietario (o un admin) puede borrarla.
+    resultado:  fichero producido por una petición o una ejecución de workflow.
+                Privado: solo su propietario o un admin.
+    """
+    biblioteca = "biblioteca"
+    resultado = "resultado"
+
+
+class Archivo(Base):
+    """
+    Registro de propiedad de los ficheros de uploads/.
+
+    Existe porque hasta ahora la única fuente de propiedad era la tabla
+    `peticiones`, y los resultados de un workflow no se anotaban en ninguna
+    parte. Como consecuencia caían en el "depósito público" y cualquier
+    usuario autenticado podía listar, descargar y BORRAR los resultados de
+    docking y los rankings de otro. Con este registro, todo fichero tiene un
+    dueño y una visibilidad explícitos.
+
+    `nombre` es único: dos usuarios no pueden tener a la vez un fichero con el
+    mismo nombre. Antes la segunda subida sobrescribía la primera en silencio,
+    de modo que la petición pendiente del primer usuario pasaba a ejecutarse
+    sobre los datos del segundo. Ahora la subida se renombra en vez de pisar
+    nada.
+
+    Los ficheros viven planos en uploads/, sin subcarpetas, y es deliberado:
+    los grafos de workflow ya guardados referencian sus moléculas por nombre
+    suelto, y el frontend descarta el directorio al construir la descarga, así
+    que moverlos rompería tanto los flujos guardados como las descargas. La
+    unicidad entre ejecuciones concurrentes se consigue incorporando el id de
+    la ejecución al nombre del fichero de salida, no separándolos en carpetas.
+    """
+    __tablename__ = "archivos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, nullable=False, unique=True, index=True)
+    visibilidad = Column(
+        Enum(VisibilidadArchivo),
+        default=VisibilidadArchivo.biblioteca,
+        nullable=False,
+        index=True,
+    )
+    # Nulo solo para los ficheros heredados de antes de este registro, cuyo
+    # dueño no consta en ninguna parte: se tratan como biblioteca compartida.
+    propietario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True, index=True)
+    # Permite borrar de golpe todo lo que produjo una ejecución.
+    ejecucion_id = Column(Integer, ForeignKey("workflow_executions.id"), nullable=True, index=True)
+    peticion_id = Column(Integer, ForeignKey("peticiones.id"), nullable=True, index=True)
+    tamano_bytes = Column(Integer, nullable=True)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+
+    propietario = relationship("Usuario")

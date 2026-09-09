@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Query, Response
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from app.database import engine, SessionLocal
 from app import models, schemas
@@ -83,21 +84,113 @@ def nombre_archivo_seguro(nombre: str) -> str:
     return os.path.basename((nombre or "").replace("\\", "/"))
 
 
-def _propietario_de_archivo_uploads(nombre_archivo: str, db: Session):
+def _archivo_registrado(nombre_archivo: str, db: Session):
+    """Devuelve la fila de `archivos` para este nombre, o None si no consta."""
+    return db.query(models.Archivo).filter(models.Archivo.nombre == nombre_archivo).first()
+
+
+def exigir_acceso_a_archivo(nombre_archivo: str, db: Session, usuario: models.Usuario,
+                            para_borrar: bool = False) -> None:
     """
-    Devuelve el usuario_id de la petición dueña de este fichero de
-    uploads/, o None si el fichero no está ligado a ninguna petición (es
-    del depósito público, o es un resultado de workflow no rastreado por
-    esta tabla). Se usa para decidir si GET /uploads/{nombre} o
-    DELETE /moleculas/{nombre} deben exigir que el solicitante sea el
-    propietario, o si el fichero es de acceso libre para cualquier
-    usuario autenticado.
+    Comprueba que `usuario` puede leer --o borrar-- este fichero de uploads/.
+
+    Antes la propiedad solo se deducía de la tabla `peticiones`, y los
+    resultados de un workflow no se anotaban en ninguna parte: caían en el
+    "depósito público" y cualquier usuario autenticado podía descargarlos y
+    borrarlos. Ahora la fuente de verdad es el registro `archivos`.
+
+    Reglas:
+      - resultado  → solo el propietario o un admin, tanto para leer como
+                     para borrar.
+      - biblioteca → cualquier usuario autenticado puede leerla (es lo que
+                     permite reutilizar una base de datos subida por otro),
+                     pero solo su propietario o un admin puede borrarla.
+      - sin registrar → fichero anterior al registro. Se trata como
+                     biblioteca compartida, que es como se comportaba antes;
+                     scripts/migrate.py los da de alta en el primer arranque.
     """
-    peticion = db.query(models.Peticion).filter(
-        (models.Peticion.ruta_mol_original == nombre_archivo)
-        | (models.Peticion.ruta_mol_resultado == nombre_archivo)
-    ).first()
-    return peticion.usuario_id if peticion else None
+    archivo = _archivo_registrado(nombre_archivo, db)
+    if archivo is None:
+        return
+
+    if es_admin(usuario):
+        return
+
+    es_propietario = archivo.propietario_id == usuario.id
+
+    if archivo.visibilidad == models.VisibilidadArchivo.resultado and not es_propietario:
+        raise HTTPException(
+            status_code=403,
+            detail="Este archivo es el resultado de una ejecución de otro usuario.",
+        )
+
+    if para_borrar and archivo.propietario_id is not None and not es_propietario:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el propietario puede borrar este archivo.",
+        )
+
+
+def registrar_archivo(db: Session, nombre: str, propietario_id, visibilidad,
+                      tamano_bytes=None, ejecucion_id=None, peticion_id=None) -> None:
+    """Da de alta un fichero en el registro, o actualiza el que ya existiera."""
+    archivo = _archivo_registrado(nombre, db)
+    if archivo is None:
+        archivo = models.Archivo(nombre=nombre)
+        db.add(archivo)
+    archivo.propietario_id = propietario_id
+    archivo.visibilidad = visibilidad
+    if tamano_bytes is not None:
+        archivo.tamano_bytes = tamano_bytes
+    if ejecucion_id is not None:
+        archivo.ejecucion_id = ejecucion_id
+    if peticion_id is not None:
+        archivo.peticion_id = peticion_id
+
+
+def borrar_archivos_registrados(db: Session, filtro) -> int:
+    """
+    Borra de disco y del registro los ficheros que cumplan `filtro`.
+
+    Hasta ahora nada limpiaba nada: los intermedios de cada nodo y los
+    resultados se acumulaban indefinidamente en uploads/ --mas de dos mil
+    ficheros residuales en el entorno de desarrollo, con cadenas como
+    "..._resultado_resultado_resultado.mol2"--. Con el registro, borrar una
+    peticion o una ejecucion puede llevarse consigo lo que produjo.
+    """
+    borrados = 0
+    for archivo in db.query(models.Archivo).filter(filtro).all():
+        ruta = os.path.join("uploads", archivo.nombre)
+        try:
+            if os.path.exists(ruta):
+                os.remove(ruta)
+                borrados += 1
+        except OSError as e:
+            logger.warning("no_se_pudo_borrar_archivo",
+                           extra={"nombre": archivo.nombre, "error": str(e)})
+        db.delete(archivo)
+    return borrados
+
+
+def nombre_libre(nombre: str, db: Session) -> str:
+    """
+    Devuelve un nombre que no esté ya ocupado en uploads/, anadiendo un sufijo
+    numérico si hace falta.
+
+    Antes las subidas escribían sin comprobar: si dos usuarios subían un
+    `ligando.mol2`, el segundo destruía el fichero del primero, y la petición
+    pendiente del primero pasaba a ejecutarse SOBRE LOS DATOS DEL SEGUNDO, sin
+    ningún aviso. Renombrar en vez de sobrescribir elimina esa clase de
+    corrupción por completo.
+    """
+    if _archivo_registrado(nombre, db) is None and not os.path.exists(os.path.join("uploads", nombre)):
+        return nombre
+    base, ext = os.path.splitext(nombre)
+    for n in range(2, 1000):
+        candidato = f"{base}_{n}{ext}"
+        if _archivo_registrado(candidato, db) is None and not os.path.exists(os.path.join("uploads", candidato)):
+            return candidato
+    raise HTTPException(status_code=409, detail="Demasiados archivos con ese nombre.")
 
 
 # --- ESCRITURA DE SUBIDAS CON LÍMITE DE TAMAÑO ---
@@ -390,8 +483,9 @@ async def crear_peticion(
     #    Por trozos y con tope, igual que /moleculas/subir: aunque aquí el
     #    usuario esté autenticado, cargar el fichero entero en memoria sigue
     #    siendo un problema de capacidad, no solo de abuso.
+    nombre_fichero = nombre_libre(nombre_fichero, db)
     ruta_guardado = os.path.join("uploads", nombre_fichero)
-    await guardar_subida(archivo_mol, ruta_guardado, MAX_SUBIDA_BYTES)
+    bytes_escritos = await guardar_subida(archivo_mol, ruta_guardado, MAX_SUBIDA_BYTES)
 
     # 3. Creamos el registro en la base de datos con estado PENDIENTE
     nueva_peticion = models.Peticion(
@@ -403,6 +497,17 @@ async def crear_peticion(
     db.add(nueva_peticion)
     db.commit()
     db.refresh(nueva_peticion)
+
+    # La molécula de entrada es privada del autor de la petición, no de la
+    # biblioteca compartida: la subió para un análisis concreto.
+    registrar_archivo(
+        db, nombre_fichero,
+        propietario_id=usuario_id,
+        visibilidad=models.VisibilidadArchivo.resultado,
+        tamano_bytes=bytes_escritos,
+        peticion_id=nueva_peticion.id,
+    )
+    db.commit()
 
     # 4. Encolar la tarea en Celery (se procesará en cuanto el worker esté libre)
     tarea = ejecutar_peticion_async.delay(nueva_peticion.id)
@@ -598,6 +703,7 @@ def listar_algoritmos(
 async def subir_molecula(
     archivo: UploadFile = File(...),
     tipo: str = Form("molecula"),   # "molecula" | "base_de_datos"
+    db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
     """
@@ -626,8 +732,19 @@ async def subir_molecula(
         raise HTTPException(status_code=400, detail="Las bases de datos deben estar en formato SDF (.sdf)")
 
     os.makedirs("uploads", exist_ok=True)
+    # Si el nombre ya está ocupado se renombra en vez de pisar el fichero
+    # ajeno (ver nombre_libre).
+    nombre_fichero = nombre_libre(nombre_fichero, db)
     ruta = os.path.join("uploads", nombre_fichero)
     escritos = await guardar_subida(archivo, ruta, MAX_SUBIDA_BYTES)
+
+    registrar_archivo(
+        db, nombre_fichero,
+        propietario_id=usuario_actual.id,
+        visibilidad=models.VisibilidadArchivo.biblioteca,
+        tamano_bytes=escritos,
+    )
+    db.commit()
 
     # Contar moléculas si es SDF. Se hace releyendo el fichero por trozos y no
     # sobre el contenido en memoria, porque ya no existe tal contenido: el
@@ -657,19 +774,22 @@ def borrar_molecula(
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
     """
-    Borra un archivo de molécula de uploads/. Si el fichero pertenece a una
-    petición de otro usuario, exige ser el propietario o admin; los
-    ficheros del depósito público (sin petición asociada) los puede borrar
-    cualquier usuario autenticado.
+    Borra un archivo de molécula de uploads/.
+
+    Solo su propietario o un admin. Antes bastaba con estar autenticado para
+    borrar cualquier cosa que no estuviera ligada a una petición, lo que
+    incluía TODOS los resultados de workflow de los demás usuarios.
     """
     nombre_archivo = exigir_nombre_archivo_seguro(nombre_archivo)
-    propietario_id = _propietario_de_archivo_uploads(nombre_archivo, db)
-    if propietario_id is not None and propietario_id != usuario_actual.id and not es_admin(usuario_actual):
-        raise HTTPException(status_code=403, detail="No tienes permiso para borrar este archivo")
+    exigir_acceso_a_archivo(nombre_archivo, db, usuario_actual, para_borrar=True)
     ruta = os.path.join("uploads", nombre_archivo)
     if not os.path.exists(ruta):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     os.remove(ruta)
+    registro = _archivo_registrado(nombre_archivo, db)
+    if registro is not None:
+        db.delete(registro)
+    db.commit()
     return {"mensaje": f"{nombre_archivo} eliminado"}
 
 
@@ -682,14 +802,19 @@ def listar_moleculas(
     pagina: Paginacion = Depends(),
 ):
     """
-    Lista las moléculas disponibles en el servidor.
+    Lista las moléculas visibles para el usuario, desde el registro `archivos`.
 
-    Combina dos fuentes:
-      1. Archivos referenciados en la tabla 'peticiones' del usuario autenticado
-         (o de otro usuario si quien pregunta es admin y pasa usuario_id).
-      2. Archivos de molécula presentes físicamente en uploads/ que no estén
-         en ninguna petición -- el "depósito público" -- que ve cualquier
-         usuario autenticado, sea o no el propietario.
+    Devuelve la biblioteca compartida --que ve cualquier usuario autenticado--
+    más los ficheros privados del propio usuario. Los resultados de otros
+    quedan fuera.
+
+    Antes esto recorría el directorio entero con un `stat()` por fichero
+    (3.600 en el despliegue de desarrollo), cargaba todas las peticiones del
+    usuario, luego las de TODOS los usuarios, y paginaba al final, sobre la
+    lista ya construida. Y cada nodo del canvas dispara su propia llamada, así
+    que un flujo con cinco selectores hacía cinco escaneos completos. Ahora es
+    una consulta indexada con LIMIT/OFFSET, y su coste depende del tamaño de
+    la página, no del de la carpeta.
 
     Parámetro opcional:
       usuario_id — para que un admin consulte las moléculas de otro usuario;
@@ -699,52 +824,33 @@ def listar_moleculas(
         raise HTTPException(status_code=403, detail="No tienes permiso para ver las moléculas de otro usuario")
     usuario_objetivo = usuario_id if usuario_id is not None else usuario_actual.id
 
-    extensiones_molecula = {".mol2", ".sdf", ".pdbqt", ".mol", ".pdb"}
-    moleculas = {}  # nombre_archivo → dict con metadatos
+    extensiones_molecula = (".mol2", ".sdf", ".pdbqt", ".mol", ".pdb")
 
-    # 1. Moléculas de las peticiones del usuario objetivo (nunca de todos a la vez)
-    query = db.query(models.Peticion).filter(models.Peticion.usuario_id == usuario_objetivo)
+    visibles = or_(
+        models.Archivo.visibilidad == models.VisibilidadArchivo.biblioteca,
+        models.Archivo.propietario_id == usuario_objetivo,
+    )
+    consulta = db.query(models.Archivo).filter(
+        visibles,
+        or_(*[models.Archivo.nombre.ilike(f"%{ext}") for ext in extensiones_molecula]),
+    )
 
-    for peticion in query.all():
-        for nombre in (peticion.ruta_mol_original, peticion.ruta_mol_resultado):
-            if not nombre:
-                continue
-            ruta = os.path.join("uploads", nombre)
-            if os.path.exists(ruta) and os.path.splitext(nombre)[1].lower() in extensiones_molecula:
-                moleculas[nombre] = {
-                    "nombre":    nombre,
-                    "origen":    "base_de_datos",
-                    "tamano_kb": round(os.path.getsize(ruta) / 1024, 1),
-                }
+    response.headers["X-Total-Count"] = str(consulta.count())
+    archivos = consulta.order_by(models.Archivo.nombre)         .offset(pagina.offset).limit(pagina.limit).all()
 
-    # 2. Archivos físicos en uploads/ no registrados en ninguna petición: el
-    #    depósito público, visible para cualquier usuario autenticado.
-    #    "ficheros_con_dueño" incluye las peticiones de TODOS los usuarios,
-    #    no solo las del usuario objetivo -- si no, el resultado privado de
-    #    la petición de otro usuario se colaría aquí como si fuera público.
-    ficheros_con_dueño = set()
-    for original, resultado in db.query(models.Peticion.ruta_mol_original, models.Peticion.ruta_mol_resultado).all():
-        if original:
-            ficheros_con_dueño.add(original)
-        if resultado:
-            ficheros_con_dueño.add(resultado)
+    return [
+        {
+            "nombre": a.nombre,
+            # Se conservan las dos etiquetas que ya consumía el frontend para
+            # elegir el icono del desplegable.
+            "origen": ("base_de_datos"
+                       if a.visibilidad == models.VisibilidadArchivo.resultado
+                       else "archivo_local"),
+            "tamano_kb": round((a.tamano_bytes or 0) / 1024, 1),
+        }
+        for a in archivos
+    ]
 
-    if os.path.exists("uploads"):
-        for nombre in os.listdir("uploads"):
-            if nombre in moleculas or nombre in ficheros_con_dueño:
-                continue
-            ext = os.path.splitext(nombre)[1].lower()
-            if ext in extensiones_molecula:
-                ruta = os.path.join("uploads", nombre)
-                moleculas[nombre] = {
-                    "nombre":    nombre,
-                    "origen":    "archivo_local",
-                    "tamano_kb": round(os.path.getsize(ruta) / 1024, 1),
-                }
-
-    lista_completa = sorted(moleculas.values(), key=lambda m: m["nombre"])
-    response.headers["X-Total-Count"] = str(len(lista_completa))
-    return lista_completa[pagina.offset: pagina.offset + pagina.limit]
 
 @app.get("/peticiones/{peticion_id}/estado")
 def estado_peticion(
@@ -796,10 +902,15 @@ def borrar_peticion(
     if peticion.usuario_id != usuario_actual.id and not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No tienes permiso para borrar esta petición")
 
+    borrados = borrar_archivos_registrados(
+        db, models.Archivo.peticion_id == peticion_id)
     db.delete(peticion)
     db.commit()
-    
-    return {"mensaje": f"Petición {peticion_id} eliminada correctamente"}
+
+    return {
+        "mensaje": f"Petición {peticion_id} eliminada correctamente",
+        "archivos_borrados": borrados,
+    }
 
 
 # --- ENDPOINTS DE WORKFLOWS (KNIME) ---
@@ -903,12 +1014,23 @@ def borrar_workflow(
     """
     workflow = _obtener_workflow_propio(workflow_id, db, usuario_actual)
 
-    # Borrar ejecuciones asociadas
+    # Borrar ejecuciones asociadas y los ficheros que produjeron
+    ids_ejecuciones = [
+        e.id for e in db.query(models.WorkflowExecution.id)
+        .filter(models.WorkflowExecution.workflow_id == workflow_id).all()
+    ]
+    borrados = 0
+    if ids_ejecuciones:
+        borrados = borrar_archivos_registrados(
+            db, models.Archivo.ejecucion_id.in_(ids_ejecuciones))
     db.query(models.WorkflowExecution).filter(models.WorkflowExecution.workflow_id == workflow_id).delete()
     db.delete(workflow)
     db.commit()
-    
-    return {"mensaje": f"Workflow {workflow_id} eliminado correctamente"}
+
+    return {
+        "mensaje": f"Workflow {workflow_id} eliminado correctamente",
+        "archivos_borrados": borrados,
+    }
 
 
 @app.post("/workflows/{workflow_id}/ejecutar")
@@ -996,16 +1118,16 @@ def servir_archivo_upload(
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
     """
-    Sirve un archivo de la carpeta uploads/ para descarga directa. Exige
-    estar autenticado; si el fichero pertenece a la petición de otro
-    usuario, exige además ser su propietario o admin (los ficheros del
-    depósito público, sin petición asociada, los puede descargar
-    cualquier usuario autenticado).
+    Sirve un archivo de uploads/ para descarga directa.
+
+    Los ficheros de la biblioteca los descarga cualquier usuario autenticado
+    --es lo que permite reutilizar una base de datos subida por otro--, pero
+    los resultados de una petición o de una ejecución son privados de su
+    propietario. Antes los resultados de workflow no constaban en ninguna
+    parte y quedaban accesibles para todos.
     """
     nombre_archivo = exigir_nombre_archivo_seguro(nombre_archivo)
-    propietario_id = _propietario_de_archivo_uploads(nombre_archivo, db)
-    if propietario_id is not None and propietario_id != usuario_actual.id and not es_admin(usuario_actual):
-        raise HTTPException(status_code=403, detail="No tienes permiso para descargar este archivo")
+    exigir_acceso_a_archivo(nombre_archivo, db, usuario_actual)
     ruta = os.path.join("uploads", nombre_archivo)
     if not os.path.exists(ruta):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")

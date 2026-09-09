@@ -8,6 +8,35 @@ from app.email_utils import (
     correo_workflow_completado, correo_workflow_error,
 )
 from app.workflow_executor import WorkflowExecutor, BatchWorkflowExecutor
+from app.models import Archivo, VisibilidadArchivo
+
+
+def _registrar_resultados(db, nombres, usuario_id, ejecucion_id=None, peticion_id=None):
+    """
+    Da de alta en el registro `archivos` los ficheros que ha producido una
+    ejecucion, como resultados PRIVADOS de su propietario.
+
+    Sin esto caian en el "deposito compartido" --no constaban en ninguna
+    tabla-- y cualquier usuario autenticado podia descargarlos y borrarlos.
+    """
+    directorio = "uploads"
+    for nombre in nombres:
+        nombre = os.path.basename(nombre)
+        ruta = os.path.join(directorio, nombre)
+        if not os.path.exists(ruta):
+            continue
+        archivo = db.query(Archivo).filter(Archivo.nombre == nombre).first()
+        if archivo is None:
+            archivo = Archivo(nombre=nombre)
+            db.add(archivo)
+        archivo.propietario_id = usuario_id
+        archivo.visibilidad = VisibilidadArchivo.resultado
+        archivo.tamano_bytes = os.path.getsize(ruta)
+        if ejecucion_id is not None:
+            archivo.ejecucion_id = ejecucion_id
+        if peticion_id is not None:
+            archivo.peticion_id = peticion_id
+    db.commit()
 
 
 @celery_app.task(bind=True, max_retries=0)
@@ -50,6 +79,8 @@ def ejecutar_peticion_async(self, peticion_id: int) -> dict:
             peticion.estado           = "COMPLETADO"
             peticion.ruta_mol_resultado = nombre_salida
             db.commit()
+            _registrar_resultados(db, [nombre_salida], peticion.usuario_id,
+                                  peticion_id=peticion.id)
             # 5a. Correo de éxito
             if usuario:
                 correo_completado(usuario.nombre, usuario.email, peticion_id, algoritmo.nombre)
@@ -99,11 +130,15 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         db.commit()
 
         # 2. Ejecutar
-        executor = WorkflowExecutor(workflow.grafo_json, usuario_id)
+        executor = WorkflowExecutor(workflow.grafo_json, usuario_id,
+                                    ejecucion_id=ejecucion.id)
         resultado = executor.ejecutar()
 
         # 3. Persistir resultados — versión slim (sin logs, sin binarios)
         estado_final = resultado.get("estado", "completado")
+
+        _registrar_resultados(db, executor.archivos_generados, usuario_id,
+                              ejecucion_id=ejecucion.id)
 
         # Extraer archivos de salida por nodo, descartar logs voluminosos
         nodos_slim = {}
@@ -177,10 +212,15 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
             }
             db.commit()
 
-        executor  = BatchWorkflowExecutor(workflow.grafo_json, usuario_id)
+        executor  = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
+                                          ejecucion_id=ejecucion.id)
         resultado = executor.ejecutar_batch(on_progreso=on_progreso)
 
         estado_final = resultado.get("estado", "completado")
+
+        # El CSV de ranking es el entregable del cribado: tambien privado.
+        _registrar_resultados(db, [resultado.get("csv_ranking")] if resultado.get("csv_ranking") else [],
+                              usuario_id, ejecucion_id=ejecucion.id)
 
         # Guardar solo resumen slim en BD — el CSV completo queda en disco
         resultado_bd = {

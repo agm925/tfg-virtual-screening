@@ -16,9 +16,33 @@ from app.ejecutor import ejecutar_algoritmo
 class WorkflowExecutor:
     """Ejecuta workflows compilando el grafo y ejecutando nodos en orden topológico."""
 
-    def __init__(self, workflow_json: Dict[str, Any], usuario_id: int):
+    def __init__(self, workflow_json: Dict[str, Any], usuario_id: int,
+                 ejecucion_id: int = None, sufijo_extra: str = ""):
         self.workflow_json = workflow_json
         self.usuario_id    = usuario_id
+        self.ejecucion_id  = ejecucion_id
+        # Token que hace unicos los nombres de salida entre ejecuciones.
+        #
+        # Antes los nombres se derivaban SOLO del id del nodo
+        # ("comparacion_<nodo>.json", "docking_<nodo>.sdf"), y el id del nodo
+        # es constante para un workflow dado. Dos ejecuciones simultaneas del
+        # mismo flujo --dos usuarios, o el mismo lanzandolo dos veces, o varias
+        # replicas de worker, que es justo lo que habilita --scale worker=N--
+        # escribian sobre el mismo fichero y se devolvian resultados cruzados.
+        # Incorporar el id de la ejecucion al nombre lo elimina.
+        #
+        # Se mantienen los ficheros PLANOS en uploads/, sin subcarpetas por
+        # ejecucion, porque los grafos ya guardados referencian sus moleculas
+        # por nombre suelto y el frontend descarta el directorio al construir
+        # la descarga: separarlos en carpetas romperia ambas cosas.
+        self.token = ""
+        if ejecucion_id is not None:
+            self.token = f"_e{ejecucion_id}"
+        if sufijo_extra:
+            self.token += f"_{sufijo_extra}"
+        # Nombres de los ficheros producidos, para que quien orquesta pueda
+        # registrarlos como resultados privados de su propietario.
+        self.archivos_generados = []
         self.nodos         = workflow_json.get("nodes", [])
         self.conexiones    = workflow_json.get("edges", [])
         self.resultados    = {}
@@ -135,7 +159,7 @@ class WorkflowExecutor:
                 ext_salida = ".sdf"
             else:
                 ext_salida = ext if ext in (".mol2", ".sdf") else ".sdf"
-            nombre_salida = f"{base}_alineado_{nodo_id}{ext_salida}"
+            nombre_salida = f"{base}_alineado_{nodo_id}{self.token}{ext_salida}"
             ruta_salida   = os.path.join("uploads", nombre_salida)
 
             # Comprobamos si hay una referencia conectada (para O3A / MCS)
@@ -150,6 +174,7 @@ class WorkflowExecutor:
                 raise ValueError(f"Error ejecutando algoritmo: {resultado.get('error')}")
 
             self.mapeo_archivos[nodo_id] = ruta_salida
+            self.archivos_generados.append(os.path.basename(ruta_salida))
             self.resultados[nodo_id] = {
                 "tipo":            "alineacion",
                 "archivo_entrada": archivo_entrada,
@@ -188,9 +213,9 @@ class WorkflowExecutor:
             # usan extensión .sdf; los de métricas (tanimoto, rmsd) usan .json
             nombre_base = ruta_script.lower()
             if any(k in nombre_base for k in ("alinear", "align")):
-                nombre_salida = f"comparacion_{nodo_id}.sdf"
+                nombre_salida = f"comparacion_{nodo_id}{self.token}.sdf"
             else:
-                nombre_salida = f"comparacion_{nodo_id}.json"
+                nombre_salida = f"comparacion_{nodo_id}{self.token}.json"
             ruta_salida = os.path.join("uploads", nombre_salida)
 
             resultado = ejecutar_algoritmo(ruta_algoritmo, archivo_mol1, archivo_mol2, ruta_salida)
@@ -199,6 +224,7 @@ class WorkflowExecutor:
                 raise ValueError(f"Error ejecutando comparación: {resultado.get('error')}")
 
             self.mapeo_archivos[nodo_id] = ruta_salida
+            self.archivos_generados.append(os.path.basename(ruta_salida))
 
             # Si la salida es JSON la leemos para mostrársela al usuario
             resultado_comparacion = {}
@@ -241,7 +267,7 @@ class WorkflowExecutor:
             # filtroLipinski produce JSON; filtroObabel filtra y devuelve molécula; el resto produce molécula
             nombre_base = algoritmo_nombre.lower()
             if "lipinski" in nombre_base:
-                nombre_salida = f"{os.path.splitext(os.path.basename(archivo_entrada))[0]}_lipinski_{nodo_id}.json"
+                nombre_salida = f"{os.path.splitext(os.path.basename(archivo_entrada))[0]}_lipinski_{nodo_id}{self.token}.json"
             else:
                 base, ext  = os.path.splitext(os.path.basename(archivo_entrada))
                 formato_pedido = datos.get("formato_salida")
@@ -250,7 +276,7 @@ class WorkflowExecutor:
                 else:
                     ext_salida = ext if ext in (".mol2", ".sdf") else ".sdf"
                 sufijo = "filtrado" if "filtro" in nombre_base else "prep"
-                nombre_salida = f"{base}_{sufijo}_{nodo_id}{ext_salida}"
+                nombre_salida = f"{base}_{sufijo}_{nodo_id}{self.token}{ext_salida}"
             ruta_salida = os.path.join("uploads", nombre_salida)
 
             if "filtro" in nombre_base and "lipinski" not in nombre_base:
@@ -272,6 +298,7 @@ class WorkflowExecutor:
                 raise ValueError(f"Error en preprocesado: {resultado.get('error')}")
 
             self.mapeo_archivos[nodo_id] = ruta_salida
+            self.archivos_generados.append(os.path.basename(ruta_salida))
 
             resultado_json = {}
             if ruta_salida.endswith(".json") and os.path.exists(ruta_salida):
@@ -311,7 +338,7 @@ class WorkflowExecutor:
             if not os.path.exists(ruta_algoritmo):
                 raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
 
-            nombre_salida = f"docking_{nodo_id}.sdf"
+            nombre_salida = f"docking_{nodo_id}{self.token}.sdf"
             ruta_salida   = os.path.join("uploads", nombre_salida)
 
             _, archivo_referencia = self.obtener_entrada_nodo(nodo_id, "input_referencia")
@@ -339,6 +366,7 @@ class WorkflowExecutor:
                 raise ValueError(f"Error en docking: {resultado.get('error')}")
 
             self.mapeo_archivos[nodo_id] = ruta_salida
+            self.archivos_generados.append(os.path.basename(ruta_salida))
 
             # Leer JSON de energías generado por dockingSmina.py
             ruta_json = os.path.splitext(ruta_salida)[0] + "_energias.json"
@@ -510,9 +538,11 @@ class BatchWorkflowExecutor:
     el workflow completo para cada una, devolviendo un ranking ordenado.
     """
 
-    def __init__(self, workflow_json: Dict[str, Any], usuario_id: int):
+    def __init__(self, workflow_json: Dict[str, Any], usuario_id: int,
+                 ejecucion_id: int = None):
         self.workflow_json = workflow_json
         self.usuario_id    = usuario_id
+        self.ejecucion_id  = ejecucion_id
         self.nodos         = workflow_json.get("nodes", [])
 
     # ------------------------------------------------------------------
@@ -632,8 +662,9 @@ class BatchWorkflowExecutor:
             "lipinski":  "Peso molecular (Da)",
         }.get(tipo_score or "", "Score")
 
+        sufijo_ejecucion = f"_e{self.ejecucion_id}" if self.ejecucion_id else ""
         nombre_csv = (
-            f"ranking_{os.path.splitext(nombre_bd)[0]}_"
+            f"ranking_{os.path.splitext(nombre_bd)[0]}{sufijo_ejecucion}_"
             f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
         )
         ruta_csv = os.path.join("uploads", nombre_csv)
@@ -689,7 +720,13 @@ class BatchWorkflowExecutor:
                         nodo["data"]["nombre_archivo"] = os.path.basename(mol_info["ruta"])
                         break
 
-                executor  = WorkflowExecutor(workflow_mod, self.usuario_id)
+                # sufijo_extra: dentro de una misma ejecucion las N moleculas
+                # pasan por los mismos nodos, asi que el id de ejecucion solo
+                # no basta para distinguir sus salidas.
+                executor  = WorkflowExecutor(
+                    workflow_mod, self.usuario_id,
+                    ejecucion_id=self.ejecucion_id,
+                    sufijo_extra=f"m{mol_info['indice']}")
                 resultado = executor.ejecutar()
 
                 score, tipo_score = self._extraer_score(resultado)

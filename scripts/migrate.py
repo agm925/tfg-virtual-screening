@@ -65,11 +65,75 @@ def crear_indices_faltantes() -> None:
     print(f"Índices verificados: {len(creados)}.")
 
 
+def registrar_archivos_existentes() -> None:
+    """
+    Da de alta en la tabla `archivos` los ficheros que ya estaban en uploads/.
+
+    Sin esto, al pasar el listado de moléculas a consultar el registro en vez
+    de escanear el directorio, toda la biblioteca previa desaparecería de la
+    interfaz aunque los ficheros siguieran en disco.
+
+    La propiedad se deduce de la tabla `peticiones`, que hasta ahora era la
+    única que la registraba: un fichero que aparece como entrada o salida de
+    una petición pertenece a su autor y se marca como resultado privado. Todo
+    lo demás no tiene dueño deducible en ninguna parte, así que se registra
+    como biblioteca compartida, que es exactamente el trato que recibía antes.
+
+    Es idempotente: solo inserta lo que falta, de modo que puede ejecutarse en
+    cada arranque.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    directorio = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+    if not os.path.isdir(directorio):
+        print("No hay carpeta uploads/: nada que registrar.")
+        return
+
+    Sesion = sessionmaker(bind=engine)
+    db = Sesion()
+    try:
+        ya_registrados = {n for (n,) in db.query(models.Archivo.nombre).all()}
+
+        # Propiedad conocida: lo que consta en peticiones.
+        duenos = {}
+        for usuario_id, peticion_id, original, resultado in db.query(
+            models.Peticion.usuario_id, models.Peticion.id,
+            models.Peticion.ruta_mol_original, models.Peticion.ruta_mol_resultado,
+        ).all():
+            for nombre in (original, resultado):
+                if nombre:
+                    duenos[nombre] = (usuario_id, peticion_id)
+
+        nuevos = 0
+        for nombre in os.listdir(directorio):
+            ruta = os.path.join(directorio, nombre)
+            if not os.path.isfile(ruta) or nombre in ya_registrados:
+                continue
+            usuario_id, peticion_id = duenos.get(nombre, (None, None))
+            db.add(models.Archivo(
+                nombre=nombre,
+                visibilidad=(models.VisibilidadArchivo.resultado if usuario_id
+                             else models.VisibilidadArchivo.biblioteca),
+                propietario_id=usuario_id,
+                peticion_id=peticion_id,
+                tamano_bytes=os.path.getsize(ruta),
+            ))
+            nuevos += 1
+            if nuevos % 500 == 0:
+                db.commit()
+        db.commit()
+        print(f"Archivos registrados: {nuevos} nuevos "
+              f"({len(ya_registrados)} ya estaban en el registro).")
+    finally:
+        db.close()
+
+
 def main() -> None:
     esperar_base_de_datos()
     models.Base.metadata.create_all(bind=engine)
     print("Tablas creadas/verificadas correctamente.")
     crear_indices_faltantes()
+    registrar_archivos_existentes()
 
 
 if __name__ == "__main__":
