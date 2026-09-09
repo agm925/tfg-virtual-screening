@@ -43,16 +43,23 @@ const DockingNodoNode = ({ data, id }) => {
       if (filtrados.length === 0) return;
       const guardado = filtrados.find(a => String(a.id) === String(data.algoritmo_id));
       const elegido = guardado || filtrados[0];
-      handleCambio(elegido.id, elegido.nombre);
+      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo);
     } catch (err) {
       console.error('Error cargando algoritmos de docking:', err);
     }
   };
 
-  const handleCambio = (id, nombre) => {
+  // algoritmo_ruta guarda el nombre real del .py; algoritmo_nombre es la
+  // etiqueta que ve el usuario. El motor construye la ruta del script con
+  // "algoritmo_ruta or algoritmo_nombre", asi que omitirlo aqui funcionaba
+  // solo mientras ambos coincidian: en cuanto un algoritmo se registre como
+  // "Docking con Smina" en vez de "dockingSmina", el flujo fallaria con
+  // "Algoritmo no encontrado: algoritmos/Docking con Smina.py".
+  const handleCambio = (id, nombre, rutaArchivo) => {
     setSeleccionado(String(id));
     data.algoritmo_id     = id;
     data.algoritmo_nombre = nombre;
+    data.algoritmo_ruta   = rutaArchivo;
   };
 
   return (
@@ -68,7 +75,7 @@ const DockingNodoNode = ({ data, id }) => {
           value={seleccionado}
           onChange={(e) => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
-            if (algo) handleCambio(algo.id, algo.nombre);
+            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo);
           }}
         >
           {algoritmos.length > 0 ? (

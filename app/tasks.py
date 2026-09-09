@@ -1,4 +1,5 @@
 import os
+import time
 from app.celery_app import celery_app
 from app.database import SessionLocal
 from app import models
@@ -254,15 +255,31 @@ def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
     def debe_parar():
         return cliente is not None and cliente.exists(_clave_cancelacion(ejecucion_id))
 
+    # El progreso se escribe a la base de datos COMO MUCHO cada
+    # INTERVALO_PROGRESO_S segundos, no en cada molecula.
+    #
+    # El contador autoritativo es el INCR de Redis, que es barato. Reflejarlo
+    # en la fila de la ejecucion es solo para que el frontend lo lea con su
+    # sondeo habitual, y ese sondeo va cada 3 s: escribir mas a menudo no se
+    # ve en pantalla y si se nota en la base de datos. Antes se hacia un commit
+    # por molecula --mil moleculas, mil escrituras de un blob JSON-- y ademas
+    # con la sesion abierta durante todo el lote.
+    INTERVALO_PROGRESO_S = 2.0
+    ultimo_volcado = [0.0]
+
     def al_terminar_molecula(nombre):
         if cliente is None:
             return
         hechas = cliente.incr(_clave_progreso(ejecucion_id))
         cliente.expire(_clave_progreso(ejecucion_id), 24 * 3600)
-        # El progreso se refleja en la fila de la ejecucion para que el
-        # frontend lo lea con su sondeo habitual. Varias subtareas escriben a
-        # la vez y gana la ultima, lo que para un indicador de avance es
-        # aceptable: el contador autoritativo es el de Redis.
+
+        ahora = time.monotonic()
+        if ahora - ultimo_volcado[0] < INTERVALO_PROGRESO_S:
+            return
+        ultimo_volcado[0] = ahora
+
+        # Varias subtareas escriben a la vez y gana la ultima, lo que para un
+        # indicador de avance es aceptable.
         db = SessionLocal()
         try:
             ejecucion = db.query(models.WorkflowExecution).filter(
@@ -297,8 +314,6 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
     terminado. Aplana los resultados, ordena el ranking, genera el CSV,
     persiste el resumen y notifica por correo.
     """
-    import time
-
     db = SessionLocal()
     try:
         ejecucion = db.query(models.WorkflowExecution).filter(
@@ -380,8 +395,6 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
     lanza un chord. Termina en seguida, de modo que no ocupa un worker durante
     todo el cribado.
     """
-    import time
-
     from celery import chord
 
     from app.config import BATCH_TAMANO_BLOQUE
