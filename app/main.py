@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Query, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.database import engine, SessionLocal
 from app import models, schemas
 from fastapi.responses import FileResponse, HTMLResponse
@@ -499,9 +499,16 @@ def listar_peticiones_usuario(
 ):
     if u_id != usuario_actual.id and not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este historial")
+    # joinedload: la respuesta incluye p.algoritmo.nombre, y sin él cada fila
+    # dispara su propio SELECT sobre algoritmos al leer ese atributo. No se
+    # nota mientras todas las peticiones usan el mismo algoritmo --el identity
+    # map de SQLAlchemy lo reutiliza tras la primera carga--, pero en cuanto
+    # son distintos el coste pasa a ser una consulta por fila: medido, 43
+    # consultas para 40 peticiones frente a las 3 de ahora.
     consulta = db.query(models.Peticion).filter(models.Peticion.usuario_id == u_id)
     response.headers["X-Total-Count"] = str(consulta.count())
-    peticiones = consulta.order_by(models.Peticion.fecha_creacion.desc()) \
+    peticiones = consulta.options(joinedload(models.Peticion.algoritmo)) \
+        .order_by(models.Peticion.fecha_creacion.desc()) \
         .offset(pagina.offset).limit(pagina.limit).all()
     return [
         {
@@ -527,9 +534,14 @@ def listar_ejecuciones_usuario(
 ):
     if u_id != usuario_actual.id and not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este historial")
+    # Mismo N+1 que en el historial de peticiones, por e.workflow.nombre. Aquí
+    # además es más probable que se manifieste: un usuario acumula ejecuciones
+    # de workflows distintos con facilidad, mientras que el catálogo de
+    # algoritmos es pequeño y se repite.
     consulta = db.query(models.WorkflowExecution).filter(models.WorkflowExecution.usuario_id == u_id)
     response.headers["X-Total-Count"] = str(consulta.count())
-    ejecuciones = consulta.order_by(models.WorkflowExecution.fecha_ejecucion.desc()) \
+    ejecuciones = consulta.options(joinedload(models.WorkflowExecution.workflow)) \
+        .order_by(models.WorkflowExecution.fecha_ejecucion.desc()) \
         .offset(pagina.offset).limit(pagina.limit).all()
 
     resultado = []

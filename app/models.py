@@ -60,7 +60,7 @@ class Algoritmo(Base):
     tipo = Column(Enum(TipoAlgoritmo), nullable=False)  # alineacion o comparacion
     ruta_archivo = Column(String, nullable=False) # Dónde guardaremos el .py
     es_publico = Column(Boolean, default=False)
-    autor_id = Column(Integer, ForeignKey("usuarios.id"))
+    autor_id = Column(Integer, ForeignKey("usuarios.id"), index=True)
 
     # Relaciones
     autor = relationship("Usuario", back_populates="algoritmos")
@@ -71,15 +71,23 @@ class Peticion(Base):
     __tablename__ = "peticiones"
 
     id = Column(Integer, primary_key=True, index=True)
-    estado = Column(String, default="PENDIENTE")  # PENDIENTE, PROCESANDO, COMPLETADO, ERROR
-    ruta_mol_original = Column(String, nullable=False)
-    ruta_mol_resultado = Column(String, nullable=True)
+    # index: /sistema/estado cuenta por estado y /peticiones/{id}/estado calcula
+    # la posicion en cola filtrando por el.
+    estado = Column(String, default="PENDIENTE", index=True)  # PENDIENTE, PROCESANDO, COMPLETADO, ERROR
+    # index: _propietario_de_archivo_uploads consulta por estas dos columnas
+    # en CADA descarga y en cada borrado de fichero; sin indice es un recorrido
+    # completo de la tabla por peticion.
+    ruta_mol_original = Column(String, nullable=False, index=True)
+    ruta_mol_resultado = Column(String, nullable=True, index=True)
     celery_task_id = Column(String, nullable=True)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow)
-    
-    # Claves foráneas para conectar las tablas
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
-    algoritmo_id = Column(Integer, ForeignKey("algoritmos.id"))
+    # index: es el criterio de ordenacion del historial paginado.
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Claves foráneas para conectar las tablas. Van indexadas porque son el
+    # filtro de los listados por usuario y el criterio de los joins; SQLAlchemy
+    # no crea indices sobre las claves foraneas automaticamente.
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), index=True)
+    algoritmo_id = Column(Integer, ForeignKey("algoritmos.id"), index=True)
 
     # Relaciones (Asegúrate de tener las contrapartes en Usuario y Algoritmo)
     usuario = relationship("Usuario", back_populates="peticiones")
@@ -94,8 +102,8 @@ class Workflow(Base):
     nombre = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     grafo_json = Column(JSON, nullable=False)  # { nodes: [...], edges: [...] }
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
-    estado = Column(String, default="borrador")  # borrador, procesando, completado, fallido
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), index=True)
+    estado = Column(String, default="borrador", index=True)  # borrador, procesando, completado, fallido
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -109,12 +117,12 @@ class WorkflowExecution(Base):
     __tablename__ = "workflow_executions"
 
     id = Column(Integer, primary_key=True, index=True)
-    workflow_id = Column(Integer, ForeignKey("workflows.id"))
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
-    estado = Column(String, default="pendiente")  # pendiente, procesando, completado, error, cancelado
+    workflow_id = Column(Integer, ForeignKey("workflows.id"), index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), index=True)
+    estado = Column(String, default="pendiente", index=True)  # pendiente, procesando, completado, error, cancelado
     celery_task_id = Column(String, nullable=True)
     resultados_json = Column(JSON, nullable=True)
-    fecha_ejecucion = Column(DateTime, default=datetime.utcnow)
+    fecha_ejecucion = Column(DateTime, default=datetime.utcnow, index=True)
     duracion_segundos = Column(Integer, nullable=True)
 
     # Relaciones
