@@ -16,7 +16,7 @@ x-backend-env: &backend-env
   ALGORITMO_TIMEOUT: ${ALGORITMO_TIMEOUT:-1800}
   BATCH_TAMANO_BLOQUE: ${BATCH_TAMANO_BLOQUE:-25}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
-  SLURM_HOST: ${SLURM_HOST:-picasso.ual.es}
+  SLURM_HOST: ${SLURM_HOST:-picasso.scbi.uma.es}
   SLURM_PORT: ${SLURM_PORT:-22}
   SLURM_USER: ${SLURM_USER:-}
   SLURM_SSH_KEY_PATH: ${SLURM_SSH_KEY_PATH:-}
@@ -109,6 +109,15 @@ services:
         condition: service_healthy
     # Sin container_name ni puertos publicados: necesario para poder escalar
     # con `docker compose up --scale worker=N` (varias réplicas en paralelo).
+    #
+    # Límite de memoria por worker. No convierte la ejecución de algoritmos en
+    # un sandbox --subir un .py sigue siendo, por diseño, ejecutar código en el
+    # servidor, y quien tiene rol de desarrollador puede hacerlo-- pero sí
+    # acota la consecuencia: un algoritmo que se desboque mata su propio worker
+    # en vez de agotar la memoria de la máquina entera y llevarse por delante
+    # la base de datos y la API. Con task_acks_late (app/celery_app.py), la
+    # tarea interrumpida vuelve a la cola en lugar de perderse.
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
 
   flower:
     build:
