@@ -74,7 +74,15 @@ def test_listar_algoritmos_es_publico_no_requiere_token(client, desarrollador_au
     )
     id_creado = respuesta_subida.json()["id"]
 
-    respuesta_listado = client.get("/algoritmos")  # sin headers: la lectura del catalogo es publica
+    respuesta_listado = client.get(
+        "/algoritmos", headers=desarrollador_autenticado["headers"]
+    )
     assert respuesta_listado.status_code == 200
     ids = [a["id"] for a in respuesta_listado.json()]
     assert id_creado in ids
+
+
+def test_listar_algoritmos_sin_token_devuelve_401(client):
+    """El catalogo expone el nombre de cada script del servidor, asi que la
+    lectura dejo de ser publica: solo la consume la interfaz, ya autenticada."""
+    assert client.get("/algoritmos").status_code == 401

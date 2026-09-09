@@ -6,8 +6,6 @@ from app import models, schemas
 from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
-from app.ejecutor import ejecutar_algoritmo
-from app.workflow_executor import WorkflowExecutor
 from app.tasks import ejecutar_peticion_async, ejecutar_workflow_async, ejecutar_workflow_batch_async
 from app.email_utils import correo_verificacion
 from app.auth import (
@@ -15,11 +13,13 @@ from app.auth import (
     obtener_usuario_actual, requiere_rol, es_admin,
 )
 from app.celery_app import celery_app
-from app.config import CORS_ORIGINS, EXECUTION_MODE, WORKER_CONCURRENCY
+from app.config import (
+    CORS_ORIGINS, EXECUTION_MODE, WORKER_CONCURRENCY,
+    MAX_ALGORITMO_BYTES, MAX_SUBIDA_BYTES, TAMANO_TROZO_SUBIDA,
+)
 from app.rate_limit import verificar_no_bloqueado, registrar_intento_fallido, limpiar_intentos
 from app.logging_config import logger, configurar_logging
 from datetime import datetime, timezone
-import time
 import re
 
 configurar_logging()
@@ -98,6 +98,65 @@ def _propietario_de_archivo_uploads(nombre_archivo: str, db: Session):
         | (models.Peticion.ruta_mol_resultado == nombre_archivo)
     ).first()
     return peticion.usuario_id if peticion else None
+
+
+# --- ESCRITURA DE SUBIDAS CON LÍMITE DE TAMAÑO ---
+# Los endpoints de subida hacían `contenido = await archivo.read()`, que carga
+# el fichero ENTERO en memoria: un SDF de ChEMBL de 500 MB son 500 MB de RAM en
+# el proceso web, y varias subidas simultáneas lo tumban. Comprobar el tamaño
+# después de ese read() no arregla nada, porque para entonces la memoria ya se
+# ha consumido: el límite solo es una defensa real si se aplica MIENTRAS se
+# escribe. De ahí que el volcado se haga por trozos y se aborte en cuanto se
+# supera el máximo, borrando lo escrito hasta ese momento.
+async def guardar_subida(archivo: UploadFile, ruta_destino: str, max_bytes: int) -> int:
+    """Vuelca un UploadFile a disco por trozos. Devuelve los bytes escritos.
+    Lanza 413 si excede max_bytes, sin dejar el fichero parcial en disco."""
+    escritos = 0
+    try:
+        with open(ruta_destino, "wb") as destino:
+            while True:
+                trozo = await archivo.read(TAMANO_TROZO_SUBIDA)
+                if not trozo:
+                    break
+                escritos += len(trozo)
+                if escritos > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"El archivo supera el tamaño máximo permitido "
+                            f"({max_bytes // (1024 * 1024)} MB)."
+                        ),
+                    )
+                destino.write(trozo)
+    except Exception:
+        # Un fichero a medio escribir es peor que ninguno: lo dejaríamos en
+        # uploads/ como si fuera una molécula válida.
+        if os.path.exists(ruta_destino):
+            os.remove(ruta_destino)
+        raise
+    return escritos
+
+
+def contar_moleculas_sdf(ruta: str) -> int:
+    """Cuenta los separadores de registro de un SDF leyendo por trozos.
+
+    Se relee el fichero en lugar de contar durante la escritura porque el
+    separador ($$$$) puede quedar partido entre dos trozos; aquí se arrastra
+    el solapamiento explícitamente.
+    """
+    separador = b"$$$$"
+    total = 0
+    sobrante = b""
+    with open(ruta, "rb") as f:
+        while True:
+            trozo = f.read(TAMANO_TROZO_SUBIDA)
+            if not trozo:
+                break
+            datos = sobrante + trozo
+            total += datos.count(separador)
+            # Conservar los últimos bytes por si el separador cruza la frontera.
+            sobrante = datos[-(len(separador) - 1):]
+    return total
 
 
 def exigir_nombre_archivo_seguro(nombre: str) -> str:
@@ -256,8 +315,17 @@ async def subir_algoritmo(
             detail=f"El tipo debe ser uno de: {', '.join(tipos_validos)}"
         )
 
-    # 3. Leemos el archivo para extraer el tipo del metadato
-    contenido_archivo = await archivo.read()
+    # 3. Leemos el archivo para extraer el tipo del metadato.
+    #    Aquí sí se lee a memoria --hay que inspeccionar el contenido antes de
+    #    decidir si se acepta--, pero con un tope muy bajo: un algoritmo es un
+    #    script de unos pocos KB, y este endpoint acepta código que después se
+    #    ejecutará en el worker o en el nodo del clúster.
+    contenido_archivo = await archivo.read(MAX_ALGORITMO_BYTES + 1)
+    if len(contenido_archivo) > MAX_ALGORITMO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"El script supera el tamaño máximo permitido ({MAX_ALGORITMO_BYTES // 1024} KB).",
+        )
     
     try:
         tipo_extraido = await extraer_tipo_algoritmo(contenido_archivo)
@@ -319,9 +387,11 @@ async def crear_peticion(
         raise HTTPException(status_code=400, detail="El archivo debe ser una molécula (.mol2)")
 
     # 2. Guardamos la molécula físicamente en la carpeta 'uploads/'
+    #    Por trozos y con tope, igual que /moleculas/subir: aunque aquí el
+    #    usuario esté autenticado, cargar el fichero entero en memoria sigue
+    #    siendo un problema de capacidad, no solo de abuso.
     ruta_guardado = os.path.join("uploads", nombre_fichero)
-    with open(ruta_guardado, "wb") as f:
-        f.write(await archivo_mol.read())
+    await guardar_subida(archivo_mol, ruta_guardado, MAX_SUBIDA_BYTES)
 
     # 3. Creamos el registro en la base de datos con estado PENDIENTE
     nueva_peticion = models.Peticion(
@@ -346,50 +416,15 @@ async def crear_peticion(
     )
     return nueva_peticion
 
-@app.post("/ejecutar/{peticion_id}")
-def ejecutar_peticion(peticion_id: int, db: Session = Depends(get_db)):
-    """
-    Toma una petición PENDIENTE, ejecuta su algoritmo sobre su molécula y guarda el resultado.
-    """
-    # 1. Buscamos la petición en la base de datos
-    peticion = db.query(models.Peticion).filter(models.Peticion.id == peticion_id).first()
-    
-    if not peticion:
-        raise HTTPException(status_code=404, detail="Petición no encontrada")
-    if peticion.estado != "PENDIENTE":
-        raise HTTPException(status_code=400, detail="La petición ya ha sido procesada")
+# NOTA: aqui vivia POST /ejecutar/{peticion_id}, eliminado.
+#
+# Era codigo anterior a la cola de tareas y acumulaba tres problemas: no
+# exigia autenticacion --cualquiera podia disparar la ejecucion de la
+# peticion de otro usuario--, ejecutaba el algoritmo de forma SINCRONA
+# dentro del proceso web, bloqueando a todos los usuarios mientras duraba,
+# y duplicaba una funcionalidad que ya cubre POST /peticiones, que encola
+# en Celery automaticamente. No lo invocaba ni el frontend ni los tests.
 
-    # 2. Actualizamos estado a PROCESANDO
-    peticion.estado = "PROCESANDO"
-    db.commit()
-
-    # 3. Preparamos las rutas de los archivos
-    # Asumimos que la molécula está en 'uploads/' y el algoritmo en 'algoritmos/'
-    ruta_mol_entrada = os.path.join("uploads", peticion.ruta_mol_original)
-    ruta_algoritmo = os.path.join("algoritmos", peticion.algoritmo.ruta_archivo)
-    
-    # Generamos el nombre del archivo de salida (ej: DB00173_aligned.mol2)
-    nombre_salida = peticion.ruta_mol_original.replace(".mol2", "_aligned.mol2")
-    ruta_mol_salida = os.path.join("uploads", nombre_salida)
-
-    # ESTO LO PONES:
-    resultado = ejecutar_algoritmo(ruta_algoritmo, ruta_mol_entrada, ruta_mol_salida)
-
-    if resultado["exito"]:
-        peticion.estado = "COMPLETADO"
-        peticion.ruta_mol_resultado = nombre_salida
-        db.commit()
-        db.refresh(peticion)
-        return {
-            "mensaje": "Ejecución completada con éxito",
-            "peticion": peticion,
-            "log_consola": resultado["log"]
-        }
-    else:
-        peticion.estado = "ERROR"
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Error en el algoritmo: {resultado['error']}")
-    
 @app.get("/descargar/{peticion_id}")
 def descargar_resultado(
     peticion_id: int,
@@ -528,7 +563,20 @@ def listar_ejecuciones_usuario(
     return resultado
 
 @app.get("/algoritmos")
-def listar_algoritmos(response: Response, db: Session = Depends(get_db), pagina: Paginacion = Depends()):
+def listar_algoritmos(
+    response: Response,
+    db: Session = Depends(get_db),
+    pagina: Paginacion = Depends(),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+):
+    """
+    Cataloga los algoritmos disponibles. Exige estar autenticado: la respuesta
+    incluye el `ruta_archivo` de cada script del servidor, y publicarla sin
+    credenciales entrega gratis un mapa de los ficheros ejecutables que hay en
+    `algoritmos/`. No es un secreto crítico, pero tampoco hay ninguna razón
+    para regalarlo: el catálogo solo lo consume la propia interfaz, que ya va
+    autenticada.
+    """
     consulta = db.query(models.Algoritmo)
     response.headers["X-Total-Count"] = str(consulta.count())
     return consulta.order_by(models.Algoritmo.id).offset(pagina.offset).limit(pagina.limit).all()
@@ -538,10 +586,18 @@ def listar_algoritmos(response: Response, db: Session = Depends(get_db), pagina:
 async def subir_molecula(
     archivo: UploadFile = File(...),
     tipo: str = Form("molecula"),   # "molecula" | "base_de_datos"
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
     """
-    Sube directamente un archivo de molécula o base de datos a uploads/.
-    No requiere usuario ni algoritmo — es un depósito libre de archivos.
+    Sube un archivo de molécula o base de datos a uploads/.
+
+    Exige estar autenticado. Antes era anónimo --"un depósito libre de
+    archivos"--, lo que en la práctica significaba que cualquiera en la red,
+    sin cuenta, podía escribir ficheros en el servidor sin límite de tamaño ni
+    de cantidad: bastaba para llenar el disco y dejar la plataforma inservible.
+    Sigue siendo un depósito compartido entre usuarios autenticados, que es lo
+    que hace posible reutilizar una base de datos subida por un compañero; lo
+    que deja de ser es público para cualquiera.
     """
     nombre_fichero = nombre_archivo_seguro(archivo.filename)
     if not nombre_fichero:
@@ -559,19 +615,25 @@ async def subir_molecula(
 
     os.makedirs("uploads", exist_ok=True)
     ruta = os.path.join("uploads", nombre_fichero)
-    contenido = await archivo.read()
-    with open(ruta, "wb") as f:
-        f.write(contenido)
+    escritos = await guardar_subida(archivo, ruta, MAX_SUBIDA_BYTES)
 
-    # Contar moléculas si es SDF
-    num_moleculas = None
-    if ext == ".sdf":
-        num_moleculas = contenido.decode("utf-8", errors="ignore").count("$$$$")
+    # Contar moléculas si es SDF. Se hace releyendo el fichero por trozos y no
+    # sobre el contenido en memoria, porque ya no existe tal contenido: el
+    # volcado es en streaming precisamente para no tenerlo entero en RAM.
+    num_moleculas = contar_moleculas_sdf(ruta) if ext == ".sdf" else None
 
+    logger.info(
+        "molecula_subida",
+        extra={
+            "usuario_id": usuario_actual.id,
+            "nombre": nombre_fichero,
+            "bytes": escritos,
+        },
+    )
     return {
         "nombre":        nombre_fichero,
         "tipo":          tipo,
-        "tamano_kb":     round(len(contenido) / 1024, 1),
+        "tamano_kb":     round(escritos / 1024, 1),
         "num_moleculas": num_moleculas,
     }
 

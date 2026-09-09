@@ -128,6 +128,7 @@ def test_uploads_de_deposito_publico_accesible_por_cualquier_autenticado(client,
         "/moleculas/subir",
         data={"tipo": "molecula"},
         files={"archivo": ("test_dummy_uploads_publico.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
+        headers=usuario_autenticado["headers"],
     )
     respuesta = client.get("/uploads/test_dummy_uploads_publico.mol2", headers=usuario_autenticado["headers"])
     assert respuesta.status_code == 200

@@ -43,6 +43,25 @@ CORS_ORIGINS = [
     if origen.strip()
 ]
 
+# --- Límites de subida de ficheros ---
+# Tope de tamano por fichero subido. Se aplica mientras se escribe a disco
+# (ver guardar_subida en app/main.py), no despues, que es lo unico que impide
+# de verdad que una subida grande agote la memoria del proceso web.
+# El valor por defecto acompana al client_max_body_size de nginx
+# (frontend/nginx.conf): si nginx acepta 512 MB, la API no debe rechazar menos
+# sin explicacion, ni al reves.
+MAX_SUBIDA_MB = int(os.getenv("MAX_SUBIDA_MB", "512"))
+MAX_SUBIDA_BYTES = MAX_SUBIDA_MB * 1024 * 1024
+
+# Los algoritmos son scripts de Python: unos pocos KB. Un tope mucho mas bajo
+# reduce la superficie de un endpoint que, por su naturaleza, acepta codigo
+# que despues se ejecutara en el worker o en el nodo del cluster.
+MAX_ALGORITMO_KB = int(os.getenv("MAX_ALGORITMO_KB", "512"))
+MAX_ALGORITMO_BYTES = MAX_ALGORITMO_KB * 1024
+
+# Tamano del trozo con que se leen las subidas y se cuentan los registros SDF.
+TAMANO_TROZO_SUBIDA = 1024 * 1024   # 1 MiB
+
 # --- Base de datos ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tfg_virtual_screening.db")
 
