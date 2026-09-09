@@ -555,23 +555,52 @@ class BatchWorkflowExecutor:
                 return nodo
         return None
 
-    def _split_sdf(self, ruta_sdf: str) -> List[Dict]:
-        """Divide un SDF multi-molécula en archivos temporales individuales."""
+    @staticmethod
+    def indices_validos(ruta_sdf: str) -> List[int]:
+        """
+        Indices de las moleculas parseables del SDF, sin escribir nada a disco.
+
+        Se separa de la extraccion porque el reparto en bloques necesita saber
+        CUANTAS hay antes de procesar ninguna, y materializar la biblioteca
+        entera solo para contarla era justamente el problema: el metodo
+        anterior escribia un fichero temporal por molecula antes de empezar,
+        de modo que un SDF de 100.000 compuestos creaba 100.000 ficheros de
+        golpe en uploads/.
+        """
         from rdkit import Chem
+        supplier = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
+        return [i for i, mol in enumerate(supplier) if mol is not None]
+
+    def extraer_moleculas(self, ruta_sdf: str, indices: List[int]) -> List[Dict]:
+        """
+        Escribe a disco SOLO las moleculas pedidas, como ficheros temporales.
+
+        Cada subtarea extrae su propio bloque, asi que en ningun momento hay
+        mas ficheros temporales que los del bloque en curso.
+        """
+        from rdkit import Chem
+        pedidos   = set(indices)
         supplier  = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
         moleculas = []
         for i, mol in enumerate(supplier):
-            if mol is None:
+            if i not in pedidos or mol is None:
                 continue
             nombre_raw  = mol.GetProp("_Name").strip() if mol.HasProp("_Name") else ""
             nombre      = nombre_raw if nombre_raw else f"mol_{i + 1}"
             nombre_safe = re.sub(r"[^\w\-]", "_", nombre)[:40]
-            ruta_temp   = os.path.join("uploads", f"_btmp_{nombre_safe}_{i}.sdf")
+            # El id de ejecucion en el nombre evita que dos ejecuciones
+            # concurrentes del mismo flujo se pisen los temporales.
+            sufijo    = f"e{self.ejecucion_id}_" if self.ejecucion_id else ""
+            ruta_temp = os.path.join("uploads", f"_btmp_{sufijo}{nombre_safe}_{i}.sdf")
             writer = Chem.SDWriter(ruta_temp)
             writer.write(mol)
             writer.close()
             moleculas.append({"nombre": nombre, "ruta": ruta_temp, "indice": i})
         return moleculas
+
+    def _split_sdf(self, ruta_sdf: str) -> List[Dict]:
+        """Compatibilidad: extrae todas las moleculas del SDF."""
+        return self.extraer_moleculas(ruta_sdf, self.indices_validos(ruta_sdf))
 
     @staticmethod
     def _como_score(valor) -> float:
@@ -683,6 +712,132 @@ class BatchWorkflowExecutor:
     # ------------------------------------------------------------------
     # Ejecución batch principal
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Piezas reutilizables por las subtareas Celery
+    # ------------------------------------------------------------------
+
+    def localizar_base_de_datos(self) -> Tuple[str, str]:
+        """Devuelve (nombre, ruta) del SDF del nodo selectDB, o lanza ValueError."""
+        nodo_bd = self._encontrar_nodo_bd()
+        if not nodo_bd:
+            raise ValueError("No hay nodo 'Seleccionar BD' en el workflow")
+        nombre_archivo = nodo_bd.get("data", {}).get("nombre_archivo")
+        if not nombre_archivo:
+            raise ValueError("El nodo 'Seleccionar BD' no tiene base de datos seleccionada")
+        ruta_sdf = os.path.join("uploads", nombre_archivo)
+        if not os.path.exists(ruta_sdf):
+            raise ValueError(f"Base de datos '{nombre_archivo}' no encontrada en uploads/")
+        return nombre_archivo, ruta_sdf
+
+    def procesar_bloque(self, indices: List[int], on_molecula=None,
+                        debe_parar=None) -> List[Dict]:
+        """
+        Ejecuta el workflow sobre las moleculas de `indices` y devuelve una
+        lista de resultados por molecula.
+
+        Es la unidad de trabajo que ejecuta cada subtarea Celery. Se procesan
+        de una en una dentro del bloque, pero los bloques corren en paralelo.
+
+        `debe_parar` es un predicado que se consulta antes de cada molecula:
+        permite abortar una ejecucion cancelada sin esperar a que termine el
+        bloque entero.
+        """
+        nombre_bd, ruta_sdf = self.localizar_base_de_datos()
+        nodo_bd_id = self._encontrar_nodo_bd()["id"]
+
+        moleculas = self.extraer_moleculas(ruta_sdf, indices)
+        resultados = []
+
+        for mol_info in moleculas:
+            if debe_parar is not None and debe_parar():
+                # Limpiar los temporales que ya no se van a procesar.
+                for pendiente in moleculas[len(resultados):]:
+                    if os.path.exists(pendiente["ruta"]):
+                        os.remove(pendiente["ruta"])
+                break
+            try:
+                # Reemplazar selectDB -> selectMol apuntando al fichero temporal
+                workflow_mod = copy.deepcopy(self.workflow_json)
+                for nodo in workflow_mod["nodes"]:
+                    if nodo["id"] == nodo_bd_id:
+                        nodo["type"] = "selectMol"
+                        nodo["data"]["nombre_archivo"] = os.path.basename(mol_info["ruta"])
+                        break
+
+                # sufijo_extra: dentro de una misma ejecucion las N moleculas
+                # pasan por los mismos nodos, asi que el id de ejecucion solo
+                # no basta para distinguir sus salidas.
+                executor = WorkflowExecutor(
+                    workflow_mod, self.usuario_id,
+                    ejecucion_id=self.ejecucion_id,
+                    sufijo_extra=f"m{mol_info['indice']}")
+                resultado = executor.ejecutar()
+
+                score, tipo_score = self._extraer_score(resultado)
+                resultados.append({
+                    "nombre":       mol_info["nombre"],
+                    "score":        score,
+                    "tipo_score":   tipo_score,
+                    "exito":        resultado.get("exito", False),
+                    "errores_nodo": resultado.get("errores", []),
+                    "archivos":     executor.archivos_generados,
+                })
+            except Exception as e:
+                resultados.append({
+                    "nombre":       mol_info["nombre"],
+                    "score":        None,
+                    "tipo_score":   None,
+                    "exito":        False,
+                    "errores_nodo": [str(e)],
+                    "archivos":     [],
+                })
+            finally:
+                if os.path.exists(mol_info["ruta"]):
+                    os.remove(mol_info["ruta"])
+                if on_molecula is not None:
+                    on_molecula(mol_info["nombre"])
+
+        return resultados
+
+    def consolidar(self, resultados: List[Dict], nombre_bd: str,
+                   total_moleculas: int, duracion: float) -> Dict[str, Any]:
+        """
+        Ordena los resultados de todos los bloques, genera el CSV y arma el
+        resumen. Es el callback del chord: se ejecuta una sola vez, cuando
+        todas las subtareas han terminado.
+        """
+        tipo_score_global = next(
+            (r["tipo_score"] for r in resultados if r.get("tipo_score")), None)
+
+        validos   = [r for r in resultados if r["exito"] and r["score"] is not None]
+        invalidos = [r for r in resultados if not r["exito"] or r["score"] is None]
+
+        # similitud -> mayor es mejor; rmsd y afinidad -> menor es mejor
+        invertir = tipo_score_global == "similitud"
+        validos.sort(key=lambda x: x["score"], reverse=invertir)
+
+        for pos, r in enumerate(validos, 1):
+            r["posicion"] = pos
+        for r in invalidos:
+            r["posicion"] = None
+
+        ranking  = validos + invalidos
+        ruta_csv = self._generar_csv(ranking, nombre_bd, tipo_score_global)
+
+        return {
+            "modo":             "batch",
+            "estado":           "completado" if validos else "error",
+            "exito":            len(validos) > 0,
+            "total_moleculas":  total_moleculas,
+            "total_exito":      len(validos),
+            "total_error":      len(invalidos),
+            "tipo_score":       tipo_score_global,
+            "ranking":          ranking,
+            "csv_ranking":      ruta_csv,
+            "base_de_datos":    nombre_bd,
+            "duracion_segundos": duracion,
+        }
 
     def ejecutar_batch(self, on_progreso=None) -> Dict[str, Any]:
         inicio = datetime.utcnow()

@@ -9,6 +9,7 @@ from app.email_utils import (
 )
 from app.workflow_executor import WorkflowExecutor, BatchWorkflowExecutor
 from app.models import Archivo, VisibilidadArchivo
+from app.logging_config import logger
 
 
 def _registrar_resultados(db, nombres, usuario_id, ejecucion_id=None, peticion_id=None):
@@ -181,49 +182,158 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         db.close()
 
 
-@celery_app.task(bind=True, max_retries=0)
-def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecucion_id: int) -> dict:
-    """
-    Tarea Celery: ejecuta el workflow sobre cada molécula del SDF del nodo selectDB,
-    genera un ranking CSV y notifica al usuario.
-    """
-    db = SessionLocal()
-    ejecucion = None
-    try:
-        workflow  = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
-        ejecucion = db.query(models.WorkflowExecution).filter(models.WorkflowExecution.id == ejecucion_id).first()
-        usuario   = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+# ---------------------------------------------------------------------------
+# Cribado en lote: coordinador + subtareas en paralelo + consolidacion
+#
+# Antes esto era UNA sola tarea Celery que recorria las N moleculas en un
+# bucle. Como consecuencia, `--scale worker=N` no aceleraba el caso de uso
+# principal de la plataforma: los demas workers quedaban ociosos mientras uno
+# solo cargaba con el cribado entero. En modo slurm era todavia peor, porque
+# cada molecula y cada nodo generaban un sbatch que se enviaba y se esperaba
+# antes del siguiente: el cluster se usaba como una maquina remota de un
+# trabajo a la vez.
+#
+# Ahora el trabajo se reparte con un `chord`: un grupo de subtareas que
+# procesan bloques de moleculas EN PARALELO, y un callback que se ejecuta una
+# sola vez, cuando todas terminan, para ordenar el ranking y generar el CSV.
+# ---------------------------------------------------------------------------
 
-        if not workflow or not ejecucion:
+def _clave_progreso(ejecucion_id: int) -> str:
+    return f"batch:progreso:{ejecucion_id}"
+
+
+def _clave_cancelacion(ejecucion_id: int) -> str:
+    return f"batch:cancelado:{ejecucion_id}"
+
+
+def _redis():
+    """Cliente Redis, o None si no responde.
+
+    El progreso y la cancelacion se apoyan en Redis --que ya forma parte del
+    stack como broker-- pero ninguno de los dos es esencial para que el
+    cribado termine: si Redis no esta, se pierde el contador, no el resultado.
+    """
+    try:
+        import redis as _r
+        from app.config import REDIS_URL
+        cliente = _r.from_url(REDIS_URL, socket_connect_timeout=2, decode_responses=True)
+        cliente.ping()
+        return cliente
+    except Exception:
+        return None
+
+
+def marcar_cancelacion(ejecucion_id: int) -> None:
+    """
+    Senala que una ejecucion en lote debe abortarse.
+
+    Con una unica tarea bastaba con revocarla con terminate=True. Repartido en
+    un chord eso ya no vale: revocar el coordinador no detiene las subtareas
+    que ya estan corriendo. Se usa una bandera que cada subtarea consulta antes
+    de cada molecula, de modo que la cancelacion sigue funcionando y ademas no
+    deja el bloque a medias de forma abrupta.
+    """
+    cliente = _redis()
+    if cliente is not None:
+        cliente.setex(_clave_cancelacion(ejecucion_id), 24 * 3600, "1")
+
+
+@celery_app.task(bind=True, max_retries=0)
+def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
+                          ejecucion_id: int, indices: list) -> list:
+    """
+    Subtarea: ejecuta el workflow sobre un bloque de moleculas.
+
+    Devuelve la lista de resultados del bloque, que el callback del chord
+    recibira junto a la de los demas. No lanza excepciones hacia arriba: un
+    bloque que falla entero impediria que el chord llegara a consolidar, asi
+    que los errores se devuelven como resultados marcados.
+    """
+    cliente = _redis()
+
+    def debe_parar():
+        return cliente is not None and cliente.exists(_clave_cancelacion(ejecucion_id))
+
+    def al_terminar_molecula(nombre):
+        if cliente is None:
+            return
+        hechas = cliente.incr(_clave_progreso(ejecucion_id))
+        cliente.expire(_clave_progreso(ejecucion_id), 24 * 3600)
+        # El progreso se refleja en la fila de la ejecucion para que el
+        # frontend lo lea con su sondeo habitual. Varias subtareas escriben a
+        # la vez y gana la ultima, lo que para un indicador de avance es
+        # aceptable: el contador autoritativo es el de Redis.
+        db = SessionLocal()
+        try:
+            ejecucion = db.query(models.WorkflowExecution).filter(
+                models.WorkflowExecution.id == ejecucion_id).first()
+            if ejecucion is not None and isinstance(ejecucion.resultados_json, dict):
+                datos = dict(ejecucion.resultados_json)
+                datos["progreso"] = hechas
+                datos["molecula_actual"] = nombre
+                ejecucion.resultados_json = datos
+                db.commit()
+        finally:
+            db.close()
+
+    try:
+        executor = BatchWorkflowExecutor(workflow_json, usuario_id, ejecucion_id=ejecucion_id)
+        return executor.procesar_bloque(indices, on_molecula=al_terminar_molecula,
+                                        debe_parar=debe_parar)
+    except Exception as exc:  # noqa: BLE001
+        return [{
+            "nombre": f"bloque_{indices[0] if indices else '?'}",
+            "score": None, "tipo_score": None, "exito": False,
+            "errores_nodo": [str(exc)], "archivos": [],
+        }]
+
+
+@celery_app.task(bind=True, max_retries=0)
+def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
+                     usuario_id: int, ejecucion_id: int, nombre_bd: str,
+                     total_moleculas: int, inicio_ts: float) -> dict:
+    """
+    Callback del chord: se ejecuta una sola vez, cuando todos los bloques han
+    terminado. Aplana los resultados, ordena el ranking, genera el CSV,
+    persiste el resumen y notifica por correo.
+    """
+    import time
+
+    db = SessionLocal()
+    try:
+        ejecucion = db.query(models.WorkflowExecution).filter(
+            models.WorkflowExecution.id == ejecucion_id).first()
+        workflow = db.query(models.Workflow).filter(
+            models.Workflow.id == workflow_id).first()
+        usuario = db.query(models.Usuario).filter(
+            models.Usuario.id == usuario_id).first()
+        if ejecucion is None or workflow is None:
             return {"exito": False, "error": "Workflow o ejecución no encontrados"}
 
-        ejecucion.estado = "procesando"
-        workflow.estado  = "procesando"
-        ejecucion.resultados_json = {"modo": "batch", "progreso": 0, "total": 0, "molecula_actual": ""}
-        db.commit()
+        # Aplanar: cada subtarea devolvio la lista de su bloque.
+        planos = [r for bloque in (resultados_por_bloque or []) for r in (bloque or [])]
 
-        def on_progreso(actual, total, nombre_mol):
-            ejecucion.resultados_json = {
-                "modo":            "batch",
-                "progreso":        actual,
-                "total":           total,
-                "molecula_actual": nombre_mol,
-                "estado":          "procesando",
-            }
-            db.commit()
+        cliente = _redis()
+        cancelado = cliente is not None and cliente.exists(_clave_cancelacion(ejecucion_id))
 
-        executor  = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
-                                          ejecucion_id=ejecucion.id)
-        resultado = executor.ejecutar_batch(on_progreso=on_progreso)
+        executor = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
+                                         ejecucion_id=ejecucion_id)
+        resultado = executor.consolidar(
+            planos, nombre_bd, total_moleculas, time.time() - inicio_ts)
+
+        if cancelado:
+            resultado["estado"] = "cancelado"
+            resultado["exito"] = False
+
+        # Los ficheros producidos son privados de su propietario.
+        generados = [a for r in planos for a in (r.get("archivos") or [])]
+        if resultado.get("csv_ranking"):
+            generados.append(resultado["csv_ranking"])
+        _registrar_resultados(db, generados, usuario_id, ejecucion_id=ejecucion_id)
 
         estado_final = resultado.get("estado", "completado")
-
-        # El CSV de ranking es el entregable del cribado: tambien privado.
-        _registrar_resultados(db, [resultado.get("csv_ranking")] if resultado.get("csv_ranking") else [],
-                              usuario_id, ejecucion_id=ejecucion.id)
-
-        # Guardar solo resumen slim en BD — el CSV completo queda en disco
-        resultado_bd = {
+        ejecucion.estado = estado_final
+        ejecucion.resultados_json = {
             "modo":             "batch",
             "estado":           estado_final,
             "exito":            resultado.get("exito", False),
@@ -234,29 +344,106 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
             "csv_ranking":      resultado.get("csv_ranking"),
             "base_de_datos":    resultado.get("base_de_datos"),
             "duracion_segundos": resultado.get("duracion_segundos", 0),
-            "ranking":          resultado.get("ranking", [])[:25],  # solo top-25 en BD
+            "ranking":          resultado.get("ranking", [])[:25],   # solo top-25 en BD
+            "progreso":         total_moleculas,
+            "total":            total_moleculas,
         }
-
-        ejecucion.estado            = estado_final
-        ejecucion.resultados_json   = resultado_bd
         ejecucion.duracion_segundos = int(resultado.get("duracion_segundos", 0))
-        workflow.estado             = estado_final
+        workflow.estado = estado_final
         db.commit()
 
-        if usuario:
-            duracion = resultado.get("duracion_segundos", 0)
+        if cliente is not None:
+            cliente.delete(_clave_progreso(ejecucion_id))
+            cliente.delete(_clave_cancelacion(ejecucion_id))
+
+        if usuario and not cancelado:
             if resultado.get("exito"):
-                correo_workflow_completado(usuario.nombre, usuario.email, workflow.nombre, duracion)
+                correo_workflow_completado(usuario.nombre, usuario.email,
+                                           workflow.nombre,
+                                           resultado.get("duracion_segundos", 0))
             else:
-                errores = [f"0 moléculas procesadas con éxito de {resultado.get('total_moleculas', '?')}"]
-                correo_workflow_error(usuario.nombre, usuario.email, workflow.nombre, errores)
+                correo_workflow_error(
+                    usuario.nombre, usuario.email, workflow.nombre,
+                    [f"0 moléculas procesadas con éxito de {total_moleculas}"])
 
         return resultado
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=0)
+def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecucion_id: int) -> dict:
+    """
+    Coordinador del cribado en lote.
+
+    No procesa ninguna molecula: cuenta cuantas hay, las reparte en bloques y
+    lanza un chord. Termina en seguida, de modo que no ocupa un worker durante
+    todo el cribado.
+    """
+    import time
+
+    from celery import chord
+
+    from app.config import BATCH_TAMANO_BLOQUE
+
+    db = SessionLocal()
+    ejecucion = None
+    try:
+        workflow  = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+        ejecucion = db.query(models.WorkflowExecution).filter(
+            models.WorkflowExecution.id == ejecucion_id).first()
+        if not workflow or not ejecucion:
+            return {"exito": False, "error": "Workflow o ejecución no encontrados"}
+
+        executor = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
+                                         ejecucion_id=ejecucion_id)
+        nombre_bd, ruta_sdf = executor.localizar_base_de_datos()
+
+        # Solo los indices: no se materializa ninguna molecula todavia. Cada
+        # subtarea extrae las suyas cuando le toca, de modo que en ningun
+        # momento hay mas ficheros temporales que los del bloque en curso.
+        indices = executor.indices_validos(ruta_sdf)
+        if not indices:
+            raise ValueError("La base de datos no contiene moléculas válidas")
+
+        bloques = [indices[i:i + BATCH_TAMANO_BLOQUE]
+                   for i in range(0, len(indices), BATCH_TAMANO_BLOQUE)]
+
+        ejecucion.estado = "procesando"
+        workflow.estado  = "procesando"
+        ejecucion.resultados_json = {
+            "modo": "batch", "progreso": 0, "total": len(indices),
+            "molecula_actual": "", "estado": "procesando",
+            "bloques": len(bloques),
+        }
+        db.commit()
+
+        cliente = _redis()
+        if cliente is not None:
+            cliente.delete(_clave_progreso(ejecucion_id))
+            cliente.delete(_clave_cancelacion(ejecucion_id))
+
+        grafo = workflow.grafo_json
+        tarea = chord(
+            (procesar_bloque_batch.s(grafo, usuario_id, ejecucion_id, bloque)
+             for bloque in bloques),
+            consolidar_batch.s(workflow_id, usuario_id, ejecucion_id, nombre_bd,
+                               len(indices), time.time()),
+        )()
+
+        logger.info("batch_repartido", extra={
+            "ejecucion_id": ejecucion_id, "moleculas": len(indices),
+            "bloques": len(bloques), "tamano_bloque": BATCH_TAMANO_BLOQUE,
+        })
+        return {"exito": True, "bloques": len(bloques), "moleculas": len(indices),
+                "chord_id": getattr(tarea, "id", None)}
 
     except Exception as exc:
         if ejecucion:
             ejecucion.estado = "error"
+            ejecucion.resultados_json = {"modo": "batch", "estado": "error",
+                                         "errores": [str(exc)]}
             db.commit()
-        raise exc
+        raise
     finally:
         db.close()

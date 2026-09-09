@@ -43,6 +43,17 @@ CORS_ORIGINS = [
     if origen.strip()
 ]
 
+# --- Cribado en lote ---
+# Moleculas por subtarea Celery. El lote se reparte en bloques que se procesan
+# EN PARALELO (ver ejecutar_workflow_batch_async): un bloque por subtarea, y un
+# callback que consolida el ranking cuando todas terminan.
+#
+# El tamano es un compromiso. Bloques muy pequenos multiplican el coste fijo de
+# encolar y recoger cada tarea; bloques muy grandes desaprovechan los workers,
+# porque el lote no puede terminar antes que su bloque mas lento. 25 reparte
+# bien un cribado de unos cientos de moleculas entre 4 workers.
+BATCH_TAMANO_BLOQUE = int(os.getenv("BATCH_TAMANO_BLOQUE", "25"))
+
 # --- Límites de subida de ficheros ---
 # Tope de tamano por fichero subido. Se aplica mientras se escribe a disco
 # (ver guardar_subida en app/main.py), no despues, que es lo unico que impide

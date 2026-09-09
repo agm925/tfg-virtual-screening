@@ -1106,6 +1106,14 @@ def cancelar_ejecucion(
         from app.celery_app import celery_app as _celery
         _celery.control.revoke(ejecucion.celery_task_id, terminate=True, signal="SIGTERM")
 
+    # Un cribado en lote ya no es una única tarea, sino un grupo de subtareas
+    # repartidas entre los workers: revocar el coordinador --que además suele
+    # haber terminado ya-- no detendría ninguna. La bandera de cancelación la
+    # consulta cada subtarea antes de cada molécula, así que la cancelación
+    # sigue surtiendo efecto y además no corta un bloque de forma abrupta.
+    from app.tasks import marcar_cancelacion
+    marcar_cancelacion(ejecucion_id)
+
     ejecucion.estado = "cancelado"
     db.commit()
     return {"mensaje": "Ejecución cancelada correctamente"}
