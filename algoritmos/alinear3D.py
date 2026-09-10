@@ -26,10 +26,46 @@ from rdkit import Chem
 from rdkit.Chem import rdMolAlign
 
 
+def _cargar_mol2(ruta, removeHs=True):
+    """
+    Carga un .mol2 tolerando los que RDKit no consigue kekulizar.
+
+    Los .mol2 que produce Open Babel a partir de un SDF de ChEMBL declaran
+    enlaces aromaticos que RDKit no sabe kekulizar ("Can't kekulize mol"), de
+    modo que MolFromMol2File devuelve None con los valores por defecto y la
+    molecula se descarta como invalida. Sobre una biblioteca de mil compuestos
+    reales, eso suponia perder el 27 % de las entradas.
+
+    La solucion es leerla sin sanear y aplicar despues todas las
+    comprobaciones MENOS la kekulizacion, que es la unica que falla. Los
+    descriptores que calculan estos algoritmos --peso molecular, LogP, TPSA,
+    fingerprints-- no dependen de ella.
+
+    (Esta funcion se repite en cada algoritmo en lugar de compartirse en un
+    modulo comun porque SlurmExecutor sube al cluster unicamente el fichero
+    del algoritmo: un import de un modulo hermano fallaria en remoto.)
+    """
+    mol = Chem.MolFromMol2File(ruta, removeHs=removeHs)
+    if mol is not None:
+        return mol
+    mol = Chem.MolFromMol2File(ruta, removeHs=removeHs, sanitize=False)
+    if mol is None:
+        return None
+    try:
+        Chem.SanitizeMol(
+            mol,
+            Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+        )
+    except Exception:
+        return None
+    return mol
+
+
+
 def cargar_molecula(ruta: str):
     ext = os.path.splitext(ruta)[1].lower()
     if ext == ".mol2":
-        mol = Chem.MolFromMol2File(ruta, removeHs=False)
+        mol = _cargar_mol2(ruta, removeHs=False)
     elif ext in (".sdf", ".mol"):
         supplier = Chem.SDMolSupplier(ruta, removeHs=False)
         mol = next((m for m in supplier if m is not None), None)

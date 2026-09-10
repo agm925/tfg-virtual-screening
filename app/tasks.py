@@ -11,6 +11,7 @@ from app.email_utils import (
 from app.workflow_executor import WorkflowExecutor, BatchWorkflowExecutor
 from app.models import Archivo, VisibilidadArchivo
 from app.logging_config import logger
+from app.formatos import corregir_extension, extension_salida
 
 
 def _registrar_resultados(db, nombres, usuario_id, ejecucion_id=None, peticion_id=None):
@@ -71,23 +72,46 @@ def ejecutar_peticion_async(self, peticion_id: int) -> dict:
         # 3. Preparar rutas y ejecutar
         ruta_mol_entrada = os.path.join("uploads",    peticion.ruta_mol_original)
         ruta_algoritmo   = os.path.join("algoritmos", algoritmo.ruta_archivo)
-        nombre_salida    = peticion.ruta_mol_original.replace(".mol2", "_resultado.mol2")
-        ruta_mol_salida  = os.path.join("uploads", nombre_salida)
+
+        # La extension de salida la decide la convencion compartida, no un
+        # ".mol2" fijo. Antes se construia como
+        #     ruta_mol_original.replace(".mol2", "_resultado.mol2")
+        # de modo que el JSON de filtroLipinski --o de Tanimoto, o de RMSD--
+        # acababa en un fichero que decia ser una molecula: la biblioteca lo
+        # ofrecia como tal y el visor 3D no mostraba nada.
+        base_entrada, ext_entrada = os.path.splitext(peticion.ruta_mol_original)
+        tipo_algoritmo = algoritmo.tipo.value if algoritmo.tipo else None
+        ext_salida = extension_salida(algoritmo.ruta_archivo, tipo_algoritmo, ext_entrada)
+        nombre_salida   = f"{base_entrada}_resultado{ext_salida}"
+        ruta_mol_salida = os.path.join("uploads", nombre_salida)
 
         resultado = ejecutar_algoritmo(ruta_algoritmo, ruta_mol_entrada, ruta_mol_salida)
 
         # 4. Actualizar BD
         if resultado["exito"]:
+            # Red de seguridad para algoritmos subidos por el usuario, cuyo
+            # formato de salida no se puede predecir por el nombre: si lo que
+            # se ha escrito es un JSON, se renombra en vez de dejarlo pasar
+            # como molecula.
+            ruta_final = corregir_extension(ruta_mol_salida)
+            nombre_salida = os.path.basename(ruta_final)
+
             peticion.estado           = "COMPLETADO"
             peticion.ruta_mol_resultado = nombre_salida
             db.commit()
             _registrar_resultados(db, [nombre_salida], peticion.usuario_id,
                                   peticion_id=peticion.id)
-            # 5a. Correo de éxito
+            # 5a. Correo de exito
             if usuario:
                 correo_completado(usuario.nombre, usuario.email, peticion_id, algoritmo.nombre)
             return {"exito": True, "archivo": nombre_salida}
         else:
+            # Un algoritmo que falla suele dejar escrito su JSON de error en la
+            # ruta de salida. Ese fichero no es un resultado: si se queda en
+            # disco, aparece en la biblioteca como una molecula que no se puede
+            # abrir. Se borra.
+            if os.path.exists(ruta_mol_salida):
+                os.remove(ruta_mol_salida)
             peticion.estado = "ERROR"
             db.commit()
             # 5b. Correo de error

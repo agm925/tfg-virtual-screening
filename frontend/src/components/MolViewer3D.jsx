@@ -4,7 +4,8 @@ import '../styles/MolViewer3D.css';
 
 export default function MolViewer3D({ archivo, onClose }) {
   const viewerRef = useRef(null);
-  const [estado, setEstado] = useState('cargando'); // 'cargando' | 'ok' | 'error'
+  const [estado, setEstado] = useState('cargando'); // 'cargando' | 'ok' | 'vacio' | 'error'
+  const [numAtomos, setNumAtomos] = useState(0);
   const [estilo, setEstilo] = useState('stick');
 
   useEffect(() => {
@@ -29,20 +30,43 @@ export default function MolViewer3D({ archivo, onClose }) {
         if (!resp.ok) throw new Error('No se pudo descargar el archivo');
         const content = await resp.text();
 
+        // Cada formato tiene su propio parser en 3Dmol. Antes se mapeaba
+        // "mol2 o, si no, sdf", asi que un .pdb, un .pdbqt o un .mol se
+        // intentaban leer como SDF y no se dibujaba nada.
+        const FORMATOS = {
+          mol2: 'mol2', sdf: 'sdf', mol: 'sdf',
+          pdb: 'pdb', pdbqt: 'pdbqt', xyz: 'xyz',
+        };
         const ext = archivo.split('.').pop().toLowerCase();
-        const formato = ext === 'mol2' ? 'mol2' : 'sdf';
+        const formato = FORMATOS[ext];
+        if (!formato) throw new Error(`Formato no soportado por el visor: .${ext}`);
 
         const viewer = window.$3Dmol.createViewer(viewerRef.current, {
           backgroundColor: '#0f0f1a',
         });
 
-        viewer.addModel(content, formato);
+        const modelo = viewer.addModel(content, formato);
+
+        // Comprobar que de verdad se ha cargado algo. 3Dmol no lanza ningun
+        // error si el contenido no es una molecula: construye un modelo vacio
+        // y lo dibuja, de modo que el usuario veia un panel en negro sin
+        // ninguna explicacion. Ha pasado con ficheros con extension .mol2 que
+        // en realidad contenian el JSON de resultado de un algoritmo.
+        const atomos = modelo && typeof modelo.selectedAtoms === 'function'
+          ? modelo.selectedAtoms({}).length
+          : 0;
+        if (!atomos) {
+          setEstado('vacio');
+          return;
+        }
+
         aplicarEstilo(viewer, estilo);
         viewer.zoomTo();
         viewer.render();
 
         // Guardar el viewer para poder cambiar estilo después
         viewerRef.current._viewer = viewer;
+        setNumAtomos(atomos);
         setEstado('ok');
       } catch (e) {
         console.error('MolViewer3D:', e);
@@ -96,6 +120,16 @@ export default function MolViewer3D({ archivo, onClose }) {
         <div className="viewer3d-canvas-wrap">
           {estado === 'cargando' && (
             <div className="viewer3d-overlay-msg">⏳ Cargando molécula…</div>
+          )}
+          {estado === 'vacio' && (
+            <div className="viewer3d-overlay-msg error">
+              Este archivo no contiene ninguna molécula.<br />
+              <small>
+                Se abrió correctamente, pero no tiene ni un solo átomo. Suele
+                ocurrir con resultados de análisis (JSON, CSV) guardados con
+                extensión de molécula.
+              </small>
+            </div>
           )}
           {estado === 'error' && (
             <div className="viewer3d-overlay-msg error">
