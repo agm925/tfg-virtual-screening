@@ -75,6 +75,57 @@ def clasificar():
     return impostores, temporales, vacios
 
 
+def sesion_y_motor():
+    """Abre sesion contra la base que indique DATABASE_URL, y dice cual es."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import SQLALCHEMY_DATABASE_URL, engine
+
+    return sessionmaker(bind=engine)(), SQLALCHEMY_DATABASE_URL
+
+
+def huerfanas():
+    """
+    Filas del registro `archivos` cuyo fichero ya no esta en disco.
+
+    Es facil quedarse con estas sin darse cuenta, porque la interfaz LISTA EL
+    REGISTRO y no el directorio: si se borran los ficheros por un lado y el
+    registro se limpia en otra base de datos --por ejemplo ejecutando este
+    script desde el host, donde DATABASE_URL cae por defecto a SQLite, cuando
+    la aplicacion corre en Docker contra PostgreSQL-- los ficheros desaparecen
+    del disco pero siguen apareciendo en la web.
+    """
+    try:
+        db, url = sesion_y_motor()
+    except Exception as e:
+        print(f"  no se pudo consultar el registro: {e}", file=sys.stderr)
+        return [], None
+    try:
+        from app import models
+
+        nombres = [n for (n,) in db.query(models.Archivo.nombre).all()]
+        return [n for n in nombres
+                if not os.path.exists(os.path.join(UPLOADS, n))], url
+    finally:
+        db.close()
+
+
+def borrar_huerfanas(nombres):
+    """Elimina del registro las filas sin fichero."""
+    if not nombres:
+        return 0
+    db, _ = sesion_y_motor()
+    try:
+        from app import models
+
+        n = db.query(models.Archivo).filter(
+            models.Archivo.nombre.in_(nombres)).delete(synchronize_session=False)
+        db.commit()
+        return n
+    finally:
+        db.close()
+
+
 def borrar(nombres, motivo):
     """Borra de disco y, si la base de datos esta accesible, del registro."""
     borrados = 0
@@ -116,6 +167,7 @@ def main():
     args = parser.parse_args()
 
     impostores, temporales, vacios = clasificar()
+    filas_huerfanas, url_registro = huerfanas()
     total_ficheros = len([n for n in os.listdir(UPLOADS)
                           if os.path.isfile(os.path.join(UPLOADS, n))]) if os.path.isdir(UPLOADS) else 0
 
@@ -125,6 +177,18 @@ def main():
     print(f"  temporales _btmp_ huerfanos    : {len(temporales)}")
     print(f"  ficheros vacios                : {len(vacios)}")
     print()
+    if url_registro:
+        motor = url_registro.split("://")[0]
+        print(f"  registro consultado            : {motor}")
+        print(f"  filas sin fichero en disco     : {len(filas_huerfanas)}")
+        if len(filas_huerfanas) > 50:
+            print()
+            print("  AVISO: hay muchas filas sin fichero. Si la aplicacion corre en")
+            print("  Docker, este script debe ejecutarse DENTRO del contenedor:")
+            print("      docker compose exec backend python scripts/limpiar_uploads.py --borrar")
+            print("  Ejecutado desde el host, DATABASE_URL cae por defecto a SQLite y")
+            print("  se limpiaria un registro distinto del que usa la web.")
+        print()
 
     for etiqueta, lista in (("JSON con extension de molecula", impostores),
                             ("temporales huerfanos", temporales),
@@ -137,17 +201,24 @@ def main():
     if args.temporales:
         a_borrar += temporales
 
-    if not a_borrar:
+    if not a_borrar and not filas_huerfanas:
         print("\nNada que limpiar.")
         return
 
     if not args.borrar:
-        print(f"\nSIMULACRO: se borrarian {len(a_borrar)} ficheros.")
+        print(f"\nSIMULACRO: se borrarian {len(a_borrar)} ficheros"
+              f" y {len(filas_huerfanas)} filas huerfanas del registro.")
         print("Vuelve a ejecutarlo con --borrar para hacerlo de verdad.")
         return
 
-    print(f"\nBorrando {len(a_borrar)} ficheros...")
-    borrar(a_borrar, "no son moleculas")
+    if a_borrar:
+        print(f"\nBorrando {len(a_borrar)} ficheros...")
+        borrar(a_borrar, "no son moleculas")
+    if filas_huerfanas:
+        # Sin esto, los ficheros desaparecen del disco pero la web sigue
+        # listandolos: la interfaz consulta el registro, no el directorio.
+        n = borrar_huerfanas(filas_huerfanas)
+        print(f"  {n} filas huerfanas eliminadas del registro")
 
 
 if __name__ == "__main__":
