@@ -1,7 +1,17 @@
 """Tests de integracion: /peticiones* (app/main.py), con JWT y Celery simulado."""
 
+# Algoritmo ficticio que SI cumple el contrato del catalogo: lee su entrada,
+# escribe en el ultimo argumento y termina con codigo 0. Hace falta porque la
+# subida ejecuta el script sobre las moleculas de referencia antes de
+# aceptarlo (ver app/banco_pruebas.py): un doble que no escribe nada seria
+# rechazado, igual que lo seria un algoritmo real roto.
 SCRIPT_DUMMY_PREPROCESADO = b"""# TIPO_ALGORITMO: preprocesado
-print("dummy")
+import shutil
+import sys
+
+entrada, salida = sys.argv[1], sys.argv[-1]
+shutil.copyfile(entrada, salida)
+print("dummy: copiada la entrada a la salida")
 """
 CONTENIDO_MOL2_DUMMY = b"@<TRIPOS>MOLECULE\ndummy\n1 0 0 0 0\nSMALL\nNO_CHARGES\n"
 

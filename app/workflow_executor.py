@@ -234,6 +234,10 @@ class WorkflowExecutor:
 
             self.resultados[nodo_id] = {
                 "tipo":           "comparacion",
+                # Clave que el banco de pruebas observo al subir el
+                # algoritmo: evita que _extraer_score tenga que
+                # adivinarla por su nombre.
+                "clave_score":    datos.get("clave_score"),
                 "archivo_mol1":   archivo_mol1,
                 "archivo_mol2":   archivo_mol2,
                 "archivo_salida": ruta_salida,
@@ -307,6 +311,7 @@ class WorkflowExecutor:
 
             self.resultados[nodo_id] = {
                 "tipo":            "preprocesado",
+                "clave_score":     datos.get("clave_score"),
                 "archivo_entrada": archivo_entrada,
                 "archivo_salida":  ruta_salida,
                 "algoritmo":       algoritmo_nombre,
@@ -603,6 +608,40 @@ class BatchWorkflowExecutor:
         return self.extraer_moleculas(ruta_sdf, self.indices_validos(ruta_sdf))
 
     @staticmethod
+    def _valor_por_ruta(datos, ruta):
+        """
+        Sigue una ruta tipo "moleculas.MW" dentro de un JSON.
+
+        Entra en el primer elemento de una lista, porque varios algoritmos
+        envuelven asi sus resultados: filtroLipinski devuelve
+        {"moleculas": [{"MW": ...}]} y la puntuacion vive dentro.
+        """
+        actual = datos
+        for tramo in (ruta or "").split("."):
+            if isinstance(actual, list):
+                actual = actual[0] if actual else None
+            if not isinstance(actual, dict):
+                return None
+            actual = actual.get(tramo)
+        if isinstance(actual, list):
+            actual = actual[0] if actual else None
+        return actual
+
+    @staticmethod
+    def _tipo_de_score(clave, tipo_nodo):
+        """Etiqueta legible del score, para el encabezado del CSV de ranking."""
+        c = (clave or "").lower().split(".")[-1]
+        if "similitud" in c or "tanimoto" in c:
+            return "similitud"
+        if "rmsd" in c:
+            return "rmsd"
+        if "afinidad" in c:
+            return "docking"
+        if c in ("mw", "peso_molecular"):
+            return "lipinski"
+        return tipo_nodo or "score"
+
+    @staticmethod
     def _como_score(valor) -> float:
         """
         Convierte un valor del JSON de un algoritmo en score, o None si no lo es.
@@ -643,6 +682,19 @@ class BatchWorkflowExecutor:
             # En todas las ramas se usa _como_score y solo se devuelve si dio un
             # número: si un nodo trae la clave a null, se sigue buscando en los
             # demás nodos en vez de abortar la extracción entera.
+            # Si el banco de pruebas anoto la clave al subir el algoritmo, se
+            # usa esa y no hay nada que adivinar. Es lo que elimina de raiz la
+            # familia de fallos que se repitio cuatro veces: "rmsd" frente a
+            # "rmsd_angstroms", "MW" anidado bajo "moleculas", etc.
+            declarada = nodo_res.get("clave_score")
+            if declarada:
+                score = self._como_score(self._valor_por_ruta(rj, declarada))
+                if score is None and isinstance(nodo_res.get("energias"), dict):
+                    score = self._como_score(
+                        self._valor_por_ruta(nodo_res["energias"], declarada))
+                if score is not None:
+                    return score, self._tipo_de_score(declarada, tipo)
+
             if tipo == "comparacion":
                 score = self._como_score(rj.get("similitud"))
                 if score is not None:

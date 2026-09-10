@@ -20,8 +20,11 @@ from app.config import (
 )
 from app.rate_limit import verificar_no_bloqueado, registrar_intento_fallido, limpiar_intentos
 from app.logging_config import logger, configurar_logging
+from app.banco_pruebas import probar_algoritmo
 from datetime import datetime, timezone
 import re
+import shutil
+import tempfile
 
 configurar_logging()
 
@@ -433,19 +436,66 @@ async def subir_algoritmo(
                    f"Por favor, sube el script en el formulario de '{tipo_extraido}'."
         )
 
-    # 5. Guardamos el archivo físicamente
-    ruta_guardado = os.path.join("algoritmos", nombre_fichero)
-    with open(ruta_guardado, "wb") as f:
-        f.write(contenido_archivo)
+    # 5. BANCO DE PRUEBAS: se ejecuta el algoritmo contra las moleculas de
+    #    referencia ANTES de aceptarlo en el catalogo.
+    #
+    #    Hasta ahora la subida era un acto de fe: el metadato TIPO_ALGORITMO lo
+    #    declaraba el autor y nadie comprobaba que el script llegara siquiera a
+    #    ejecutarse. Un algoritmo roto entraba igual que uno correcto, y el
+    #    fallo aparecia horas despues dentro de un cribado, como una molecula
+    #    fallida entre mil. El tipo declarado es lo que permite saber COMO
+    #    invocarlo --una molecula, dos, o ligando mas receptor-- y la ejecucion
+    #    comprueba que esa declaracion sea cierta.
+    #
+    #    Se escribe a un temporal, no a algoritmos/, para que un script que no
+    #    pase la prueba no deje rastro en el catalogo.
+    with tempfile.TemporaryDirectory(prefix="subida_") as tmp:
+        ruta_temporal = os.path.join(tmp, nombre_fichero)
+        with open(ruta_temporal, "wb") as f:
+            f.write(contenido_archivo)
 
-    # 6. Guardamos en la base de datos con el tipo validado
+        prueba = probar_algoritmo(ruta_temporal, tipo_extraido)
+
+        if not prueba.valido:
+            logger.warning(
+                "algoritmo_rechazado_por_banco_de_pruebas",
+                extra={"nombre": nombre, "tipo": tipo_extraido,
+                       "motivo": prueba.motivo, "autor_id": autor_id},
+            )
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "mensaje": "El algoritmo no ha superado la prueba de validación.",
+                    "motivo": prueba.motivo,
+                    "detalle": prueba.detalle,
+                    "salida": (prueba.log or "")[-1500:],
+                    "ayuda": (
+                        "El algoritmo se ejecuta sobre dos moléculas de referencia "
+                        "antes de aceptarlo. Comprueba que recibe sus ficheros como "
+                        "argumentos posicionales, que escribe el resultado en el "
+                        "ÚLTIMO argumento, y que termina con código 0."
+                    ),
+                },
+            )
+
+        # 6. Superada la prueba, se mueve al catalogo.
+        ruta_guardado = os.path.join("algoritmos", nombre_fichero)
+        shutil.move(ruta_temporal, ruta_guardado)
+
+    # 7. Guardamos en la base de datos, con lo que el banco de pruebas ha
+    #    OBSERVADO: el formato real de salida y la clave que contiene la
+    #    puntuacion. Anotarlas evita que el motor tenga que adivinarlas, que es
+    #    el origen de una familia de fallos que se ha repetido cuatro veces.
     nuevo_algoritmo = models.Algoritmo(
         nombre=nombre,
         descripcion=descripcion,
         tipo=tipo_extraido,  # Guardamos el tipo validado
         ruta_archivo=nombre_fichero,
         es_publico=es_publico,
-        autor_id=autor_id
+        autor_id=autor_id,
+        formato_salida=prueba.formato_salida,
+        clave_score=prueba.clave_score,
+        verificado=True,
     )
     db.add(nuevo_algoritmo)
     db.commit()
@@ -453,7 +503,9 @@ async def subir_algoritmo(
 
     logger.info(
         "algoritmo_subido",
-        extra={"algoritmo_id": nuevo_algoritmo.id, "tipo": tipo_extraido, "autor_id": autor_id},
+        extra={"algoritmo_id": nuevo_algoritmo.id, "tipo": tipo_extraido,
+               "autor_id": autor_id, "formato_salida": prueba.formato_salida,
+               "clave_score": prueba.clave_score},
     )
     return nuevo_algoritmo
 

@@ -86,7 +86,12 @@ def test_borrar_molecula_de_peticion_ajena_devuelve_403(
 ):
     # Crea una peticion real (propietario = usuario_autenticado) y comprueba
     # que otro usuario autenticado no puede borrar su fichero de entrada.
-    script = b"# TIPO_ALGORITMO: preprocesado\nprint('dummy')\n"
+    # El doble debe escribir en el ultimo argumento: la subida ejecuta el
+    # script contra las moleculas de referencia antes de aceptarlo, asi que
+    # uno que no escribe nada seria rechazado igual que un algoritmo roto.
+    script = (b"# TIPO_ALGORITMO: preprocesado\n"
+              b"import shutil, sys\n"
+              b"shutil.copyfile(sys.argv[1], sys.argv[-1])\n")
     algoritmo_id = client.post(
         "/algoritmos",
         data={"nombre": "dummy", "descripcion": "dummy", "tipo": "preprocesado"},

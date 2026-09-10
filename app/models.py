@@ -62,6 +62,15 @@ class Algoritmo(Base):
     es_publico = Column(Boolean, default=False)
     autor_id = Column(Integer, ForeignKey("usuarios.id"), index=True)
 
+    # --- Lo que OBSERVA el banco de pruebas al subir el algoritmo ---
+    # (ver app/banco_pruebas.py). Anotarlo evita que el motor tenga que
+    # deducirlo: buscar la clave del score por su nombre ha sido el origen de
+    # cuatro fallos distintos --"rmsd" frente a "rmsd_angstroms", "MW" anidado
+    # bajo "moleculas", "mejor_afinidad" nulo, y la extension del fichero--.
+    formato_salida = Column(String, nullable=True)   # "molecula" | "json"
+    clave_score = Column(String, nullable=True)      # p.ej. "rmsd_angstroms"
+    verificado = Column(Boolean, default=False, nullable=False)
+
     # Relaciones
     autor = relationship("Usuario", back_populates="algoritmos")
     peticiones = relationship("Peticion", back_populates="algoritmo")

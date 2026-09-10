@@ -32,6 +32,10 @@ class AlgoritmoRespuesta(BaseModel):
     ruta_archivo: str
     es_publico: bool
     autor_id: int
+    # Lo que observo el banco de pruebas al subirlo (ver app/banco_pruebas.py).
+    formato_salida: Optional[str] = None
+    clave_score: Optional[str] = None
+    verificado: bool = False
 
     class Config:
         from_attributes = True

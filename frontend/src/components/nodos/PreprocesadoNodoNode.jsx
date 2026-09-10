@@ -31,7 +31,7 @@ const PreprocesadoNodoNode = ({ data, id }) => {
       if (filtrados.length === 0) return;
       const guardado = filtrados.find(a => String(a.id) === String(data.algoritmo_id));
       const elegido = guardado || filtrados[0];
-      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo);
+      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo, elegido.clave_score);
     } catch (err) {
       console.error('Error cargando algoritmos de preprocesado:', err);
     }
@@ -43,12 +43,16 @@ const PreprocesadoNodoNode = ({ data, id }) => {
   // solo mientras ambos coincidian: en cuanto un algoritmo se registre como
   // "Docking con Smina" en vez de "dockingSmina", el flujo fallaria con
   // "Algoritmo no encontrado: algoritmos/Docking con Smina.py".
-  const handleCambio = (id, nombre, rutaArchivo) => {
+  const handleCambio = (id, nombre, rutaArchivo, claveScore) => {
     setSeleccionado(String(id));
     setNombreSeleccionado(nombre);
     data.algoritmo_id     = id;
     data.algoritmo_nombre = nombre;
     data.algoritmo_ruta   = rutaArchivo;
+    // clave_score: la anota el banco de pruebas al subir el algoritmo
+    // (ver app/banco_pruebas.py). El motor la usa para leer la puntuacion
+    // del JSON sin tener que adivinar su nombre.
+    data.clave_score      = claveScore;
     if (nombre.toLowerCase().includes('filtroobabel')) {
       data.filtro_expresion = filtroExpresion;
     }
@@ -86,7 +90,7 @@ const PreprocesadoNodoNode = ({ data, id }) => {
           value={seleccionado}
           onChange={(e) => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
-            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo);
+            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo, algo.clave_score);
           }}
         >
           {algoritmos.length > 0

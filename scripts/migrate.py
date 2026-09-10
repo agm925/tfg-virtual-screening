@@ -65,6 +65,64 @@ def crear_indices_faltantes() -> None:
     print(f"Índices verificados: {len(creados)}.")
 
 
+def anadir_columnas_faltantes() -> None:
+    """
+    Añade a las tablas ya existentes las columnas que se hayan declarado
+    después en los modelos.
+
+    Hace falta por la misma razón que `crear_indices_faltantes`, pero el
+    síntoma es peor: `create_all()` solo define las columnas al CREAR la
+    tabla, de modo que sobre un despliegue en marcha una columna nueva no
+    aparece nunca y la aplicación falla al escribirla con un
+    `UndefinedColumn` en tiempo de ejecución, no al arrancar.
+
+    Es un sustituto mínimo de una herramienta de migraciones como Alembic
+    --que sigue siendo la solución de fondo, y así queda recogido en el
+    trabajo futuro--: solo sabe AÑADIR columnas, que es el único cambio de
+    esquema que se ha necesitado hasta ahora. No renombra, no borra y no
+    cambia tipos.
+    """
+    from sqlalchemy import inspect, text
+    from sqlalchemy.schema import CreateColumn
+
+    inspector = inspect(engine)
+    anadidas = 0
+
+    for tabla in models.Base.metadata.sorted_tables:
+        if not inspector.has_table(tabla.name):
+            continue
+        existentes = {c["name"] for c in inspector.get_columns(tabla.name)}
+        for columna in tabla.columns:
+            if columna.name in existentes:
+                continue
+            tipo = columna.type.compile(dialect=engine.dialect)
+            ddl = f'ALTER TABLE {tabla.name} ADD COLUMN {columna.name} {tipo}'
+
+            # Una columna NOT NULL sobre una tabla con filas necesita un valor
+            # por defecto, o el motor la rechaza.
+            defecto = getattr(columna.default, "arg", None)
+            if not columna.nullable:
+                if isinstance(defecto, bool):
+                    ddl += f" NOT NULL DEFAULT {'true' if defecto else 'false'}"
+                elif isinstance(defecto, (int, float)):
+                    ddl += f" NOT NULL DEFAULT {defecto}"
+                elif isinstance(defecto, str):
+                    ddl += f" NOT NULL DEFAULT '{defecto}'"
+                # Sin defecto utilizable se añade como nullable: es preferible
+                # a que la migración falle y deje el esquema a medias.
+
+            try:
+                with engine.begin() as conexion:
+                    conexion.execute(text(ddl))
+                print(f"  columna añadida: {tabla.name}.{columna.name}")
+                anadidas += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"Aviso: no se pudo añadir {tabla.name}.{columna.name}: {e}",
+                      file=sys.stderr)
+
+    print(f"Columnas verificadas: {anadidas} añadidas.")
+
+
 def registrar_archivos_existentes() -> None:
     """
     Da de alta en la tabla `archivos` los ficheros que ya estaban en uploads/.
@@ -132,6 +190,7 @@ def main() -> None:
     esperar_base_de_datos()
     models.Base.metadata.create_all(bind=engine)
     print("Tablas creadas/verificadas correctamente.")
+    anadir_columnas_faltantes()
     crear_indices_faltantes()
     registrar_archivos_existentes()
 

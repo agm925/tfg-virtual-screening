@@ -24,15 +24,19 @@ const ComparacionNodoNode = ({ data, id }) => {
       if (filtrados.length === 0) return;
       const guardado = filtrados.find(a => String(a.id) === String(data.algoritmo_id));
       const elegido = guardado || filtrados[0];
-      aplicarCambio(elegido.id, elegido.nombre, elegido.ruta_archivo);
+      aplicarCambio(elegido.id, elegido.nombre, elegido.ruta_archivo, elegido.clave_score);
     } catch (err) { console.error('Error cargando algoritmos:', err); }
   };
 
-  const aplicarCambio = (algId, nombre, rutaArchivo) => {
+    // clave_score: la anota el banco de pruebas al subir el algoritmo
+    // (ver app/banco_pruebas.py). El motor la usa para leer la puntuacion
+    // del JSON sin tener que adivinar su nombre.
+  const aplicarCambio = (algId, nombre, rutaArchivo, claveScore) => {
     setSeleccionado(String(algId));
     data.algoritmo_id         = algId;
     data.algoritmo_nombre     = nombre;
     data.algoritmo_ruta       = rutaArchivo; // nombre real del .py, sin la carpeta
+    data.clave_score          = claveScore;
   };
 
   return (
@@ -47,7 +51,7 @@ const ComparacionNodoNode = ({ data, id }) => {
           value={seleccionado}
           onChange={e => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
-            if (algo) aplicarCambio(algo.id, algo.nombre, algo.ruta_archivo);
+            if (algo) aplicarCambio(algo.id, algo.nombre, algo.ruta_archivo, algo.clave_score);
           }}
         >
           {algoritmos.length > 0

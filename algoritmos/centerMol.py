@@ -209,7 +209,33 @@ def read_and_align_mol2(filepath):
 
 
 def main():
-    for f in sys.argv[1:]:
+    """
+    Convención del catálogo: <entrada> [entrada2 ...] <salida>.
+
+    Antes este script trataba TODOS los argumentos como ficheros de entrada y
+    escribía cada resultado junto a su origen, con el sufijo "_aligned",
+    ignorando por completo la ruta de salida que se le pasaba. Como además
+    terminaba con código 0, el motor de flujos daba el nodo por bueno y
+    apuntaba a un fichero que nunca se había creado: el error no aparecía
+    hasta el nodo siguiente, como un "archivo no encontrado" sin relación
+    aparente con la causa.
+
+    Se conserva el comportamiento antiguo cuando se invoca con un único
+    argumento, que es como se usa desde la línea de comandos a mano.
+    """
+    argumentos = sys.argv[1:]
+    if not argumentos:
+        print("Uso: python centerMol.py <entrada> [entrada2 ...] <salida>",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if len(argumentos) == 1:
+        entradas, salida = argumentos, None
+    else:
+        entradas, salida = argumentos[:-1], argumentos[-1]
+
+    hubo_error = False
+    for i, f in enumerate(entradas):
         try:
             mol = read_and_align_mol2(f)
         except Exception as e:
@@ -220,11 +246,27 @@ def main():
             # traceback sin controlar, igual que el resto de algoritmos del
             # catalogo.
             print(f"Error: {e}", file=sys.stderr)
+            hubo_error = True
             continue
-        base, ext = os.path.splitext(f)
-        out_path = f"{base}_aligned{ext}"
+
+        if salida is None:
+            base, ext = os.path.splitext(f)
+            out_path = f"{base}_aligned{ext}"
+        elif len(entradas) == 1:
+            out_path = salida
+        else:
+            # Varias entradas y una sola ruta de salida: se numeran para no
+            # sobrescribirse entre ellas.
+            base, ext = os.path.splitext(salida)
+            out_path = f"{base}_{i + 1}{ext}"
+
         write_molecule(mol, out_path, source_path=f)
         print(f"Molécula alineada guardada en: {out_path}")
+
+    # Sin esto, un fichero de entrada ilegible terminaba con codigo 0 y el
+    # motor daba la ejecucion por buena.
+    if hubo_error:
+        sys.exit(1)
 
 try:
     import psyco

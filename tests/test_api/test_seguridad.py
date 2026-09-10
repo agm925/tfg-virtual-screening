@@ -97,7 +97,11 @@ def test_uploads_de_peticion_ajena_devuelve_403(
 ):
     # Endpoint hallado y arreglado en el security-review: GET /uploads/{nombre}
     # servia cualquier fichero sin comprobar propietario.
-    script = b"# TIPO_ALGORITMO: preprocesado\nprint('dummy')\n"
+    # El doble debe escribir en el ultimo argumento: la subida lo ejecuta
+    # contra las moleculas de referencia antes de aceptarlo.
+    script = (b"# TIPO_ALGORITMO: preprocesado\n"
+              b"import shutil, sys\n"
+              b"shutil.copyfile(sys.argv[1], sys.argv[-1])\n")
     algoritmo_id = client.post(
         "/algoritmos",
         data={"nombre": "dummy", "descripcion": "dummy", "tipo": "preprocesado"},
