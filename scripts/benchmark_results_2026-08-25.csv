@@ -1,0 +1,8 @@
+algoritmo,n_moleculas,n_workers,tiempo_total_s,tiempo_medio_por_molecula_s,moleculas_por_segundo
+filtroLipinski,5,1,6.44,1.288,0.776
+filtroLipinski,100,1,166.987,1.6699,0.599
+filtroLipinski,500,1,359.782,0.7196,1.39
+filtroLipinski,1000,1,722.458,0.7225,1.384
+filtroLipinski,100,4,15.209,0.1521,6.575
+filtroLipinski,500,4,89.103,0.1782,5.611
+filtroLipinski,1000,4,176.696,0.1767,5.659

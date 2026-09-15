@@ -1,0 +1,10 @@
+algoritmo,n_moleculas,n_workers,tiempo_total_s,tiempo_medio_por_molecula_s,moleculas_por_segundo,speedup,eficiencia,fecha
+filtroLipinski,100,1,156.937,1.5694,0.637,1.0,1.0,2026-09-15
+filtroLipinski,100,2,38.903,0.389,2.57,4.034,2.017,2026-09-15
+filtroLipinski,100,4,30.482,0.3048,3.281,5.149,1.287,2026-09-15
+filtroLipinski,500,1,464.453,0.9289,1.077,1.0,1.0,2026-09-15
+filtroLipinski,500,2,208.223,0.4164,2.401,2.231,1.115,2026-09-15
+filtroLipinski,500,4,135.014,0.27,3.703,3.44,0.86,2026-09-15
+filtroLipinski,1000,1,758.573,0.7586,1.318,1.0,1.0,2026-09-15
+filtroLipinski,1000,2,435.949,0.4359,2.294,1.74,0.87,2026-09-15
+filtroLipinski,1000,4,253.944,0.2539,3.938,2.987,0.747,2026-09-15

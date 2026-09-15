@@ -10,6 +10,11 @@ Requisitos:
     - docker compose up -d   (los 6 contenedores deben estar corriendo)
     - pip install requests   (si no lo tienes ya en tu Python del host)
 
+Todos los endpoints que usa el benchmark exigen autenticacion desde el
+endurecimiento de seguridad, asi que el script se registra, se da de alta a si
+mismo como desarrollador con el correo verificado (directamente contra la BD,
+via docker compose exec) y opera con un token JWT como lo haria el frontend.
+
 El numero de workers de Celery NO lo cambia este script: lo cambias tu a
 mano con `docker compose up --scale worker=N` ANTES de lanzar el benchmark.
 El flag --workers solo sirve para etiquetar esa tanda de resultados en el CSV.
@@ -23,6 +28,7 @@ Uso:
 
 import argparse
 import csv
+import datetime
 import re
 import subprocess
 import sys
@@ -41,6 +47,7 @@ CSV_FIELDS = [
     "tiempo_total_s",
     "tiempo_medio_por_molecula_s",
     "moleculas_por_segundo",
+    "fecha",
 ]
 
 API_URL = "http://localhost:8000"
@@ -57,7 +64,9 @@ CHEMBL_SDF_URL = (
 SDF_LOCAL_NAME = "benchmark_chembl.sdf"
 MOL2_PREFIX = "benchmark_mol"
 
-TEST_EMAIL = "benchmark_bot@tfg.local"
+# example.com y no un dominio inventado: la validacion de entrada usa
+# EmailStr, que rechaza los TLD reservados como .local con un 422.
+TEST_EMAIL = "benchmark_bot@example.com"
 TEST_PASSWORD = "benchmark12345"
 TEST_NOMBRE = "Benchmark Bot"
 ALGORITMO_NOMBRE = "filtroLipinski (benchmark)"
@@ -153,7 +162,16 @@ def dividir_en_mol2(max_n: int) -> list:
     return generados
 
 
-def obtener_o_crear_usuario() -> int:
+def obtener_o_crear_usuario() -> tuple:
+    """Devuelve (usuario_id, cabeceras_con_token).
+
+    Desde el endurecimiento de seguridad, /peticiones, /algoritmos y el sondeo
+    de estado exigen un JWT, y subir un algoritmo exige ademas rol de
+    desarrollador. El registro por si solo no basta: deja la cuenta sin
+    verificar y con rol de usuario, asi que el script completa ambas cosas
+    directamente contra la BD --es un bot de medicion, no un usuario real, y
+    no hay buzon que confirmar.
+    """
     r = requests.post(
         f"{API_URL}/registro",
         json={"email": TEST_EMAIL, "nombre": TEST_NOMBRE, "password_hash": TEST_PASSWORD},
@@ -166,24 +184,42 @@ def obtener_o_crear_usuario() -> int:
     else:
         r.raise_for_status()
 
-    # /registro no devuelve el id y el login exige verificar el correo,
-    # asi que lo leemos directamente desde el backend (misma BD que usa la API).
+    # /registro no devuelve el id, y hay que verificar el correo y elevar el
+    # rol antes de poder iniciar sesion y subir el algoritmo de medicion.
     snippet = (
         "from app.database import SessionLocal\n"
         "from app import models\n"
         "db = SessionLocal()\n"
         f"u = db.query(models.Usuario).filter(models.Usuario.email == '{TEST_EMAIL}').first()\n"
+        "if u:\n"
+        "    u.email_verificado = True\n"
+        "    u.rol = models.RolUsuario.desarrollador\n"
+        "    db.commit()\n"
         "print(u.id if u else '')\n"
     )
     r = docker_exec("python", "-c", snippet)
-    salida = r.stdout.strip()
+    salida = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
     if not salida.isdigit():
-        sys.exit(f"No se pudo obtener el id del usuario de benchmark.\nstdout: {r.stdout}\nstderr: {r.stderr}")
-    return int(salida)
+        sys.exit(f"No se pudo preparar el usuario de benchmark.\nstdout: {r.stdout}\nstderr: {r.stderr}")
+    usuario_id = int(salida)
+
+    r = requests.post(
+        f"{API_URL}/login",
+        json={"email": TEST_EMAIL, "password_hash": TEST_PASSWORD},
+        timeout=15,
+    )
+    if r.status_code != 200:
+        sys.exit(f"No se pudo iniciar sesion como el usuario de benchmark: {r.status_code} {r.text}")
+    cabeceras = {"Authorization": "Bearer " + r.json()["access_token"]}
+    print(f"Sesion iniciada como {TEST_EMAIL} (id={usuario_id}).")
+    return usuario_id, cabeceras
 
 
-def obtener_o_crear_algoritmo(usuario_id: int) -> int:
-    r = requests.get(f"{API_URL}/algoritmos", timeout=15)
+def obtener_o_crear_algoritmo(usuario_id: int, cabeceras: dict) -> int:
+    # limit=500: el catalogo esta paginado (100 por defecto) y el algoritmo de
+    # medicion puede haber quedado por detras de otros en tandas anteriores.
+    r = requests.get(f"{API_URL}/algoritmos", params={"limit": 500},
+                     headers=cabeceras, timeout=15)
     r.raise_for_status()
     for a in r.json():
         if a.get("ruta_archivo") == ALGORITMO_RUTA and a.get("autor_id") == usuario_id:
@@ -197,17 +233,22 @@ def obtener_o_crear_algoritmo(usuario_id: int) -> int:
             "nombre": ALGORITMO_NOMBRE,
             "descripcion": "Filtro de Lipinski (Ro5) - usado para benchmarking de rendimiento",
             "tipo": "preprocesado",
-            "autor_id": str(usuario_id),
             "es_publico": "true",
         }
-        r = requests.post(f"{API_URL}/algoritmos", data=data, files=files, timeout=30)
-    r.raise_for_status()
+        # El autor lo toma el backend del token, no de un campo del formulario.
+        # La subida ejecuta ademas el banco de pruebas (app/banco_pruebas.py),
+        # asi que este POST tarda unos segundos mas que antes.
+        r = requests.post(f"{API_URL}/algoritmos", data=data, files=files,
+                          headers=cabeceras, timeout=180)
+    if r.status_code != 200:
+        sys.exit(f"No se pudo registrar el algoritmo de medicion: {r.status_code} {r.text}")
     algoritmo_id = r.json()["id"]
     print(f"Algoritmo filtroLipinski registrado (id={algoritmo_id}).")
     return algoritmo_id
 
 
-def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int, n_workers: int) -> dict:
+def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int,
+                  n_workers: int, cabeceras: dict) -> dict:
     n = len(mol2_files)
     print(f"\n--- Lote de {n} moleculas (n_workers={n_workers}) ---")
 
@@ -218,8 +259,9 @@ def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int, n_worker
     for i, ruta in enumerate(mol2_files, start=1):
         with open(ruta, "rb") as f:
             files = {"archivo_mol": (ruta.name, f, "chemical/x-mol2")}
-            data = {"usuario_id": usuario_id, "algoritmo_id": algoritmo_id}
-            r = requests.post(f"{API_URL}/peticiones", data=data, files=files, timeout=30)
+            data = {"algoritmo_id": algoritmo_id}
+            r = requests.post(f"{API_URL}/peticiones", data=data, files=files,
+                              headers=cabeceras, timeout=30)
         r.raise_for_status()
         peticion_ids.append(r.json()["id"])
         if i % paso_log == 0 or i == n:
@@ -232,7 +274,8 @@ def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int, n_worker
         time.sleep(intervalo)
         intervalo = min(intervalo * 1.3, 3.0)
         for pid in list(pendientes):
-            r = requests.get(f"{API_URL}/peticiones/{pid}/estado", params={"usuario_id": usuario_id}, timeout=15)
+            r = requests.get(f"{API_URL}/peticiones/{pid}/estado",
+                             headers=cabeceras, timeout=15)
             r.raise_for_status()
             estado = r.json()["estado"]
             if estado in ("COMPLETADO", "ERROR"):
@@ -255,6 +298,7 @@ def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int, n_worker
         "tiempo_total_s": round(tiempo_total, 3),
         "tiempo_medio_por_molecula_s": round(tiempo_total / n, 4),
         "moleculas_por_segundo": round(n / tiempo_total, 3),
+        "fecha": datetime.date.today().isoformat(),
     }
 
 
@@ -306,12 +350,12 @@ def main():
         print(f"Aviso: solo hay {len(mol2_files)} moleculas validas disponibles (se pedian {max_n}).")
         tamanos = sorted(set(t for t in tamanos if t <= len(mol2_files)) | {len(mol2_files)})
 
-    usuario_id = obtener_o_crear_usuario()
-    algoritmo_id = obtener_o_crear_algoritmo(usuario_id)
+    usuario_id, cabeceras = obtener_o_crear_usuario()
+    algoritmo_id = obtener_o_crear_algoritmo(usuario_id, cabeceras)
 
     resultados = []
     for n in tamanos:
-        fila = ejecutar_lote(mol2_files[:n], usuario_id, algoritmo_id, args.workers)
+        fila = ejecutar_lote(mol2_files[:n], usuario_id, algoritmo_id, args.workers, cabeceras)
         guardar_resultado(fila)
         resultados.append(fila)
 
