@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -47,6 +48,7 @@ CSV_FIELDS = [
     "tiempo_total_s",
     "tiempo_medio_por_molecula_s",
     "moleculas_por_segundo",
+    "repeticion",
     "fecha",
 ]
 
@@ -63,6 +65,23 @@ CHEMBL_SDF_URL = (
 )
 SDF_LOCAL_NAME = "benchmark_chembl.sdf"
 MOL2_PREFIX = "benchmark_mol"
+
+# Identificador unico de esta ejecucion. Las moleculas se SUBEN con un nombre
+# derivado de el, y no con el del fichero de origen, por un motivo de medida:
+# los .mol2 de entrada viven en el propio uploads/, asi que subirlos con su
+# nombre colisiona consigo mismos. Ante una colision, nombre_libre() recorre
+# los candidatos _2, _3, _4... con UNA CONSULTA A LA BASE DE DATOS por
+# candidato, de modo que el coste de subir crece con cada tanda acumulada.
+#
+# Eso contamina justo la parte que no paraleliza --la fase de subida-- y ademas
+# lo hace de forma ASIMETRICA: cada escala deja un nivel mas de sufijos que la
+# siguiente tiene que saltarse, penalizando a los recuentos altos de workers y
+# ocultando el paralelismo que se pretende medir. Medido en la tanda del
+# 15-sep: 144.4 ms por subida con colision frente a 111.5 ms sin ella.
+#
+# Con un nombre nuevo por tanda, nombre_libre() acierta a la primera y el coste
+# de subida es constante y comparable entre tandas.
+RUN_ID = uuid.uuid4().hex[:8]
 
 # example.com y no un dominio inventado: la validacion de entrada usa
 # EmailStr, que rechaza los TLD reservados como .local con un 422.
@@ -248,7 +267,7 @@ def obtener_o_crear_algoritmo(usuario_id: int, cabeceras: dict) -> int:
 
 
 def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int,
-                  n_workers: int, cabeceras: dict) -> dict:
+                  n_workers: int, cabeceras: dict, repeticion: int = 1) -> dict:
     n = len(mol2_files)
     print(f"\n--- Lote de {n} moleculas (n_workers={n_workers}) ---")
 
@@ -258,7 +277,9 @@ def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int,
     paso_log = max(1, n // 10)
     for i, ruta in enumerate(mol2_files, start=1):
         with open(ruta, "rb") as f:
-            files = {"archivo_mol": (ruta.name, f, "chemical/x-mol2")}
+            # Nombre propio de la tanda: evita la cadena de colisiones que
+            # inflaba y sesgaba la fase de subida (ver RUN_ID).
+            files = {"archivo_mol": (f"{RUN_ID}_{i}.mol2", f, "chemical/x-mol2")}
             data = {"algoritmo_id": algoritmo_id}
             r = requests.post(f"{API_URL}/peticiones", data=data, files=files,
                               headers=cabeceras, timeout=30)
@@ -298,8 +319,51 @@ def ejecutar_lote(mol2_files: list, usuario_id: int, algoritmo_id: int,
         "tiempo_total_s": round(tiempo_total, 3),
         "tiempo_medio_por_molecula_s": round(tiempo_total / n, 4),
         "moleculas_por_segundo": round(n / tiempo_total, 3),
+        "repeticion": repeticion,
         "fecha": datetime.date.today().isoformat(),
     }
+
+
+def purgar_tanda():
+    """
+    Borra los ficheros y las filas que ha creado ESTA tanda.
+
+    Se ejecuta fuera de la region cronometrada, y su razon de ser es que dos
+    repeticiones del mismo punto midan lo mismo: sin purgar, la segunda
+    encuentra un uploads/ mas grande y un registro con mas filas que la
+    primera, de modo que la comparacion entre repeticiones mediria el
+    crecimiento del directorio y no la configuracion.
+    """
+    snippet = (
+        "import os\n"
+        "from app.database import SessionLocal\n"
+        "from app import models\n"
+        f"pref = '{RUN_ID}_'\n"
+        "objetivo = [n for n in os.listdir('uploads') if n.startswith(pref)]\n"
+        "db = SessionLocal()\n"
+        "ids = [a.peticion_id for a in db.query(models.Archivo).filter("
+        "models.Archivo.nombre.in_(objetivo)).all() if a.peticion_id]\n"
+        "for i in range(0, len(objetivo), 500):\n"
+        "    db.query(models.Archivo).filter(models.Archivo.nombre.in_("
+        "objetivo[i:i+500])).delete(synchronize_session=False)\n"
+        "db.commit()\n"
+        "for i in range(0, len(ids), 500):\n"
+        "    db.query(models.Peticion).filter(models.Peticion.id.in_("
+        "ids[i:i+500])).delete(synchronize_session=False)\n"
+        "db.commit()\n"
+        "db.close()\n"
+        "for n in objetivo:\n"
+        "    try:\n"
+        "        os.remove(os.path.join('uploads', n))\n"
+        "    except OSError:\n"
+        "        pass\n"
+        "print(len(objetivo))\n"
+    )
+    r = docker_exec("python", "-c", snippet)
+    if r.returncode == 0:
+        print(f"  purgados {r.stdout.strip().splitlines()[-1]} ficheros de esta tanda.")
+    else:
+        print(f"  Aviso: no se pudo purgar la tanda: {r.stderr[-300:]}")
 
 
 def guardar_resultado(fila: dict):
@@ -334,6 +398,11 @@ def main():
              "cambialo tu con 'docker compose up --scale worker=N' antes de ejecutar)",
     )
     parser.add_argument(
+        "--repeticion", type=int, default=1,
+        help="Numero de repeticion de este punto (solo etiqueta el CSV; "
+             "permite dar media y desviacion en vez de una medida suelta)",
+    )
+    parser.add_argument(
         "--batches", type=str, default="100,500,1000",
         help="Tamanos de lote a probar, separados por comas (por defecto: 100,500,1000)",
     )
@@ -353,11 +422,17 @@ def main():
     usuario_id, cabeceras = obtener_o_crear_usuario()
     algoritmo_id = obtener_o_crear_algoritmo(usuario_id, cabeceras)
 
+    print(f"Identificador de esta tanda: {RUN_ID}")
+
     resultados = []
     for n in tamanos:
-        fila = ejecutar_lote(mol2_files[:n], usuario_id, algoritmo_id, args.workers, cabeceras)
+        fila = ejecutar_lote(mol2_files[:n], usuario_id, algoritmo_id, args.workers,
+                             cabeceras, args.repeticion)
         guardar_resultado(fila)
         resultados.append(fila)
+        # Fuera de la region cronometrada: deja el sistema como estaba para
+        # que el siguiente lote --y la siguiente repeticion-- midan lo mismo.
+        purgar_tanda()
 
     imprimir_resumen(resultados)
 

@@ -89,100 +89,142 @@ de seguridad y ya no funcionaba contra la API actual. Dos fallos:
    (*"The part after the @-sign is a special-use or reserved name"*).
    *Arreglo:* `benchmark_bot@example.com`.
 
-Ambos son la misma historia: **el endurecimiento de seguridad dejó atrás
-herramientas internas que nadie volvió a ejecutar**. Merece una frase en la
+A esos dos se sumaron, ya midiendo, otros dos problemas de método:
+
+3. **La imagen del *worker* estaba desfasada** cinco días respecto a `HEAD`.
+   `app/` no está montado como volumen —solo lo están `uploads/` y
+   `algoritmos/`—, así que el código va horneado en la imagen y
+   `docker compose up` no lo actualiza. Y `backend` y `worker` son dos entradas
+   de *build* distintas: reconstruir solo una deja la otra atrás.
+   *Arreglo:* `docker compose build` **sin argumentos** dentro del script de
+   tanda, comentado para que no vuelva a morder.
+4. **El benchmark re-subía ficheros que ya estaban en `uploads/`**, así que cada
+   subida colisionaba consigo misma y `nombre_libre()` recorría candidatos
+   `_2`, `_3`, `_4`… con **una consulta a la base de datos por candidato**.
+   Medido: 144,4 ms por subida con colisión frente a 111,5 ms sin ella. Peor
+   aún, era acumulativo y asimétrico: cada escala dejaba un nivel más de
+   sufijos que la siguiente tenía que saltarse, penalizando a los recuentos
+   altos de *workers* — justo lo que se intentaba medir.
+   *Arreglo:* cada tanda sube con un `RUN_ID` propio y purga sus ficheros al
+   terminar cada lote, fuera de la región cronometrada.
+
+Los dos primeros son la misma historia: **el endurecimiento de seguridad dejó
+atrás herramientas internas que nadie volvió a ejecutar**. Merece una frase en la
 memoria, porque es un efecto colateral real y honesto de una mejora.
 
 Además se añadió `scripts/tanda_escalado.sh`, que orquesta las tres escalas
 seguidas; antes esa secuencia se hacía a mano y por tanto no quedaba registrada
 en ninguna parte.
 
-## 5. Resultados (medidos el 2026-09-15)
+## 5. Resultados (27 mediciones, 2026-09-15)
 
-Máquina: 12 CPUs y 8 GB de RAM disponibles para Docker. Cada réplica de
-`worker` corre con `worker_concurrency=1`, así que N réplicas son N procesos.
-La CPU **no** es el factor limitante en ninguna de las escalas medidas.
+3 repeticiones × 3 escalas (1, 2, 4 *workers*) × 3 tamaños de lote.
+Máquina: 12 CPUs y 8 GB para Docker. Cada réplica con `worker_concurrency=1`,
+así que N réplicas son N procesos y el techo teórico es N×.
 
 ### 5.1 Tabla completa
 
-| Moléculas | Workers | Tiempo (s) | s/molécula | mol/s | *Speedup* | Eficiencia |
-|---:|---:|---:|---:|---:|---:|---:|
-| 100  | 1 | 156.94 | 1.5694 | 0.64 | 1.00 | 1.00 |
-| 100  | 2 | 38.90  | 0.3890 | 2.57 | 4.03 | 2.02 |
-| 100  | 4 | 30.48  | 0.3048 | 3.28 | 5.15 | 1.29 |
-| 500  | 1 | 464.45 | 0.9289 | 1.08 | 1.00 | 1.00 |
-| 500  | 2 | 208.22 | 0.4164 | 2.40 | 2.23 | 1.12 |
-| 500  | 4 | 135.01 | 0.2700 | 3.70 | 3.44 | 0.86 |
-| 1000 | 1 | 758.57 | 0.7586 | 1.32 | 1.00 | 1.00 |
-| 1000 | 2 | 435.95 | 0.4359 | 2.29 | 1.74 | 0.87 |
-| 1000 | 4 | 253.94 | 0.2539 | 3.94 | 2.99 | 0.75 |
+| Lote | Workers | Media (s) | Desv. (s) | CV | Mín (s) | Máx (s) | *Speedup* | Eficiencia |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 1 | 74.6 | 9.2 | 12.3 % | 67.7 | 85.0 | 1.00 | 1.00 |
+| 100 | 2 | 42.8 | 3.8 | 8.9 % | 38.9 | 46.6 | 1.74 | 0.87 |
+| 100 | 4 | 29.4 | 0.1 | **0.3 %** | 29.3 | 29.5 | 2.31 | 0.58 |
+| 500 | 1 | 673.2 | 371.3 | **55.2 %** | 423.5 | 1099.9 | 1.00 | 1.00 |
+| 500 | 2 | 258.5 | 29.3 | 11.4 % | 224.6 | 276.4 | 1.89 | 0.94 |
+| 500 | 4 | 126.2 | 2.3 | 1.8 % | 124.3 | 128.8 | 3.41 | 0.85 |
+| 1000 | 1 | 1538.2 | 950.1 | **61.8 %** | 855.3 | 2623.2 | 1.00 | 1.00 |
+| 1000 | 2 | 445.7 | 52.7 | 11.8 % | 404.2 | 505.0 | 2.12 | 1.06 |
+| 1000 | 4 | 264.3 | 11.7 | 4.4 % | 253.4 | 276.6 | 3.38 | 0.84 |
 
-Moléculas fallidas, **idénticas en las tres escalas** (mismo conjunto, mismo
-código): 1/100, 18/500 y **35/1000 (3,5 %)**.
+Moléculas fallidas: **1/100, 18/500, 35/1000 (3,5 %)**, idénticas en las nueve
+combinaciones — el *pipeline* es determinista respecto al número de réplicas.
 
-### 5.2 Los tres hallazgos
+### 5.2 El hallazgo principal no es el speedup: es la dispersión
 
-**(a) La tasa de error cae del 30,2 % al 3,5 %.**
-En agosto, 302 de 1000 moléculas de ChEMBL acababan en `ERROR` porque RDKit no
-sabía kekulizar el `.mol2` que generaba Open Babel. Con la tolerancia añadida en
-`3fcc2f8`, fallan 35. Se recupera cerca del **27 % de la biblioteca**. Que el
-número sea idéntico con 1, 2 y 4 *workers* confirma además que el *pipeline* es
-determinista respecto al número de réplicas.
+Mirando la columna CV de arriba, el patrón salta a la vista:
 
-**(b) Los tiempos absolutos suben, y eso NO es una regresión.**
-El lote de 1000 con 1 *worker* pasa de 722,5 s a 758,6 s. La causa es (a): antes
-el 30 % de las tareas fallaba en milisegundos al cargar la molécula; ahora se
-calculan de verdad sus descriptores. **El lote hace más trabajo.** Poner las dos
-tandas en la misma tabla sin explicar esto haría parecer que el sistema ha
-empeorado.
+| Workers | CV del lote de 1000 |
+|---:|---:|
+| 1 | **61,8 %** |
+| 2 | 11,8 % |
+| 4 | **4,4 %** |
 
-**(c) El $4.09\times$ de la memoria no era creíble, y el nuevo $2.99\times$ sí.**
-La cifra de agosto daba una eficiencia de **1.02**: un rendimiento superlineal,
-por encima del máximo teórico de 4× que permiten cuatro procesos. Eso no puede
-pasar en una paralelización de este tipo, y era la señal de que algo contaminaba
-la medida. La tanda nueva da una curva con la forma esperada —eficiencia
-decreciente: 1.00 → 0.87 → 0.75— y eso es lo que la hace defendible.
+**Con un solo *worker* la medición es basura; con cuatro es casi perfecta.**
+El extremo: el lote de 1000 con 1 *worker* tardó 855 s en una repetición y
+2.623 s en otra — un factor 3 entre medidas de lo mismo.
 
-### 5.3 Por qué la eficiencia baja: medido, no supuesto
+La explicación es de exposición temporal. La configuración de 1 *worker* es la
+más lenta, así que su ventana de medida es la más larga (hasta 44 minutos para
+el lote de 1000) y por tanto la más expuesta a cualquier otra carga de la
+máquina. Y un solo proceso no tiene holgura: cada ciclo de CPU que se le quita
+va directo al reloj. Con 4 procesos sobre 12 núcleos hay margen para absorber
+la interferencia.
 
-No es contención de CPU (4 procesos sobre 12 núcleos). Es que **el benchmark
-incluye una fase estrictamente secuencial**: sube las moléculas una a una con
-`POST /peticiones` antes de esperar a ninguna.
+> **Hay que decirlo en la memoria:** parte de esa interferencia la causé yo
+> trabajando en la misma máquina mientras medía (compilar el LaTeX, reconstruir
+> imágenes, consultas a la base de datos). No es una excusa, es la causa, y
+> condiciona cómo hay que leer los números.
 
-Medición directa de esa fase: **0,1337 s por subida**, es decir **133,7 s para
-1000 moléculas**, el **17,6 %** del tiempo con un solo *worker*.
+### 5.3 Por qué los *speedups* se calculan sobre el mínimo
 
-Aplicando la ley de Amdahl con esa fracción serie $f = 0.176$:
+El *speedup* es un cociente cuyo **denominador es la medida más ruidosa** (la
+de 1 *worker*). Con las medias sale 5,82× a 4 *workers* — superlineal otra vez,
+y por la misma razón que el 4,09× de la memoria: el numerador está inflado.
 
-| Workers | *Speedup* predicho | *Speedup* medido |
+Por eso la tabla usa el **mínimo de las tres repeticiones** de cada
+configuración. Es práctica habitual al medir sobre una máquina no dedicada: el
+mínimo es la ejecución con menos interferencia, es decir, la más cercana al
+tiempo real del sistema. Así sale una curva coherente:
+
+| Lote | 2 workers | 4 workers |
 |---:|---:|---:|
-| 2 | 1.70× | 1.74× |
-| 4 | 2.62× | 2.99× |
+| 500 | 1,89× (ef. 0,94) | **3,41× (ef. 0,85)** |
+| 1000 | 2,12× (ef. 1,06) | **3,38× (ef. 0,84)** |
 
-El modelo explica la curva (el medido queda algo por encima del predicho porque
-los *workers* empiezan a consumir mientras las subidas siguen en marcha, así que
-parte de la fase serie se solapa con el cómputo).
+### 5.4 Qué se puede afirmar, y qué no
 
-**La consecuencia importante para la memoria:** ese 17,6 % es una limitación
-**del medidor**, no de la plataforma. Un usuario real que hace un cribado por
-lotes sube **un único SDF** y el *chord* de Celery reparte las moléculas entre
-los *workers*; no hay mil subidas secuenciales. El techo de escalado que mide
-este benchmark es, por tanto, pesimista respecto al caso de uso real.
+**Se puede afirmar:** con 4 *workers*, el cribado de 500 y 1000 moléculas se
+acelera **≈3,4×**, con una eficiencia de **≈0,85**. La cifra es consistente
+entre los dos tamaños de lote y proviene de las configuraciones cuya medición
+es reproducible (CV del 1,8 % y el 4,4 %).
 
-### 5.4 El lote de 100 no mide paralelismo
+**No se puede afirmar** el 4,09× que figura hoy en la memoria. Implicaba una
+eficiencia de 1,02 —superlineal, imposible con cuatro procesos— y era el
+síntoma de un denominador contaminado, exactamente el mismo efecto que aquí se
+ha cuantificado.
 
-Da eficiencias de 2.02 y 1.29, imposibles. La prueba está en que pasar de 2 a 4
-*workers* solo lo mejora de 38,9 s a 30,5 s (1,28×): ya ha tocado el suelo que
-imponen las 100 subidas más el sondeo. **No debería sostener ninguna
-conclusión**; la memoria ya lo intuía al atribuir su $10.98\times$ a "efectos de
-arranque", pero la causa concreta es esta.
+**Queda una anomalía honesta:** 1000 moléculas con 2 *workers* da eficiencia
+1,06, ligeramente superlineal. Es ruido residual del denominador, y conviene
+decirlo en vez de redondearlo a 1,00.
 
-### 5.5 Honestidad sobre la precisión
+### 5.5 El lote de 100 no mide paralelismo
 
-Hay **una sola medición por punto**. La dispersión entre lotes lo demuestra: el
-*speedup* con 2 *workers* sale 2.23× con 500 moléculas y 1.74× con 1000. Para
-afirmar algo más fino haría falta repetir cada punto y dar media y desviación.
-Conviene decirlo en la memoria en vez de presentar estos números como exactos.
+Eficiencia 0,58 con 4 *workers*, y un CV del 0,3 % — reproducibilidad
+altísima midiendo algo que no es el paralelismo. De 2 a 4 *workers* solo baja
+de 38,9 s a 29,3 s porque ya ha tocado el suelo que imponen las 100 subidas
+secuenciales más el sondeo. Es el mismo efecto que en la medición anterior
+producía un imposible 10,98×.
+
+### 5.6 La fase serie, medida aparte
+
+Subir una molécula cuesta **0,1337 s** (medido sobre 100 subidas con nombres
+sin colisión), es decir **133,7 s para mil**: el **17,6 %** del tiempo del lote
+de 1000 con un *worker*. Por la ley de Amdahl con f = 0,176, el techo de
+escalado es 5,7× y la predicción a 4 *workers* es 2,62×, frente al 3,38×
+medido — el medido queda por encima porque los *workers* empiezan a consumir
+mientras las subidas siguen en marcha, solapando parte de la fase serie.
+
+**Esa fase serie es del medidor, no de la plataforma.** Un usuario real que
+hace un cribado por lotes sube **un único SDF** y el *chord* reparte las
+moléculas; no hay mil subidas HTTP secuenciales. El techo que mide este
+benchmark es pesimista respecto al caso de uso real.
+
+### 5.7 Para obtener cifras de calidad de publicación
+
+Lo que falta no es más código, es un entorno limpio: **máquina dedicada, sin
+nadie usándola**, y preferiblemente 5 repeticiones en vez de 3. Con eso, el CV
+del 1 *worker* debería bajar del 60 % a un rango parecido al del resto, y los
+*speedups* podrían darse como media ± desviación en lugar de sobre el mínimo.
 
 ## 6. Qué hay que cambiar en la memoria
 
