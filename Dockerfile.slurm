@@ -1,4 +1,4 @@
-# Clúster SLURM de un solo nodo, para simular Picasso en local.
+# Clúster SLURM de un solo nodo, para simular el bullx en local.
 #
 # Ejercita el camino EXECUTION_MODE=slurm de punta a punta: SSH, SFTP, sbatch,
 # sondeo con sacct y descarga de resultados. Sin esto, app/slurm_executor.py
@@ -45,7 +45,7 @@ RUN curl -fsSL -o /usr/local/bin/smina "${SMINA_URL}" \
 
 # Mismas dependencias Python que el backend: si un algoritmo funciona en local,
 # tiene que funcionar en el nodo. Instalarlas aquí evita que la simulación
-# falle por un motivo que en Picasso no ocurriría.
+# falle por un motivo que en el bullx no ocurriría.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -75,7 +75,7 @@ RUN useradd -m -s /bin/bash ${SLURM_SIM_USER} \
 
 # Autenticación por contraseña: es la rama "else" de SlurmExecutor._conectar
 # cuando no hay SLURM_SSH_KEY_PATH. Aceptable SOLO porque este contenedor es
-# local y efímero; contra Picasso se usa clave SSH.
+# local y efímero; contra el bullx se usa clave SSH.
 RUN sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
     && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/'             /etc/ssh/sshd_config \
     && ssh-keygen -A

@@ -3,6 +3,13 @@ import { Handle, Position, useReactFlow } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import '../../styles/Nodos.css';
 
+// `tipo` lo verifica el backend contra el contenido real del fichero al
+// subirlo (GET /moleculas), no es lo que declaró quien lo subió: antes el
+// icono salía de si el fichero era privado o no, así que la molécula de
+// entrada de una petición cualquiera --privada, pero una molécula corriente--
+// se mostraba igual que una base de datos.
+const ICONO_TIPO = { molecula: '📁', base_de_datos: '🗄️', resultado: '📊' };
+
 const SelectMolNodoNode = ({ data, id }) => {
   const { setNodes, setEdges } = useReactFlow();
   const [moleculas, setMoleculas] = useState([]);
@@ -55,7 +62,8 @@ const SelectMolNodoNode = ({ data, id }) => {
             <select className="select-input" value={seleccionada} onChange={e => handleCambio(e.target.value)} style={{ width: '100%' }}>
               {moleculas.map(m => (
                 <option key={m.nombre} value={m.nombre}>
-                  {m.origen === 'base_de_datos' ? '🗄️' : '📁'} {m.nombre} ({m.tamano_kb} KB)
+                  {ICONO_TIPO[m.tipo] || '📁'} {m.nombre}
+                  {m.num_moleculas > 1 ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
                 </option>
               ))}
             </select>

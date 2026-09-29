@@ -12,7 +12,7 @@ Entrada: .mol2 (1 molécula) o .sdf/.mol (1 o varias moléculas)
 Salida:  JSON con la lista de propiedades y el resultado PASS/FAIL de cada una
 
 Propiedades calculadas:
-    MW    Peso molecular exacto        (≤ 500 Da)
+    MW    Peso molecular promedio      (≤ 500 Da)
     LogP  Coeficiente de partición     (≤ 5)
     HBD   Donadores de enlace H        (≤ 5)
     HBA   Aceptores de enlace H        (≤ 10)
@@ -82,7 +82,16 @@ def cargar_moleculas(ruta: str) -> list:
 
 
 def calcular_propiedades_lipinski(mol, nombre: str = "molecula") -> dict:
-    mw   = Descriptors.ExactMolWt(mol)
+    # Peso molecular PROMEDIO, no la masa monoisotopica (ExactMolWt), que
+    # es lo que habia antes. La regla de Lipinski se enuncia sobre el peso
+    # promedio --igual que lo publican ChEMBL y PubChem-- y la masa exacta
+    # siempre sale por debajo: para la aspirina, 180,04 frente a 180,16.
+    # La diferencia es del 0,1 %, pero va toda en el mismo sentido, asi que
+    # en el umbral de 500 Da el filtro dejaba pasar compuestos que la regla
+    # descarta. Ademas asi coincide con similaridadTanimoto.py, que ya
+    # usaba Descriptors.MolWt: dos algoritmos del mismo catalogo daban
+    # pesos distintos para la misma molecula.
+    mw   = Descriptors.MolWt(mol)
     logp = Crippen.MolLogP(mol)
     hbd  = rdMolDescriptors.CalcNumHBD(mol)
     hba  = rdMolDescriptors.CalcNumHBA(mol)

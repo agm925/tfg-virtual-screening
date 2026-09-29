@@ -11,9 +11,9 @@ Requisitos:
     - pip install requests   (si no lo tienes ya en tu Python del host)
 
 Todos los endpoints que usa el benchmark exigen autenticacion desde el
-endurecimiento de seguridad, asi que el script se registra, se da de alta a si
-mismo como desarrollador con el correo verificado (directamente contra la BD,
-via docker compose exec) y opera con un token JWT como lo haria el frontend.
+endurecimiento de seguridad, asi que el script se registra, se marca a si mismo
+el correo como verificado (directamente contra la BD, via docker compose exec)
+y opera con un token JWT como lo haria el frontend.
 
 El numero de workers de Celery NO lo cambia este script: lo cambias tu a
 mano con `docker compose up --scale worker=N` ANTES de lanzar el benchmark.
@@ -185,11 +185,11 @@ def obtener_o_crear_usuario() -> tuple:
     """Devuelve (usuario_id, cabeceras_con_token).
 
     Desde el endurecimiento de seguridad, /peticiones, /algoritmos y el sondeo
-    de estado exigen un JWT, y subir un algoritmo exige ademas rol de
-    desarrollador. El registro por si solo no basta: deja la cuenta sin
-    verificar y con rol de usuario, asi que el script completa ambas cosas
-    directamente contra la BD --es un bot de medicion, no un usuario real, y
-    no hay buzon que confirmar.
+    de estado exigen un JWT. El registro por si solo no basta: deja la cuenta
+    sin verificar, y sin verificar no se puede iniciar sesion, asi que el
+    script marca el correo directamente contra la BD --es un bot de medicion,
+    no un usuario real, y no hay buzon que confirmar--. El rol no hace falta
+    tocarlo: el rol por defecto (biologo) ya puede subir algoritmos.
     """
     r = requests.post(
         f"{API_URL}/registro",
@@ -203,8 +203,8 @@ def obtener_o_crear_usuario() -> tuple:
     else:
         r.raise_for_status()
 
-    # /registro no devuelve el id, y hay que verificar el correo y elevar el
-    # rol antes de poder iniciar sesion y subir el algoritmo de medicion.
+    # /registro no devuelve el id, y hay que verificar el correo antes de
+    # poder iniciar sesion y subir el algoritmo de medicion.
     snippet = (
         "from app.database import SessionLocal\n"
         "from app import models\n"
@@ -212,7 +212,6 @@ def obtener_o_crear_usuario() -> tuple:
         f"u = db.query(models.Usuario).filter(models.Usuario.email == '{TEST_EMAIL}').first()\n"
         "if u:\n"
         "    u.email_verificado = True\n"
-        "    u.rol = models.RolUsuario.desarrollador\n"
         "    db.commit()\n"
         "print(u.id if u else '')\n"
     )

@@ -14,9 +14,10 @@ x-backend-env: &backend-env
   WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
   EXECUTION_MODE: ${EXECUTION_MODE:-local}
   ALGORITMO_TIMEOUT: ${ALGORITMO_TIMEOUT:-1800}
+  BANCO_SOCKET: /sock/banco.sock
   BATCH_TAMANO_BLOQUE: ${BATCH_TAMANO_BLOQUE:-25}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
-  SLURM_HOST: ${SLURM_HOST:-picasso.scbi.uma.es}
+  SLURM_HOST: ${SLURM_HOST:-bullxual.hpca.ual.es}
   SLURM_PORT: ${SLURM_PORT:-22}
   SLURM_USER: ${SLURM_USER:-}
   SLURM_SSH_KEY_PATH: ${SLURM_SSH_KEY_PATH:-}
@@ -83,12 +84,20 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./algoritmos:/app/algoritmos
+      # Solo el socket del sandbox. El banco no ve ninguno de los otros dos.
+      - banco_sock:/sock
     ports:
       - "8000:8000"
+    # El backend tampoco tenia limite de memoria. Lo tenia el worker y no el
+    # proceso web, que es el que atiende a los usuarios: una peticion que
+    # consumiera toda la RAM se llevaba por delante la maquina entera.
+    mem_limit: ${BACKEND_MEM_LIMIT:-2g}
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      banco:
         condition: service_healthy
 
   worker:
@@ -112,12 +121,79 @@ services:
     #
     # Límite de memoria por worker. No convierte la ejecución de algoritmos en
     # un sandbox --subir un .py sigue siendo, por diseño, ejecutar código en el
-    # servidor, y quien tiene rol de desarrollador puede hacerlo-- pero sí
+    # servidor, y cualquier usuario registrado puede hacerlo-- pero sí
     # acota la consecuencia: un algoritmo que se desboque mata su propio worker
     # en vez de agotar la memoria de la máquina entera y llevarse por delante
     # la base de datos y la API. Con task_acks_late (app/celery_app.py), la
     # tarea interrumpida vuelve a la cola en lugar de perderse.
     mem_limit: ${WORKER_MEM_LIMIT:-2g}
+
+  # --- Sandbox del banco de pruebas de algoritmos ---
+  #
+  # Aqui se ejecutan los algoritmos recien subidos para comprobarlos antes de
+  # aceptarlos (ver app/banco_servidor.py). Es, por definicion, ejecutar codigo
+  # que todavia no se ha aceptado, asi que este contenedor esta construido a
+  # base de quitarle cosas:
+  #
+  #   · SIN volumenes. No monta ./uploads ni ./algoritmos, de modo que no ve
+  #     ficheros de ningun usuario ni puede reescribir el catalogo. Las
+  #     moleculas de referencia van horneadas en la imagen.
+  #   · SIN el bloque *backend-env. No conoce JWT_SECRET_KEY --con la que
+  #     podria firmarse un token de administrador--, ni DATABASE_URL, ni la
+  #     contrasena del correo, ni las credenciales del cluster.
+  #   · SIN RED, literalmente: network_mode "none" le deja solo el loopback.
+  #     No tiene interfaz por la que salir a internet, ni por la que alcanzar
+  #     PostgreSQL, Redis o la propia API del backend. La comunicacion con el
+  #     backend va por un socket Unix en un volumen compartido, que es
+  #     unidireccional en la practica: el backend abre la conexion y el banco
+  #     solo responde.
+  #   · SIN privilegios: usuario nobody, sistema de ficheros de solo lectura
+  #     salvo un tmpfs, todas las capabilities retiradas y sin poder
+  #     recuperarlas.
+  #
+  # Reutiliza la imagen del backend porque necesita la misma pila cientifica
+  # (RDKit, Open Babel, smina) para poder ejecutar cualquier algoritmo del
+  # catalogo; lo que cambia es el comando y todo lo que se le quita.
+  banco:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        # Deja fuera el catalogo de algoritmos: el sandbox no lo necesita y ahi
+        # hay algoritmos privados de otros usuarios.
+        PURGAR_CATALOGO: "1"
+    container_name: tfg_banco
+    restart: unless-stopped
+    command: ["uvicorn", "app.banco_servidor:app", "--uds", "/sock/banco.sock"]
+    environment:
+      BANCO_TIMEOUT: ${BANCO_TIMEOUT:-120}
+      MAX_ALGORITMO_KB: ${MAX_ALGORITMO_KB:-512}
+      PYTHONUNBUFFERED: "1"
+      HOME: /tmp
+    network_mode: "none"
+    user: "65534:65534"
+    read_only: true
+    volumes:
+      # Unico punto de contacto con el resto del sistema. El directorio se crea
+      # en la imagen con dueno 65534 para que uvicorn pueda crear ahi el socket
+      # siendo nobody: un volumen con nombre hereda los permisos de la ruta que
+      # exista en la imagen al crearse.
+      - banco_sock:/sock
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${BANCO_MEM_LIMIT:-1g}
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/sock/banco.sock'); sys.exit(0)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   flower:
     build:
@@ -138,7 +214,7 @@ services:
     depends_on:
       - redis
 
-  # --- Simulación local del clúster Picasso (perfil "slurm") ---
+  # --- Simulación local del clúster bullx (perfil "slurm") ---
   #
   # No arrancan con `docker compose up` normal. Para levantarlos:
   #     docker compose --profile slurm up --build
@@ -201,3 +277,5 @@ services:
 volumes:
   db_data:
   slurmdb_data:
+  # Solo contiene el socket Unix por el que el backend habla con el sandbox.
+  banco_sock:

@@ -1,6 +1,18 @@
 /* ===== GLOBAL ===== */
 body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
 
+/* Red de seguridad: un <button> sin color propio no hereda el del body,
+   usa el color de sistema `buttontext`. Y como index.css declara
+   `color-scheme: light dark`, ese color pasa a ser BLANCO cuando el sistema
+   operativo esta en modo oscuro -- botones con fondo claro y letras blancas,
+   invisibles. Ya pasaba en Administracion.jsx y en el selector de tipo de
+   Algoritmos.jsx (los dos con estilos en linea sin `color`, ya corregidos);
+   esta regla cubre cualquier boton nuevo que se escriba igual y se olvide de
+   ponerlo. Un boton que SÍ fija su color (las clases .btn-*, .nav-btn, etc.)
+   no se ve afectado: la cascada CSS usa el mas especifico, esto solo actua
+   donde nadie dijo nada. */
+button { color: #2c3e50; }
+
 html, body, #root {
   margin: 0;
   padding: 0;

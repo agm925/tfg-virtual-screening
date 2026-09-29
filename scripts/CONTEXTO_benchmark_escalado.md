@@ -78,12 +78,13 @@ de seguridad y ya no funcionaba contra la API actual. Dos fallos:
 
 1. **Sin autenticación.** Llamaba a `POST /peticiones`, `GET /algoritmos` y
    `GET /peticiones/{id}/estado` pasando `usuario_id` como campo de formulario.
-   Hoy los tres exigen JWT (`obtener_usuario_actual`), el propietario se toma
-   del token y no del formulario, y subir un algoritmo exige rol
-   `desarrollador` (`requiere_rol("admin", "desarrollador")`).
-   *Arreglo:* el script se registra, se marca el correo como verificado y se
-   eleva el rol contra la BD vía `docker compose exec`, hace `POST /login` y
-   opera con `Authorization: Bearer` como el frontend.
+   Hoy los tres exigen JWT (`obtener_usuario_actual`) y el propietario se toma
+   del token, no del formulario. (Subir un algoritmo exigía además el rol
+   `desarrollador`; ese rol ya no existe y la subida está abierta a cualquier
+   usuario autenticado.)
+   *Arreglo:* el script se registra, marca el correo como verificado contra la
+   BD vía `docker compose exec`, hace `POST /login` y opera con
+   `Authorization: Bearer` como el frontend.
 2. **Correo inválido.** Usaba `benchmark_bot@tfg.local`; la validación de
    entrada con `EmailStr` rechaza los TLD reservados con un 422
    (*"The part after the @-sign is a special-use or reserved name"*).

@@ -8,11 +8,13 @@ algoritmo roto entraba en el catálogo igual que uno correcto, y el fallo
 aparecía horas después, dentro de un cribado, como una molécula fallida entre
 mil.
 
-La idea es sencilla: el autor DECLARA qué hace su algoritmo, y la plataforma
-lo VERIFICA ejecutándolo contra un par de moléculas de referencia antes de
-aceptarlo. El tipo declarado es lo que permite saber cómo invocarlo --una
-molécula, dos, o ligando más receptor-- y la ejecución comprueba que esa
-declaración sea cierta.
+La idea es sencilla: el autor DECLARA qué hace su algoritmo --hoy, eligiendo
+el tipo en el formulario de subida; el metadato en el script ya no hace
+falta, y app/main.py no lo lee-- y la plataforma lo VERIFICA ejecutándolo
+contra un par de moléculas de referencia antes de aceptarlo. El tipo
+declarado es lo que permite saber cómo invocarlo --una molécula, dos, o
+ligando más receptor-- y la ejecución comprueba que esa declaración sea
+cierta.
 
 Además de aceptar o rechazar, la prueba OBSERVA el resultado y anota dos cosas
 que hasta ahora estaban cableadas en el código del motor:
@@ -27,6 +29,35 @@ cuatro veces en este proyecto: el motor buscaba `rmsd` y el algoritmo escribía
 `rmsd_angstroms`; buscaba `MW` en la raíz y estaba anidado; no contemplaba que
 `mejor_afinidad` pudiera ser nulo. Todos eran el mismo problema: un contrato
 acordado de palabra entre dos ficheros que nadie comprobaba.
+
+DÓNDE SE EJECUTA
+----------------
+Probar un algoritmo es, por definición, ejecutar código que acaba de llegar y
+que todavía no se ha aceptado. Eso obliga a ser muy preciso sobre dónde ocurre.
+
+En la primera versión ocurría dentro del proceso del backend, en la propia
+petición HTTP de subida, como root y heredando su entorno completo. Es decir:
+un algoritmo subido podía leer `JWT_SECRET_KEY` --y firmarse un token de
+administrador--, `DATABASE_URL`, `SMTP_PASSWORD` y las credenciales del
+clúster, además de reescribir otros algoritmos del catálogo a través del
+volumen montado. La pieza añadida para aumentar la seguridad ampliaba la
+superficie de ataque.
+
+Ahora la ejecución se delega en el servicio `banco` (ver `app/banco_servidor.py`
+y el `docker-compose.yml`), un contenedor aparte que:
+
+  · no monta `uploads/` ni `algoritmos/`, de modo que no ve ningún fichero de
+    ningún usuario --solo las moléculas de referencia, horneadas en la imagen--;
+  · no recibe ninguna variable de entorno con secretos;
+  · vive en una red `internal`, sin salida a internet ni acceso a la base de
+    datos ni a Redis;
+  · corre como usuario sin privilegios, con el sistema de ficheros en solo
+    lectura salvo un `tmpfs`, sin capacidades y con límites de memoria y de
+    número de procesos.
+
+Si ese servicio no está disponible, la subida se RECHAZA en vez de recurrir a
+ejecutar el script en el backend: degradar a la ruta insegura en silencio sería
+peor que rechazar, porque reintroduciría el problema justo cuando nadie mira.
 """
 import json
 import os
@@ -34,7 +65,7 @@ import subprocess
 import sys
 import tempfile
 
-from app.config import ALGORITMO_TIMEOUT
+from app.config import ALGORITMO_TIMEOUT, BANCO_SOCKET, BANCO_URL
 from app.formatos import EXTENSIONES_MOLECULA, parece_json
 
 # Directorio con las moléculas de referencia, en la raíz del proyecto.
@@ -90,7 +121,21 @@ class ResultadoPrueba:
             "formato_salida": self.formato_salida,
             "clave_score": self.clave_score,
             "claves_json": self.claves_json,
+            "log": self.log,
         }
+
+    @classmethod
+    def desde_dict(cls, datos: dict) -> "ResultadoPrueba":
+        """Reconstruye el resultado que devuelve el servicio aislado."""
+        r = cls()
+        r.valido = bool(datos.get("valido"))
+        r.motivo = datos.get("motivo")
+        r.detalle = datos.get("detalle")
+        r.formato_salida = datos.get("formato_salida")
+        r.clave_score = datos.get("clave_score")
+        r.claves_json = datos.get("claves_json") or []
+        r.log = datos.get("log") or ""
+        return r
 
 
 def _claves_numericas(datos, prefijo=""):
@@ -140,10 +185,99 @@ def elegir_clave_score(claves):
     return claves[0]
 
 
+# Variables que el subproceso SÍ necesita. Todo lo demás se queda fuera.
+#
+# El proceso que invoca el banco tiene en su entorno la URL de la base de datos
+# con su contraseña, la clave de firma de los JWT, la contraseña del correo y
+# las credenciales del clúster. Pasarle `os.environ` entero a un script que
+# todavía no se ha aceptado es regalárselas. Se filtra a una lista blanca: PATH
+# para que encuentre obabel y smina, y poco más.
+_VARIABLES_HEREDABLES = ("PATH", "LANG", "LC_ALL", "LANGUAGE", "TZ", "TMPDIR")
+
+
+def _entorno_minimo() -> dict:
+    entorno = {k: v for k, v in os.environ.items() if k in _VARIABLES_HEREDABLES}
+    entorno.setdefault("PATH", "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin")
+    # HOME propio y desechable: varias bibliotecas científicas escriben cachés
+    # en él, y no deben tocar el del usuario que ejecuta el servicio.
+    entorno["HOME"] = tempfile.gettempdir()
+    entorno["PYTHONIOENCODING"] = "utf-8"
+    # Sin .pyc: el sistema de ficheros del sandbox es de solo lectura.
+    entorno["PYTHONDONTWRITEBYTECODE"] = "1"
+    return entorno
+
+
 def probar_algoritmo(ruta_script: str, tipo: str) -> ResultadoPrueba:
+    """
+    Comprueba un algoritmo, ejecutándolo donde toque.
+
+    Si hay un servicio de banco configurado (`BANCO_URL`), le delega la
+    ejecución: es un contenedor aislado, sin secretos, sin ficheros de usuarios
+    y sin red (ver el docstring del módulo). Si no lo hay --tests, desarrollo
+    local, uso del módulo como biblioteca-- se ejecuta en este mismo proceso.
+    """
+    if BANCO_SOCKET or BANCO_URL:
+        return _probar_en_servicio_aislado(ruta_script, tipo)
+    return probar_en_proceso(ruta_script, tipo)
+
+
+def _probar_en_servicio_aislado(ruta_script: str, tipo: str) -> ResultadoPrueba:
+    """Envía el script al contenedor del banco y traduce su respuesta."""
+    import httpx
+
+    resultado = ResultadoPrueba()
+
+    # Socket Unix si lo hay: el sandbox no tiene red, así que no hay host al
+    # que conectarse. El nombre de la URL es entonces irrelevante --httpx lo
+    # exige, pero la conexión la resuelve el transporte-- y se deja "banco"
+    # para que los logs sean legibles.
+    if BANCO_SOCKET:
+        transporte = httpx.HTTPTransport(uds=BANCO_SOCKET)
+        url = "http://banco/probar"
+    else:
+        transporte = None
+        url = BANCO_URL.rstrip("/") + "/probar"
+
+    try:
+        with open(ruta_script, "rb") as f:
+            # Con holgura sobre el límite del propio banco: si el script se
+            # cuelga, quien debe cortarlo es el banco, con su mensaje.
+            with httpx.Client(transport=transporte, timeout=TIMEOUT_PRUEBA + 60) as cliente:
+                respuesta = cliente.post(
+                    url,
+                    data={"tipo": tipo},
+                    files={"archivo": (os.path.basename(ruta_script), f, "text/x-python")},
+                )
+    except Exception as e:  # noqa: BLE001
+        # Fallar cerrado: no se recurre a ejecutar el script aquí.
+        resultado.motivo = (
+            "El servicio de validación de algoritmos no está disponible, así que "
+            "no se puede comprobar el algoritmo antes de aceptarlo. Inténtalo de "
+            "nuevo en unos minutos."
+        )
+        resultado.detalle = str(e)[:500]
+        return resultado
+
+    if respuesta.status_code != 200:
+        resultado.motivo = (
+            "El servicio de validación de algoritmos respondió con un error "
+            f"({respuesta.status_code})."
+        )
+        resultado.detalle = respuesta.text[:500]
+        return resultado
+
+    return ResultadoPrueba.desde_dict(respuesta.json())
+
+
+def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
     """
     Ejecuta un algoritmo contra las moléculas de referencia y comprueba que
     hace lo que su autor declara.
+
+    ATENCIÓN: ejecuta el script en ESTE proceso. Es lo correcto dentro del
+    contenedor del banco, que está aislado a propósito; fuera de él, quien lo
+    llame debe saber que está ejecutando código no verificado con sus propios
+    privilegios.
 
     No lanza excepciones: devuelve siempre un ResultadoPrueba, para que quien
     lo llame pueda dar al usuario un mensaje claro.
@@ -173,7 +307,11 @@ def probar_algoritmo(ruta_script: str, tipo: str) -> ResultadoPrueba:
                 [sys.executable, ruta_script, *argumentos],
                 capture_output=True, text=True,
                 encoding="utf-8", errors="replace",
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                env=_entorno_minimo(),
+                # cwd en el temporal: un script que escriba rutas relativas
+                # ensucia su propio directorio de usar y tirar, no el del
+                # servicio ni el catálogo de algoritmos.
+                cwd=tmp,
                 timeout=TIMEOUT_PRUEBA,
             )
         except subprocess.TimeoutExpired:

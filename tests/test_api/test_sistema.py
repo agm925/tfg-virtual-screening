@@ -10,11 +10,6 @@ def test_estado_sistema_con_rol_no_admin_devuelve_403(client, usuario_autenticad
     assert respuesta.status_code == 403
 
 
-def test_estado_sistema_con_rol_desarrollador_devuelve_403(client, desarrollador_autenticado):
-    respuesta = client.get("/sistema/estado", headers=desarrollador_autenticado["headers"])
-    assert respuesta.status_code == 403
-
-
 def test_estado_sistema_admin_devuelve_estructura_esperada(client, admin_autenticado):
     respuesta = client.get("/sistema/estado", headers=admin_autenticado["headers"])
     assert respuesta.status_code == 200

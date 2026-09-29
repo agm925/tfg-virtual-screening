@@ -1,12 +1,19 @@
 """
-Ejecución remota de algoritmos en el clúster Picasso (SCBI, Universidad de Málaga) vía SSH + SLURM.
+Ejecución remota de algoritmos en el clúster bullx (HPCA, Universidad de Almería) vía SSH + SLURM.
 
 Se activa cuando EXECUTION_MODE=slurm (ver app/config.py). Expone la misma
-interfaz que app.ejecutor._ejecutar_local: ejecutar_algoritmo(ruta_algoritmo, *archivos)
-devolviendo {"exito": bool, "log": str, "error": str | None}.
+interfaz que app.ejecutor._ejecutar_local:
+ejecutar_algoritmo(ruta_algoritmo, *archivos, flags=()) devolviendo
+{"exito": bool, "log": str, "error": str | None}.
+
+La distinción entre `archivos` y `flags` importa aquí más que en local: los
+primeros viajan al nodo y se sustituyen por su ruta remota, los segundos se
+pasan literalmente (ver ejecutar_algoritmo en app/ejecutor.py).
 """
 
 import os
+import shlex
+import stat
 import time
 import uuid
 import posixpath
@@ -25,7 +32,7 @@ _ESTADOS_FALLO  = {"FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY
 
 class SlurmExecutor:
     """
-    Envía la ejecución de un algoritmo al clúster Picasso como un job SLURM.
+    Envía la ejecución de un algoritmo al clúster bullx como un job SLURM.
 
     Flujo de ejecutar_algoritmo():
         1. Conecta por SSH al nodo de acceso del clúster.
@@ -105,7 +112,7 @@ class SlurmExecutor:
             lineas.append(f"module load {modulo}")
         if self.conda_env:
             lineas.append(f"source activate {self.conda_env}")
-        lineas.append(f"cd {remote_dir}")
+        lineas.append(f"cd {shlex.quote(remote_dir)}")
         lineas.append(comando)
         return "\n".join(lineas) + "\n"
 
@@ -113,7 +120,7 @@ class SlurmExecutor:
     # Ejecución principal
     # ------------------------------------------------------------------
 
-    def ejecutar_algoritmo(self, ruta_algoritmo: str, *archivos) -> dict:
+    def ejecutar_algoritmo(self, ruta_algoritmo: str, *archivos, flags=()) -> dict:
         cliente = None
         try:
             cliente = self._conectar()
@@ -121,7 +128,7 @@ class SlurmExecutor:
 
             job_uid    = uuid.uuid4().hex[:10]
             remote_dir = posixpath.join(self.remote_base, f"job_{job_uid}")
-            self._ejecutar_comando(cliente, f"mkdir -p {remote_dir}")
+            self._ejecutar_comando(cliente, f"mkdir -p {shlex.quote(remote_dir)}")
 
             # Subir el script del algoritmo
             remote_algoritmo = posixpath.join(remote_dir, os.path.basename(ruta_algoritmo))
@@ -136,8 +143,39 @@ class SlurmExecutor:
                     sftp.put(archivo, remote_path)
                 remote_archivos.append(remote_path)
 
+            # Las opciones van APARTE de los ficheros (ver ejecutar_algoritmo en
+            # app/ejecutor.py) y viajan literalmente: convertirlas en rutas
+            # remotas, como se hacía cuando venían mezcladas con los ficheros,
+            # las volvía irreconocibles para el script.
+            #
+            # La excepción es una opción cuyo VALOR sí es un fichero
+            # --"--referencia molecula.sdf" en dockingSmina--: ese hay que
+            # subirlo y sustituirlo por su ruta en el nodo, o el algoritmo
+            # buscaría en el clúster una ruta que solo existe en el backend.
+            remote_flags = []
+            for flag in flags:
+                flag = str(flag)
+                if os.path.isfile(flag):
+                    remote_path = posixpath.join(remote_dir, os.path.basename(flag))
+                    sftp.put(flag, remote_path)
+                    remote_flags.append(remote_path)
+                else:
+                    remote_flags.append(flag)
+
+            # shlex.quote, y no comillas dobles puestas a mano. El nombre de
+            # estos ficheros lo elige quien sube la molécula --el endpoint solo
+            # le aplica os.path.basename, ver app/main.py-- y acaba interpolado
+            # en el cuerpo de un script bash. Entre comillas DOBLES bash sigue
+            # expandiendo $(...) y las comillas invertidas, así que una molécula
+            # llamada `ligando$(lo que sea).sdf` no necesitaba ni escapar una
+            # comilla para ejecutar comandos arbitrarios en el nodo del clúster,
+            # con la cuenta con la que se envía el job. shlex.quote envuelve en
+            # comillas SIMPLES y escapa, donde no queda ninguna expansión viva.
+            # Vale igual para las opciones: su valor sale de un nodo del grafo,
+            # que lo manda el cliente.
             comando = "python3 {} {}".format(
-                remote_algoritmo, " ".join(f'"{a}"' for a in remote_archivos)
+                shlex.quote(remote_algoritmo),
+                " ".join(shlex.quote(a) for a in (*remote_archivos, *remote_flags)),
             )
             script_sbatch = self._generar_script_sbatch(remote_dir, comando)
 
@@ -145,7 +183,8 @@ class SlurmExecutor:
             with sftp.open(remote_script_path, "w") as f:
                 f.write(script_sbatch.encode("utf-8"))
 
-            salida_sbatch = self._ejecutar_comando(cliente, f"sbatch {remote_script_path}")
+            salida_sbatch = self._ejecutar_comando(
+                cliente, f"sbatch {shlex.quote(remote_script_path)}")
             job_id = self._parsear_job_id(salida_sbatch)
 
             estado_final = self._esperar_finalizacion(cliente, job_id)
@@ -169,6 +208,12 @@ class SlurmExecutor:
                         os.makedirs(directorio_local, exist_ok=True)
                     sftp.get(remote_path, archivo)
 
+            log += self._descargar_extras(
+                sftp, remote_dir, archivos,
+                conocidos={remote_algoritmo, remote_script_path, *remote_archivos, *remote_flags},
+                job_id=job_id,
+            )
+
             return {"exito": True, "log": log, "error": None}
 
         except Exception as e:
@@ -176,6 +221,56 @@ class SlurmExecutor:
         finally:
             if cliente:
                 cliente.close()
+
+    def _descargar_extras(self, sftp, remote_dir: str, archivos, conocidos: set,
+                          job_id: str) -> str:
+        """
+        Trae los ficheros que el algoritmo ha creado por su cuenta en el
+        directorio del job, más allá de los que se le pasaron como argumentos.
+
+        Hace falta porque no todo lo que produce un algoritmo es un argumento.
+        El caso que lo motiva es dockingSmina.py, que además de las poses
+        escribe un `<salida>_energias.json` con las afinidades, derivando el
+        nombre de su ruta de salida. Al descargar solo los argumentos, ese
+        fichero se quedaba en el clúster: el motor lo buscaba en local, no lo
+        encontraba y seguía con `energias = {}` (ver app/workflow_executor.py).
+        El efecto no era un error sino algo peor --el ranking del cribado por
+        lotes saca de ahí el score de docking, así que el CSV habría salido
+        con todas las afinidades a null-- y en modo local no pasaba, porque
+        ahí el fichero ya está donde tiene que estar.
+
+        Se descarta lo que hemos puesto nosotros (el script, las entradas, el
+        sbatch) y lo que pone SLURM (los .out/.err del propio job).
+
+        El nombre remoto se pasa por os.path.basename antes de construir la
+        ruta local: lo escribe código subido por un usuario, y esto escribe en
+        uploads/. Un fallo al traer un extra no invalida el resultado, así que
+        se anota en el log y se sigue.
+        """
+        destino = os.path.dirname(archivos[-1]) if archivos else "."
+        ignorar = {posixpath.basename(p) for p in conocidos}
+        ignorar |= {f"slurm-{job_id}.out", f"slurm-{job_id}.err"}
+
+        avisos = []
+        try:
+            # listdir_attr y no listdir: trae nombre y metadatos de una vez, y
+            # permite saltarse los subdirectorios sin una consulta por entrada.
+            entradas = sftp.listdir_attr(remote_dir)
+        except Exception as e:  # noqa: BLE001
+            return f"\n[slurm] no se pudo listar {remote_dir}: {e}"
+
+        for entrada in entradas:
+            nombre = entrada.filename
+            if nombre in ignorar or not stat.S_ISREG(entrada.st_mode or 0):
+                continue
+            remote_path = posixpath.join(remote_dir, nombre)
+            local_path = os.path.join(destino, os.path.basename(nombre))
+            try:
+                sftp.get(remote_path, local_path)
+            except Exception as e:  # noqa: BLE001
+                avisos.append(f"\n[slurm] no se pudo traer {nombre}: {e}")
+
+        return "".join(avisos)
 
     # ------------------------------------------------------------------
     # Utilidades SSH / SLURM

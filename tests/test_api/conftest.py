@@ -66,9 +66,17 @@ def usuario_autenticado(client, db_session):
 
 
 @pytest.fixture()
-def desarrollador_autenticado(client, db_session):
-    """Usuario con rol 'desarrollador', para probar endpoints restringidos por rol (p. ej. POST /algoritmos)."""
-    return _registrar_y_verificar(client, db_session, rol="desarrollador")
+def otro_usuario_autenticado(client, db_session):
+    """
+    Un SEGUNDO usuario normal (rol biologo), distinto de `usuario_autenticado`.
+
+    Antes era `desarrollador_autenticado` y servia para dos cosas a la vez:
+    probar los endpoints restringidos por rol y hacer de "usuario ajeno" en
+    los tests de aislamiento entre cuentas. Al desaparecer el rol
+    `desarrollador` solo queda el segundo uso, que es el que importa: que un
+    usuario no vea ni borre lo de otro.
+    """
+    return _registrar_y_verificar(client, db_session, rol="biologo")
 
 
 @pytest.fixture()

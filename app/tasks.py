@@ -2,16 +2,40 @@ import os
 import time
 from app.celery_app import celery_app
 from app.database import SessionLocal
-from app import models
+from app import models, permisos
+from app.auth import es_admin
 from app.ejecutor import ejecutar_algoritmo
 from app.email_utils import (
     correo_completado, correo_error,
     correo_workflow_completado, correo_workflow_error,
 )
 from app.workflow_executor import WorkflowExecutor, BatchWorkflowExecutor
-from app.models import Archivo, VisibilidadArchivo
+from app.models import Archivo, TipoArchivo, VisibilidadArchivo
 from app.logging_config import logger
 from app.formatos import corregir_extension, extension_salida
+
+
+def _grafo_usa_archivo_ajeno(db, grafo_json, usuario_id):
+    """
+    Devuelve el mensaje de error si el grafo referencia un fichero de uploads/
+    que este usuario no puede leer, o None si todo esta en orden.
+
+    El endpoint que encola ya lo comprueba (app/main.py), asi que en la
+    practica esto no deberia saltar nunca. Se repite aqui a proposito: entre
+    el encolado y la ejecucion puede pasar mucho tiempo --la tarea espera en
+    la cola, y el reparto en lote la vuelve a encolar por bloques--, y es en
+    el worker donde de verdad se abre el fichero. Si manana otro endpoint
+    encola estas tareas, queda cubierto sin acordarse de nada.
+    """
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    try:
+        permisos.comprobar_acceso_al_grafo(
+            grafo_json, db, usuario_id,
+            usuario_es_admin=bool(usuario and es_admin(usuario)),
+        )
+    except permisos.AccesoDenegado as e:
+        return f"El flujo usa '{e.nombre_archivo}', que no es tuyo: {e.mensaje}"
+    return None
 
 
 def _registrar_resultados(db, nombres, usuario_id, ejecucion_id=None, peticion_id=None):
@@ -34,6 +58,7 @@ def _registrar_resultados(db, nombres, usuario_id, ejecucion_id=None, peticion_i
             db.add(archivo)
         archivo.propietario_id = usuario_id
         archivo.visibilidad = VisibilidadArchivo.resultado
+        archivo.tipo = TipoArchivo.resultado
         archivo.tamano_bytes = os.path.getsize(ruta)
         if ejecucion_id is not None:
             archivo.ejecucion_id = ejecucion_id
@@ -149,6 +174,16 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
 
         if not workflow or not ejecucion:
             return {"exito": False, "error": "Workflow o ejecución no encontrados"}
+
+        motivo = _grafo_usa_archivo_ajeno(db, workflow.grafo_json, usuario_id)
+        if motivo:
+            ejecucion.estado = "error"
+            ejecucion.resultados_json = {"estado": "error", "exito": False, "errores": [motivo]}
+            db.commit()
+            logger.warning("workflow_archivo_ajeno", extra={
+                "ejecucion_id": ejecucion.id, "usuario_id": usuario_id, "motivo": motivo,
+            })
+            return {"exito": False, "error": motivo}
 
         # 1. Marcar como procesando
         ejecucion.estado = "procesando"
@@ -332,7 +367,8 @@ def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
 @celery_app.task(bind=True, max_retries=0)
 def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
                      usuario_id: int, ejecucion_id: int, nombre_bd: str,
-                     total_moleculas: int, inicio_ts: float) -> dict:
+                     total_moleculas: int, inicio_ts: float,
+                     descartadas: int = 0) -> dict:
     """
     Callback del chord: se ejecuta una sola vez, cuando todos los bloques han
     terminado. Aplana los resultados, ordena el ranking, genera el CSV,
@@ -386,6 +422,11 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
             "ranking":          resultado.get("ranking", [])[:25],   # solo top-25 en BD
             "progreso":         total_moleculas,
             "total":            total_moleculas,
+            # Registros del SDF que RDKit no pudo leer y por tanto NO se han
+            # cribado. Va al informe a proposito: es la diferencia entre "he
+            # cribado tu biblioteca" y "he cribado parte de tu biblioteca".
+            "moleculas_descartadas": descartadas,
+            "registros_en_fichero":  total_moleculas + descartadas,
         }
         ejecucion.duracion_segundos = int(resultado.get("duracion_segundos", 0))
         workflow.estado = estado_final
@@ -432,6 +473,16 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
         if not workflow or not ejecucion:
             return {"exito": False, "error": "Workflow o ejecución no encontrados"}
 
+        motivo = _grafo_usa_archivo_ajeno(db, workflow.grafo_json, usuario_id)
+        if motivo:
+            ejecucion.estado = "error"
+            ejecucion.resultados_json = {"estado": "error", "exito": False, "errores": [motivo]}
+            db.commit()
+            logger.warning("workflow_archivo_ajeno", extra={
+                "ejecucion_id": ejecucion_id, "usuario_id": usuario_id, "motivo": motivo,
+            })
+            return {"exito": False, "error": motivo}
+
         executor = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
                                          ejecucion_id=ejecucion_id)
         nombre_bd, ruta_sdf = executor.localizar_base_de_datos()
@@ -439,9 +490,20 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
         # Solo los indices: no se materializa ninguna molecula todavia. Cada
         # subtarea extrae las suyas cuando le toca, de modo que en ningun
         # momento hay mas ficheros temporales que los del bloque en curso.
-        indices = executor.indices_validos(ruta_sdf)
+        indices, registros_totales = executor.inventario_sdf(ruta_sdf)
         if not indices:
             raise ValueError("La base de datos no contiene moléculas válidas")
+
+        # Lo que RDKit no ha podido leer. Se arrastra hasta el informe final
+        # en vez de descartarlo en silencio: cribar 8.000 de 10.000 compuestos
+        # y decir "0 errores" deja una campaña incompleta con toda la
+        # apariencia de estar bien.
+        descartadas = registros_totales - len(indices)
+        if descartadas:
+            logger.warning("batch_moleculas_descartadas", extra={
+                "ejecucion_id": ejecucion_id, "descartadas": descartadas,
+                "registros": registros_totales, "base_de_datos": nombre_bd,
+            })
 
         bloques = [indices[i:i + BATCH_TAMANO_BLOQUE]
                    for i in range(0, len(indices), BATCH_TAMANO_BLOQUE)]
@@ -452,6 +514,8 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
             "modo": "batch", "progreso": 0, "total": len(indices),
             "molecula_actual": "", "estado": "procesando",
             "bloques": len(bloques),
+            "moleculas_descartadas": descartadas,
+            "registros_en_fichero": registros_totales,
         }
         db.commit()
 
@@ -465,7 +529,7 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
             (procesar_bloque_batch.s(grafo, usuario_id, ejecucion_id, bloque)
              for bloque in bloques),
             consolidar_batch.s(workflow_id, usuario_id, ejecucion_id, nombre_bd,
-                               len(indices), time.time()),
+                               len(indices), time.time(), descartadas),
         )()
 
         logger.info("batch_repartido", extra={

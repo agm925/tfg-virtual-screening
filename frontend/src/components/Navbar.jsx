@@ -6,9 +6,15 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, cerrarS
     { id: 'peticiones', label: 'Peticiones' },
     { id: 'visual',     label: 'Constructor Visual' },
     { id: 'tutorial',   label: 'Tutorial' },
-    // Solo visible para admin: el backend igualmente rechaza con 403 a
-    // cualquier otro rol, esto es solo para no ofrecer un enlace roto.
-    ...(usuario.rol === 'admin' ? [{ id: 'sistema', label: '🛠️ Sistema' }] : []),
+    // Solo visibles para admin. El resto de la plataforma está abierta a
+    // cualquier usuario autenticado: lo único que separa al admin del
+    // biólogo es la administración de la propia plataforma. El backend
+    // rechaza con 403 a un biólogo igualmente; ocultar los enlaces es solo
+    // para no ofrecerlos rotos.
+    ...(usuario.rol === 'admin' ? [
+      { id: 'sistema',        label: '🛠️ Sistema' },
+      { id: 'administracion', label: '🛡️ Administración' },
+    ] : []),
   ];
 
   return (

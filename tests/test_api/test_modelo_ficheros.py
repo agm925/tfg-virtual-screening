@@ -32,7 +32,7 @@ def _subir(client, headers, nombre):
 
 # --------------------------------------------------------------------- S3
 def test_dos_subidas_con_el_mismo_nombre_no_se_pisan(
-    client, usuario_autenticado, desarrollador_autenticado
+    client, usuario_autenticado, otro_usuario_autenticado
 ):
     nombre = "test_dummy_colision.mol2"
 
@@ -40,7 +40,7 @@ def test_dos_subidas_con_el_mismo_nombre_no_se_pisan(
     assert primera.status_code == 200
     assert primera.json()["nombre"] == nombre
 
-    segunda = _subir(client, desarrollador_autenticado["headers"], nombre)
+    segunda = _subir(client, otro_usuario_autenticado["headers"], nombre)
     assert segunda.status_code == 200
     nombre_2 = segunda.json()["nombre"]
 
@@ -53,7 +53,7 @@ def test_dos_subidas_con_el_mismo_nombre_no_se_pisan(
 
 # --------------------------------------------------------------------- S2
 def test_el_resultado_de_otro_usuario_no_se_puede_descargar(
-    client, db_session, usuario_autenticado, desarrollador_autenticado
+    client, db_session, usuario_autenticado, otro_usuario_autenticado
 ):
     """Un fichero marcado como resultado es privado de su propietario."""
     nombre = "test_dummy_resultado_ajeno.sdf"
@@ -69,7 +69,7 @@ def test_el_resultado_de_otro_usuario_no_se_puede_descargar(
     ))
     db_session.commit()
 
-    ajeno = client.get(f"/uploads/{nombre}", headers=desarrollador_autenticado["headers"])
+    ajeno = client.get(f"/uploads/{nombre}", headers=otro_usuario_autenticado["headers"])
     assert ajeno.status_code == 403, "un resultado ajeno no debe ser descargable"
 
     propio = client.get(f"/uploads/{nombre}", headers=usuario_autenticado["headers"])
@@ -77,7 +77,7 @@ def test_el_resultado_de_otro_usuario_no_se_puede_descargar(
 
 
 def test_el_resultado_de_otro_usuario_no_se_puede_borrar(
-    client, db_session, usuario_autenticado, desarrollador_autenticado
+    client, db_session, usuario_autenticado, otro_usuario_autenticado
 ):
     nombre = "test_dummy_resultado_borrado.sdf"
     ruta = os.path.join("uploads", nombre)
@@ -91,13 +91,13 @@ def test_el_resultado_de_otro_usuario_no_se_puede_borrar(
     ))
     db_session.commit()
 
-    ajeno = client.delete(f"/moleculas/{nombre}", headers=desarrollador_autenticado["headers"])
+    ajeno = client.delete(f"/moleculas/{nombre}", headers=otro_usuario_autenticado["headers"])
     assert ajeno.status_code == 403
     assert os.path.exists(ruta), "el fichero se borro pese al 403"
 
 
 def test_el_resultado_de_otro_usuario_no_aparece_en_el_listado(
-    client, db_session, usuario_autenticado, desarrollador_autenticado
+    client, db_session, usuario_autenticado, otro_usuario_autenticado
 ):
     nombre = "test_dummy_resultado_oculto.sdf"
     with open(os.path.join("uploads", nombre), "wb") as f:
@@ -109,7 +109,7 @@ def test_el_resultado_de_otro_usuario_no_aparece_en_el_listado(
     ))
     db_session.commit()
 
-    ajeno = client.get("/moleculas?limit=500", headers=desarrollador_autenticado["headers"])
+    ajeno = client.get("/moleculas?limit=500", headers=otro_usuario_autenticado["headers"])
     assert ajeno.status_code == 200
     assert nombre not in [m["nombre"] for m in ajeno.json()]
 
@@ -118,7 +118,7 @@ def test_el_resultado_de_otro_usuario_no_aparece_en_el_listado(
 
 
 def test_la_biblioteca_sigue_siendo_compartida(
-    client, usuario_autenticado, desarrollador_autenticado
+    client, usuario_autenticado, otro_usuario_autenticado
 ):
     """
     Cerrar S2 no debe romper el caso de uso legitimo: reutilizar una base de
@@ -127,20 +127,20 @@ def test_la_biblioteca_sigue_siendo_compartida(
     subida = _subir(client, usuario_autenticado["headers"], "test_dummy_compartida.mol2")
     nombre = subida.json()["nombre"]
 
-    ajeno = client.get(f"/uploads/{nombre}", headers=desarrollador_autenticado["headers"])
+    ajeno = client.get(f"/uploads/{nombre}", headers=otro_usuario_autenticado["headers"])
     assert ajeno.status_code == 200, "la biblioteca debe seguir siendo compartida"
 
-    listado = client.get("/moleculas?limit=500", headers=desarrollador_autenticado["headers"])
+    listado = client.get("/moleculas?limit=500", headers=otro_usuario_autenticado["headers"])
     assert nombre in [m["nombre"] for m in listado.json()]
 
 
 def test_solo_el_propietario_borra_su_fichero_de_biblioteca(
-    client, usuario_autenticado, desarrollador_autenticado
+    client, usuario_autenticado, otro_usuario_autenticado
 ):
     subida = _subir(client, usuario_autenticado["headers"], "test_dummy_biblio_borrado.mol2")
     nombre = subida.json()["nombre"]
 
-    ajeno = client.delete(f"/moleculas/{nombre}", headers=desarrollador_autenticado["headers"])
+    ajeno = client.delete(f"/moleculas/{nombre}", headers=otro_usuario_autenticado["headers"])
     assert ajeno.status_code == 403
 
     propio = client.delete(f"/moleculas/{nombre}", headers=usuario_autenticado["headers"])

@@ -15,20 +15,30 @@ from app.config import ALGORITMO_TIMEOUT, EXECUTION_MODE
 _ENTORNO_HIJO = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
-def ejecutar_algoritmo(ruta_algoritmo: str, *archivos) -> dict:
+def ejecutar_algoritmo(ruta_algoritmo: str, *archivos, flags=()) -> dict:
     """
     Ejecuta un algoritmo sobre una o varias moléculas.
 
-    Los archivos se pasan directamente como argumentos posicionales al script Python.
+    Los archivos se pasan como argumentos posicionales al script Python, y las
+    opciones --si las hay-- detrás, en el mismo orden en que se reciben.
     Convención:
         - Algoritmo de 1 entrada:  ejecutar_algoritmo(algo, entrada, salida)
         - Algoritmo de 2 entradas: ejecutar_algoritmo(algo, entrada1, entrada2, salida)
-        - Docking:                 ejecutar_algoritmo(algo, ligando, receptor, salida)
+        - Docking:                 ejecutar_algoritmo(algo, ligando, receptor, salida,
+                                                      flags=["--scoring", "vinardo"])
+
+    `flags` va aparte de `archivos` y NO es cosmético: en modo slurm cada
+    elemento de `archivos` se sube al nodo del clúster y se sustituye por su
+    ruta remota. Cuando las opciones viajaban mezcladas con los ficheros,
+    "--exhaustiveness" acababa convertido en "/…/job_abc123/--exhaustiveness",
+    que ya no empieza por "--": dockingSmina.py las descartaba en silencio y
+    corría con sus valores por defecto. Local funcionaba y el clúster no, sin
+    un solo error por ninguna parte.
 
     Enruta según EXECUTION_MODE (app/config.py):
         - "local" (por defecto): ejecuta el script con subprocess en esta misma máquina.
         - "slurm": delega en SlurmExecutor (app/slurm_executor.py), que envía el trabajo
-          al clúster Picasso (SCBI, Universidad de Málaga) vía SSH + sbatch.
+          al clúster bullx (HPCA, Universidad de Almería) vía SSH + sbatch.
 
     Devuelve un dict con:
         - exito (bool)
@@ -36,8 +46,8 @@ def ejecutar_algoritmo(ruta_algoritmo: str, *archivos) -> dict:
         - error (str): mensaje de error si falla
     """
     if EXECUTION_MODE == "slurm":
-        return _ejecutar_en_slurm(ruta_algoritmo, *archivos)
-    return _ejecutar_local(ruta_algoritmo, *archivos)
+        return _ejecutar_en_slurm(ruta_algoritmo, *archivos, flags=flags)
+    return _ejecutar_local(ruta_algoritmo, *archivos, flags=flags)
 
 
 def _texto(salida) -> str:
@@ -48,10 +58,10 @@ def _texto(salida) -> str:
     return salida or ""
 
 
-def _ejecutar_local(ruta_algoritmo: str, *archivos) -> dict:
+def _ejecutar_local(ruta_algoritmo: str, *archivos, flags=()) -> dict:
     try:
         resultado = subprocess.run(
-            [sys.executable, ruta_algoritmo, *archivos],
+            [sys.executable, ruta_algoritmo, *archivos, *flags],
             capture_output=True,
             text=True,
             check=True,
@@ -87,9 +97,9 @@ def _ejecutar_local(ruta_algoritmo: str, *archivos) -> dict:
         }
 
 
-def _ejecutar_en_slurm(ruta_algoritmo: str, *archivos) -> dict:
+def _ejecutar_en_slurm(ruta_algoritmo: str, *archivos, flags=()) -> dict:
     # Import diferido: paramiko y la dependencia del clúster solo son necesarias
     # cuando EXECUTION_MODE=slurm, así el modo local no requiere tenerlas instaladas.
     from app.slurm_executor import SlurmExecutor
 
-    return SlurmExecutor().ejecutar_algoritmo(ruta_algoritmo, *archivos)
+    return SlurmExecutor().ejecutar_algoritmo(ruta_algoritmo, *archivos, flags=flags)

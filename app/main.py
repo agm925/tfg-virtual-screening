@@ -1,9 +1,9 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Query, Response
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import engine, SessionLocal
-from app import models, schemas
+from app import models, permisos, schemas
 from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,8 +21,8 @@ from app.config import (
 from app.rate_limit import verificar_no_bloqueado, registrar_intento_fallido, limpiar_intentos
 from app.logging_config import logger, configurar_logging
 from app.banco_pruebas import probar_algoritmo
+from app.formatos import EXTENSIONES_ENTRADA_ALGORITMO, contar_moleculas_sdf
 from datetime import datetime, timezone
-import re
 import shutil
 import tempfile
 
@@ -89,53 +89,31 @@ def nombre_archivo_seguro(nombre: str) -> str:
 
 def _archivo_registrado(nombre_archivo: str, db: Session):
     """Devuelve la fila de `archivos` para este nombre, o None si no consta."""
-    return db.query(models.Archivo).filter(models.Archivo.nombre == nombre_archivo).first()
+    return permisos.archivo_registrado(nombre_archivo, db)
 
 
 def exigir_acceso_a_archivo(nombre_archivo: str, db: Session, usuario: models.Usuario,
                             para_borrar: bool = False) -> None:
     """
-    Comprueba que `usuario` puede leer --o borrar-- este fichero de uploads/.
+    Comprueba que `usuario` puede leer --o borrar-- este fichero de uploads/,
+    y responde 403 si no.
 
-    Antes la propiedad solo se deducía de la tabla `peticiones`, y los
-    resultados de un workflow no se anotaban en ninguna parte: caían en el
-    "depósito público" y cualquier usuario autenticado podía descargarlos y
-    borrarlos. Ahora la fuente de verdad es el registro `archivos`.
-
-    Reglas:
-      - resultado  → solo el propietario o un admin, tanto para leer como
-                     para borrar.
-      - biblioteca → cualquier usuario autenticado puede leerla (es lo que
-                     permite reutilizar una base de datos subida por otro),
-                     pero solo su propietario o un admin puede borrarla.
-      - sin registrar → fichero anterior al registro. Se trata como
-                     biblioteca compartida, que es como se comportaba antes;
-                     scripts/migrate.py los da de alta en el primer arranque.
+    Las reglas viven en app/permisos.py porque el motor de workflows necesita
+    las mismas y no puede importar este módulo (importación circular vía las
+    tareas de Celery). Aquí solo se traduce a HTTP.
     """
-    archivo = _archivo_registrado(nombre_archivo, db)
-    if archivo is None:
-        return
-
-    if es_admin(usuario):
-        return
-
-    es_propietario = archivo.propietario_id == usuario.id
-
-    if archivo.visibilidad == models.VisibilidadArchivo.resultado and not es_propietario:
-        raise HTTPException(
-            status_code=403,
-            detail="Este archivo es el resultado de una ejecución de otro usuario.",
+    try:
+        permisos.comprobar_acceso_a_archivo(
+            nombre_archivo, db, usuario.id,
+            usuario_es_admin=es_admin(usuario), para_borrar=para_borrar,
         )
-
-    if para_borrar and archivo.propietario_id is not None and not es_propietario:
-        raise HTTPException(
-            status_code=403,
-            detail="Solo el propietario puede borrar este archivo.",
-        )
+    except permisos.AccesoDenegado as e:
+        raise HTTPException(status_code=403, detail=e.mensaje)
 
 
 def registrar_archivo(db: Session, nombre: str, propietario_id, visibilidad,
-                      tamano_bytes=None, ejecucion_id=None, peticion_id=None) -> None:
+                      tipo=None, tamano_bytes=None, num_moleculas=None,
+                      ejecucion_id=None, peticion_id=None) -> None:
     """Da de alta un fichero en el registro, o actualiza el que ya existiera."""
     archivo = _archivo_registrado(nombre, db)
     if archivo is None:
@@ -143,8 +121,12 @@ def registrar_archivo(db: Session, nombre: str, propietario_id, visibilidad,
         db.add(archivo)
     archivo.propietario_id = propietario_id
     archivo.visibilidad = visibilidad
+    if tipo is not None:
+        archivo.tipo = tipo
     if tamano_bytes is not None:
         archivo.tamano_bytes = tamano_bytes
+    if num_moleculas is not None:
+        archivo.num_moleculas = num_moleculas
     if ejecucion_id is not None:
         archivo.ejecucion_id = ejecucion_id
     if peticion_id is not None:
@@ -196,6 +178,34 @@ def nombre_libre(nombre: str, db: Session) -> str:
     raise HTTPException(status_code=409, detail="Demasiados archivos con ese nombre.")
 
 
+def nombre_algoritmo_libre(nombre: str, db: Session) -> str:
+    """
+    Lo mismo que `nombre_libre`, pero para el catálogo de algoritmos.
+
+    Existía para uploads/ y no para algoritmos/, y la diferencia importaba
+    mucho más aquí: `shutil.move` sobreescribía el .py sin preguntar, así que
+    subir un algoritmo llamado como otro REEMPLAZABA el código del otro
+    usuario. Las dos filas del catálogo seguían apuntando al mismo fichero, y
+    la primera pasaba a ejecutar un script que nunca superó el banco de
+    pruebas: la validación se anula sola. Renombrar en vez de sobreescribir lo
+    cierra, y de paso explica el `filtroLipinski.py` duplicado que había en el
+    catálogo.
+    """
+    def ocupado(candidato: str) -> bool:
+        existe_fila = (db.query(models.Algoritmo)
+                       .filter(models.Algoritmo.ruta_archivo == candidato).first() is not None)
+        return existe_fila or os.path.exists(os.path.join("algoritmos", candidato))
+
+    if not ocupado(nombre):
+        return nombre
+    base, ext = os.path.splitext(nombre)
+    for n in range(2, 1000):
+        candidato = f"{base}_{n}{ext}"
+        if not ocupado(candidato):
+            return candidato
+    raise HTTPException(status_code=409, detail="Demasiados algoritmos con ese nombre.")
+
+
 # --- ESCRITURA DE SUBIDAS CON LÍMITE DE TAMAÑO ---
 # Los endpoints de subida hacían `contenido = await archivo.read()`, que carga
 # el fichero ENTERO en memoria: un SDF de ChEMBL de 500 MB son 500 MB de RAM en
@@ -233,28 +243,6 @@ async def guardar_subida(archivo: UploadFile, ruta_destino: str, max_bytes: int)
     return escritos
 
 
-def contar_moleculas_sdf(ruta: str) -> int:
-    """Cuenta los separadores de registro de un SDF leyendo por trozos.
-
-    Se relee el fichero en lugar de contar durante la escritura porque el
-    separador ($$$$) puede quedar partido entre dos trozos; aquí se arrastra
-    el solapamiento explícitamente.
-    """
-    separador = b"$$$$"
-    total = 0
-    sobrante = b""
-    with open(ruta, "rb") as f:
-        while True:
-            trozo = f.read(TAMANO_TROZO_SUBIDA)
-            if not trozo:
-                break
-            datos = sobrante + trozo
-            total += datos.count(separador)
-            # Conservar los últimos bytes por si el separador cruza la frontera.
-            sobrante = datos[-(len(separador) - 1):]
-    return total
-
-
 def exigir_nombre_archivo_seguro(nombre: str) -> str:
     """Como nombre_archivo_seguro, pero rechaza con 400 si el nombre recibido
     no era ya "limpio" -- para endpoints que referencian un archivo existente
@@ -265,33 +253,6 @@ def exigir_nombre_archivo_seguro(nombre: str) -> str:
         raise HTTPException(status_code=400, detail="Nombre de archivo no válido")
     return seguro
 
-
-# --- FUNCIÓN AUXILIAR PARA EXTRAER TIPO DE ALGORITMO ---
-async def extraer_tipo_algoritmo(contenido_bytes: bytes) -> str:
-    """
-    Lee las primeras líneas de un script Python y extrae el tipo de algoritmo.
-    Busca la línea: # TIPO_ALGORITMO: alineacion o # TIPO_ALGORITMO: comparacion
-    Devuelve el tipo o lanza excepción si no lo encuentra.
-    """
-    try:
-        # Decodificar el contenido del archivo
-        contenido = contenido_bytes.decode('utf-8', errors='ignore')
-        lineas = contenido.split('\n')[:20]  # Revisar primeras 20 líneas
-        
-        for linea in lineas:
-            # Buscar patrón: # TIPO_ALGORITMO: alineacion | comparacion | preprocesado | docking
-            match = re.search(
-                r'#\s*TIPO_ALGORITMO\s*:\s*(alineacion|comparacion|preprocesado|docking)',
-                linea
-            )
-            if match:
-                tipo = match.group(1)
-                return tipo
-        
-        # Si no encuentra la línea, lanzar excepción
-        raise ValueError("No se encontró el metadato # TIPO_ALGORITMO en el script")
-    except Exception as e:
-        raise ValueError(f"Error al procesar el archivo: {str(e)}")
 
 # --- RUTAS (ENDPOINTS) ---
 
@@ -385,13 +346,18 @@ async def subir_algoritmo(
     es_publico: bool = Form(False),        # Añadido: Para aprovechar tu campo es_publico
     archivo: UploadFile = File(...),       # Lo llamamos "archivo" para no confundirlo con la ruta
     db: Session = Depends(get_db),
-    usuario_actual: models.Usuario = Depends(requiere_rol("admin", "desarrollador")),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
     """
     Sube un script de Python (.py) y lo registra en la base de datos.
-    Valida que el script contenga el metadato # TIPO_ALGORITMO y que coincida con el tipo del formulario.
-    Solo usuarios con rol "admin" o "desarrollador" pueden subir algoritmos al catálogo;
-    el autor se toma del usuario autenticado, nunca de un campo del formulario.
+    El tipo lo declara el propio formulario (parámetro `tipo`); ya no hace
+    falta que el script lo repita en un comentario `# TIPO_ALGORITMO`, porque
+    quien de verdad decide si se acepta es el banco de pruebas: ejecuta el
+    script invocándolo como corresponde a ese tipo --una molécula, dos, o
+    ligando más receptor-- y lo rechaza si no cumple el contrato (ver
+    app/banco_pruebas.py). Cualquier usuario autenticado puede subir
+    algoritmos al catálogo. El autor se toma del usuario autenticado, nunca
+    de un campo del formulario.
     """
     autor_id = usuario_actual.id
     # 0. Saneamos el nombre de archivo (protección contra path traversal)
@@ -411,9 +377,7 @@ async def subir_algoritmo(
             detail=f"El tipo debe ser uno de: {', '.join(tipos_validos)}"
         )
 
-    # 3. Leemos el archivo para extraer el tipo del metadato.
-    #    Aquí sí se lee a memoria --hay que inspeccionar el contenido antes de
-    #    decidir si se acepta--, pero con un tope muy bajo: un algoritmo es un
+    # 3. Leemos el archivo a memoria, con un tope bajo: un algoritmo es un
     #    script de unos pocos KB, y este endpoint acepta código que después se
     #    ejecutará en el worker o en el nodo del clúster.
     contenido_archivo = await archivo.read(MAX_ALGORITMO_BYTES + 1)
@@ -422,30 +386,21 @@ async def subir_algoritmo(
             status_code=413,
             detail=f"El script supera el tamaño máximo permitido ({MAX_ALGORITMO_BYTES // 1024} KB).",
         )
-    
-    try:
-        tipo_extraido = await extraer_tipo_algoritmo(contenido_archivo)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    # 4. Validamos que el tipo del formulario coincida con el metadato del script
-    if tipo != tipo_extraido:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"El tipo del formulario ('{tipo}') no coincide con el metadato del script ('{tipo_extraido}'). "
-                   f"Por favor, sube el script en el formulario de '{tipo_extraido}'."
-        )
 
-    # 5. BANCO DE PRUEBAS: se ejecuta el algoritmo contra las moleculas de
+    # 4. BANCO DE PRUEBAS: se ejecuta el algoritmo contra las moleculas de
     #    referencia ANTES de aceptarlo en el catalogo.
     #
-    #    Hasta ahora la subida era un acto de fe: el metadato TIPO_ALGORITMO lo
-    #    declaraba el autor y nadie comprobaba que el script llegara siquiera a
-    #    ejecutarse. Un algoritmo roto entraba igual que uno correcto, y el
-    #    fallo aparecia horas despues dentro de un cribado, como una molecula
-    #    fallida entre mil. El tipo declarado es lo que permite saber COMO
-    #    invocarlo --una molecula, dos, o ligando mas receptor-- y la ejecucion
-    #    comprueba que esa declaracion sea cierta.
+    #    Hasta ahora la subida era un acto de fe: nadie comprobaba que el
+    #    script llegara siquiera a ejecutarse. Un algoritmo roto entraba igual
+    #    que uno correcto, y el fallo aparecia horas despues dentro de un
+    #    cribado, como una molecula fallida entre mil. El tipo que declara el
+    #    formulario es lo que permite saber COMO invocarlo --una molecula,
+    #    dos, o ligando mas receptor-- y la ejecucion comprueba que el script
+    #    cumple lo que esa eleccion promete. Ya no hace falta que el propio
+    #    script repita el tipo en un comentario: bastaba con que autor y
+    #    formulario declararan cosas distintas para que la subida se
+    #    rechazara con un mensaje que no decia nada sobre si el algoritmo
+    #    funcionaba de verdad, que es lo unico que aqui importa.
     #
     #    Se escribe a un temporal, no a algoritmos/, para que un script que no
     #    pase la prueba no deje rastro en el catalogo.
@@ -454,12 +409,12 @@ async def subir_algoritmo(
         with open(ruta_temporal, "wb") as f:
             f.write(contenido_archivo)
 
-        prueba = probar_algoritmo(ruta_temporal, tipo_extraido)
+        prueba = probar_algoritmo(ruta_temporal, tipo)
 
         if not prueba.valido:
             logger.warning(
                 "algoritmo_rechazado_por_banco_de_pruebas",
-                extra={"nombre": nombre, "tipo": tipo_extraido,
+                extra={"nombre": nombre, "tipo": tipo,
                        "motivo": prueba.motivo, "autor_id": autor_id},
             )
             raise HTTPException(
@@ -478,18 +433,22 @@ async def subir_algoritmo(
                 },
             )
 
-        # 6. Superada la prueba, se mueve al catalogo.
+        # 5. Superada la prueba, se mueve al catalogo, con un nombre que no
+        #    pise el script de nadie (ver nombre_algoritmo_libre). Se decide
+        #    aqui y no antes a proposito: si el algoritmo no pasa la prueba no
+        #    llega a este punto, asi que un rechazo no gasta un nombre.
+        nombre_fichero = nombre_algoritmo_libre(nombre_fichero, db)
         ruta_guardado = os.path.join("algoritmos", nombre_fichero)
         shutil.move(ruta_temporal, ruta_guardado)
 
-    # 7. Guardamos en la base de datos, con lo que el banco de pruebas ha
+    # 6. Guardamos en la base de datos, con lo que el banco de pruebas ha
     #    OBSERVADO: el formato real de salida y la clave que contiene la
     #    puntuacion. Anotarlas evita que el motor tenga que adivinarlas, que es
     #    el origen de una familia de fallos que se ha repetido cuatro veces.
     nuevo_algoritmo = models.Algoritmo(
         nombre=nombre,
         descripcion=descripcion,
-        tipo=tipo_extraido,  # Guardamos el tipo validado
+        tipo=tipo,
         ruta_archivo=nombre_fichero,
         es_publico=es_publico,
         autor_id=autor_id,
@@ -503,7 +462,7 @@ async def subir_algoritmo(
 
     logger.info(
         "algoritmo_subido",
-        extra={"algoritmo_id": nuevo_algoritmo.id, "tipo": tipo_extraido,
+        extra={"algoritmo_id": nuevo_algoritmo.id, "tipo": tipo,
                "autor_id": autor_id, "formato_salida": prueba.formato_salida,
                "clave_score": prueba.clave_score},
     )
@@ -527,9 +486,51 @@ async def crear_peticion(
     if not nombre_fichero:
         raise HTTPException(status_code=400, detail="Nombre de archivo no válido")
 
-    # 1. Validamos que sea un archivo de molécula (por ahora .mol2)
-    if not nombre_fichero.endswith('.mol2'):
-        raise HTTPException(status_code=400, detail="El archivo debe ser una molécula (.mol2)")
+    # 1. Validamos que sea un formato que los algoritmos sepan leer.
+    #
+    # Antes esto exigía .mol2 y nada más, y era un problema de resultados, no
+    # solo de comodidad: ChEMBL y PubChem entregan SDF, así que para lanzar una
+    # petición había que convertir, y RDKit lee mal el .mol2 de muchos
+    # heterociclos aromáticos. En la cafeína, MolFromMol2File devuelve None, el
+    # algoritmo cae a sanitize=False y publica LogP -3,42 en vez de -1,03 con
+    # "exito": true. Por el .sdf original salen los valores correctos, así que
+    # la restricción estaba degradando la química sin que nadie lo viera.
+    ext = os.path.splitext(nombre_fichero)[1].lower()
+    if ext not in EXTENSIONES_ENTRADA_ALGORITMO:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"El archivo debe ser una molécula en uno de estos formatos: "
+                    f"{', '.join(EXTENSIONES_ENTRADA_ALGORITMO)}."),
+        )
+
+    # 1b. Validamos el algoritmo ANTES de guardar nada.
+    #
+    # Hasta ahora `algoritmo_id` se guardaba sin comprobar siquiera que
+    # existiera: un id inventado creaba la peticion igual, se encolaba, y el
+    # fallo aparecia despues en el worker como una tarea en ERROR, con el
+    # fichero del usuario ya escrito en uploads/ para nada. Comprobarlo aqui
+    # devuelve un 404 inmediato y no deja basura.
+    #
+    # Y es donde se aplica la desactivacion: un algoritmo retirado del catalogo
+    # por un administrador no puede usarse en peticiones nuevas, aunque quien
+    # lo intente conozca su id o tenga el desplegable cargado de antes.
+    algoritmo = db.query(models.Algoritmo).filter(models.Algoritmo.id == algoritmo_id).first()
+    if algoritmo is None:
+        raise HTTPException(status_code=404, detail="El algoritmo indicado no existe.")
+    if not algoritmo.activo:
+        raise HTTPException(
+            status_code=409,
+            detail="Este algoritmo ha sido desactivado por un administrador y no puede ejecutarse.",
+        )
+    # Y privado quiere decir privado. El id llega en el formulario, así que no
+    # basta con que el algoritmo no salga en el desplegable: sin esto,
+    # cualquier usuario podía ejecutar el algoritmo privado de otro sin más
+    # que indicar su id.
+    if not algoritmo.es_publico and algoritmo.autor_id != usuario_id and not es_admin(usuario_actual):
+        raise HTTPException(
+            status_code=403,
+            detail="Este algoritmo es privado de otro usuario.",
+        )
 
     # 2. Guardamos la molécula físicamente en la carpeta 'uploads/'
     #    Por trozos y con tope, igual que /moleculas/subir: aunque aquí el
@@ -551,11 +552,16 @@ async def crear_peticion(
     db.refresh(nueva_peticion)
 
     # La molécula de entrada es privada del autor de la petición, no de la
-    # biblioteca compartida: la subió para un análisis concreto.
+    # biblioteca compartida: la subió para un análisis concreto. Privada
+    # (visibilidad=resultado) no es lo mismo que "es un resultado": el
+    # CONTENIDO sigue siendo una molécula corriente, solo .mol2 (línea 456),
+    # así que tipo=molecula, nunca tipo=resultado -- ese es para lo que
+    # calcula el propio algoritmo, no para lo que sube el usuario.
     registrar_archivo(
         db, nombre_fichero,
         propietario_id=usuario_id,
         visibilidad=models.VisibilidadArchivo.resultado,
+        tipo=models.TipoArchivo.molecula,
         tamano_bytes=bytes_escritos,
         peticion_id=nueva_peticion.id,
     )
@@ -630,6 +636,12 @@ def login(datos: schemas.UsuarioLogin, db: Session = Depends(get_db)):
 
     if not usuario.email_verificado:
         raise HTTPException(status_code=403, detail="Debes confirmar tu correo electrónico antes de iniciar sesión. Revisa tu bandeja de entrada.")
+
+    # Cuenta desactivada por un administrador. Se comprueba DESPUES de validar
+    # la contraseña: responder "cuenta desactivada" a quien no ha acertado la
+    # clave confirmaría a un tercero que ese correo existe en la plataforma.
+    if not usuario.activo:
+        raise HTTPException(status_code=403, detail="Esta cuenta está desactivada. Contacta con un administrador.")
 
     limpiar_intentos(datos.email)
     logger.info("login_exito", extra={"email": datos.email, "usuario_id": usuario.id})
@@ -737,6 +749,7 @@ def listar_algoritmos(
     db: Session = Depends(get_db),
     pagina: Paginacion = Depends(),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+    incluir_inactivos: bool = False,
 ):
     """
     Cataloga los algoritmos disponibles. Exige estar autenticado: la respuesta
@@ -747,6 +760,25 @@ def listar_algoritmos(
     autenticada.
     """
     consulta = db.query(models.Algoritmo)
+    # Un algoritmo desactivado sigue en la base --las peticiones que lo usaron
+    # apuntan a el-- pero desaparece del catalogo: no se ofrece en los
+    # desplegables ni se puede elegir para una peticion nueva. El admin sí
+    # puede pedirlo con incluir_inactivos, que es como lo lista el panel de
+    # administracion para poder reactivarlo.
+    if not (incluir_inactivos and es_admin(usuario_actual)):
+        consulta = consulta.filter(models.Algoritmo.activo == True)  # noqa: E712
+
+    # Y se respeta `es_publico`, que hasta ahora se guardaba y no se leía en
+    # ninguna parte: el catálogo entero se le servía a cualquier usuario
+    # autenticado, así que marcar un algoritmo como privado --o pulsar "Hacer
+    # privado" en el panel de administración-- no tenía ningún efecto. Cada
+    # uno ve los públicos más los suyos; el admin, todo, porque su panel
+    # necesita poder administrar también los privados.
+    if not es_admin(usuario_actual):
+        consulta = consulta.filter(or_(
+            models.Algoritmo.es_publico == True,  # noqa: E712
+            models.Algoritmo.autor_id == usuario_actual.id,
+        ))
     response.headers["X-Total-Count"] = str(consulta.count())
     return consulta.order_by(models.Algoritmo.id).offset(pagina.offset).limit(pagina.limit).all()
 
@@ -773,6 +805,9 @@ async def subir_molecula(
     if not nombre_fichero:
         raise HTTPException(status_code=400, detail="Nombre de archivo no válido")
 
+    if tipo not in ("molecula", "base_de_datos"):
+        raise HTTPException(status_code=400, detail="El tipo debe ser 'molecula' o 'base_de_datos'")
+
     extensiones_validas = {".mol2", ".sdf", ".mol", ".pdb", ".pdbqt", ".smi", ".xyz"}
     ext = os.path.splitext(nombre_fichero)[1].lower()
     if ext not in extensiones_validas:
@@ -790,18 +825,32 @@ async def subir_molecula(
     ruta = os.path.join("uploads", nombre_fichero)
     escritos = await guardar_subida(archivo, ruta, MAX_SUBIDA_BYTES)
 
-    registrar_archivo(
-        db, nombre_fichero,
-        propietario_id=usuario_actual.id,
-        visibilidad=models.VisibilidadArchivo.biblioteca,
-        tamano_bytes=escritos,
-    )
-    db.commit()
-
     # Contar moléculas si es SDF. Se hace releyendo el fichero por trozos y no
     # sobre el contenido en memoria, porque ya no existe tal contenido: el
     # volcado es en streaming precisamente para no tenerlo entero en RAM.
     num_moleculas = contar_moleculas_sdf(ruta) if ext == ".sdf" else None
+
+    # El tipo que se GUARDA se verifica contra el contenido, no se copia del
+    # formulario: es la misma idea que el banco de pruebas con los
+    # algoritmos --declarar no basta, hay que comprobarlo--, y aquí
+    # comprobarlo es gratis porque num_moleculas ya se acaba de calcular.
+    # Un .sdf con un único registro es una molécula aunque el formulario diga
+    # "base_de_datos"; uno con varios lo es aunque diga "molecula".
+    if ext == ".sdf":
+        tipo_real = (models.TipoArchivo.base_de_datos if (num_moleculas or 0) > 1
+                     else models.TipoArchivo.molecula)
+    else:
+        tipo_real = models.TipoArchivo.molecula
+
+    registrar_archivo(
+        db, nombre_fichero,
+        propietario_id=usuario_actual.id,
+        visibilidad=models.VisibilidadArchivo.biblioteca,
+        tipo=tipo_real,
+        tamano_bytes=escritos,
+        num_moleculas=num_moleculas,
+    )
+    db.commit()
 
     logger.info(
         "molecula_subida",
@@ -809,11 +858,12 @@ async def subir_molecula(
             "usuario_id": usuario_actual.id,
             "nombre": nombre_fichero,
             "bytes": escritos,
+            "tipo": tipo_real.value,
         },
     )
     return {
         "nombre":        nombre_fichero,
-        "tipo":          tipo,
+        "tipo":          tipo_real.value,
         "tamano_kb":     round(escritos / 1024, 1),
         "num_moleculas": num_moleculas,
     }
@@ -893,11 +943,17 @@ def listar_moleculas(
     return [
         {
             "nombre": a.nombre,
-            # Se conservan las dos etiquetas que ya consumía el frontend para
-            # elegir el icono del desplegable.
-            "origen": ("base_de_datos"
-                       if a.visibilidad == models.VisibilidadArchivo.resultado
-                       else "archivo_local"),
+            # "molecula" | "base_de_datos" | "resultado", verificado contra
+            # el contenido al subir (ver /moleculas/subir), no deducido de la
+            # visibilidad: antes el icono salía de si el fichero era privado
+            # o no, así que la molécula de entrada de una petición --privada,
+            # pero una molécula corriente-- se mostraba como "base de datos".
+            # El *: nulo solo en filas anteriores a esta columna que
+            # scripts/migrate.py aún no haya rellenado (backfill_tipo_archivo).
+            "tipo": (a.tipo.value if a.tipo else
+                     ("resultado" if a.visibilidad == models.VisibilidadArchivo.resultado
+                      else "molecula")),
+            "num_moleculas": a.num_moleculas,
             "tamano_kb": round((a.tamano_bytes or 0) / 1024, 1),
         }
         for a in archivos
@@ -1075,6 +1131,16 @@ def borrar_workflow(
     if ids_ejecuciones:
         borrados = borrar_archivos_registrados(
             db, models.Archivo.ejecucion_id.in_(ids_ejecuciones))
+        # El flush NO es opcional. borrar_archivos_registrados usa db.delete(),
+        # que solo MARCA las filas y las envía al vaciar la sesión; la línea de
+        # abajo usa Query.delete(), que emite su DELETE al instante. Sin este
+        # flush el borrado de workflow_executions se ejecutaba ANTES que el de
+        # archivos, y como archivos.ejecucion_id las referencia, PostgreSQL lo
+        # rechazaba: cualquier workflow que se hubiera ejecutado alguna vez
+        # devolvía un 500 al intentar borrarlo (ForeignKeyViolation en
+        # archivos_ejecucion_id_fkey). Los que nunca se ejecutaron sí se
+        # borraban, que es por lo que pasaba desapercibido.
+        db.flush()
     db.query(models.WorkflowExecution).filter(models.WorkflowExecution.workflow_id == workflow_id).delete()
     db.delete(workflow)
     db.commit()
@@ -1099,6 +1165,22 @@ def ejecutar_workflow(
     """
     workflow = _obtener_workflow_propio(workflow_id, db, usuario_actual)
     usuario_id = usuario_actual.id
+
+    # Ser dueño del workflow no basta: el grafo lo manda el cliente, así que
+    # puede nombrar cualquier fichero de uploads/, incluido el resultado
+    # privado de otro usuario. Se comprueba antes de encolar para que el
+    # rechazo sea un 403 inmediato y legible, y no una ejecución que falla
+    # diez minutos después. El worker lo vuelve a comprobar (app/tasks.py):
+    # entre el encolado y la ejecución pueden cambiar los permisos.
+    try:
+        permisos.comprobar_acceso_al_grafo(
+            workflow.grafo_json, db, usuario_id, usuario_es_admin=es_admin(usuario_actual),
+        )
+    except permisos.AccesoDenegado as e:
+        raise HTTPException(
+            status_code=403,
+            detail=f"El flujo usa '{e.nombre_archivo}', que no es tuyo: {e.mensaje}",
+        )
 
     # Auto-detectar modo batch: hay nodo selectDB con base de datos seleccionada
     grafo    = workflow.grafo_json or {}
@@ -1320,3 +1402,247 @@ def estado_sistema(
             "verificados": usuarios_verificados,
         },
     }
+
+
+# ===========================================================================
+# ADMINISTRACION DE LA PLATAFORMA
+# ===========================================================================
+#
+# Todo lo cientifico de esta plataforma esta abierto a cualquier usuario
+# autenticado --subir moleculas, subir algoritmos al catalogo, lanzar
+# peticiones--, y eso es deliberado: el filtro no es el rol, es el banco de
+# pruebas. Lo unico reservado al administrador es la administracion de la
+# propia plataforma, que es lo que vive aqui.
+#
+# La operacion central no es borrar, es DESACTIVAR. Un usuario tiene
+# peticiones, workflows y ficheros colgando por clave foranea, y sus moleculas
+# pueden estar en la biblioteca compartida, referenciadas por nombre desde los
+# grafos que otros usuarios tienen guardados; un algoritmo tiene peticiones que
+# apuntan a el. Borrar la fila romperia la integridad de la base y, con ella,
+# el trabajo de terceros. Desactivar corta el acceso o retira el algoritmo de
+# circulacion, conserva el historial intacto y, sobre todo, se puede deshacer.
+#
+# El unico borrado real que ofrece el panel es el de ficheros sueltos, via el
+# DELETE /moleculas/{nombre} que ya existia: ahi no hay historial que preservar
+# mas alla del propio fichero.
+
+
+@app.get("/admin/usuarios", response_model=list[schemas.UsuarioAdminRespuesta])
+def admin_listar_usuarios(
+    response: Response,
+    db: Session = Depends(get_db),
+    pagina: Paginacion = Depends(),
+    admin: models.Usuario = Depends(requiere_rol("admin")),
+):
+    """
+    Lista todas las cuentas, con cuanto trabajo tiene cada una detras.
+
+    Los recuentos van en dos consultas agrupadas y se cruzan en memoria, en vez
+    de en un subselect por fila: son dos consultas en total, no dos por
+    usuario.
+    """
+    consulta = db.query(models.Usuario)
+    response.headers["X-Total-Count"] = str(consulta.count())
+    usuarios = (
+        consulta.order_by(models.Usuario.id)
+        .offset(pagina.offset).limit(pagina.limit).all()
+    )
+
+    ids = [u.id for u in usuarios]
+    algoritmos_por_usuario = dict(
+        db.query(models.Algoritmo.autor_id, func.count(models.Algoritmo.id))
+        .filter(models.Algoritmo.autor_id.in_(ids))
+        .group_by(models.Algoritmo.autor_id).all()
+    ) if ids else {}
+    peticiones_por_usuario = dict(
+        db.query(models.Peticion.usuario_id, func.count(models.Peticion.id))
+        .filter(models.Peticion.usuario_id.in_(ids))
+        .group_by(models.Peticion.usuario_id).all()
+    ) if ids else {}
+
+    return [
+        schemas.UsuarioAdminRespuesta(
+            id=u.id,
+            nombre=u.nombre,
+            email=u.email,
+            rol=u.rol.value if u.rol else "biologo",
+            email_verificado=u.email_verificado,
+            activo=u.activo,
+            fecha_registro=u.fecha_registro,
+            n_algoritmos=algoritmos_por_usuario.get(u.id, 0),
+            n_peticiones=peticiones_por_usuario.get(u.id, 0),
+        )
+        for u in usuarios
+    ]
+
+
+@app.patch("/admin/usuarios/{usuario_id}", response_model=schemas.UsuarioAdminRespuesta)
+def admin_actualizar_usuario(
+    usuario_id: int,
+    cambios: schemas.UsuarioAdminActualizar,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(requiere_rol("admin")),
+):
+    """
+    Cambia el rol, la verificacion del correo o la activacion de una cuenta.
+
+    Un administrador no puede degradarse ni desactivarse a si mismo: no es
+    paternalismo, es que hacerlo por error deja la sesion en curso sin permisos
+    a la siguiente peticion y sin forma de revertirlo desde la interfaz.
+
+    Esas dos comprobaciones bastan ademas para garantizar que la plataforma
+    nunca se queda sin ningun administrador operativo, y no hace falta contar
+    cuantos quedan: quien ejecuta esta operacion es por fuerza un admin activo
+    --lo exige requiere_rol("admin"), y una cuenta desactivada no pasa de
+    obtener_usuario_actual (ver app/auth.py)--, y no puede ser el objetivo de
+    la degradacion ni de la desactivacion. Sea cual sea el resultado, el que
+    la ejecuta sigue siendo administrador.
+    """
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if usuario is None:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    es_uno_mismo = usuario.id == admin.id
+
+    if cambios.rol is not None:
+        roles_validos = {r.value for r in models.RolUsuario}
+        if cambios.rol not in roles_validos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Rol no válido. Debe ser uno de: {', '.join(sorted(roles_validos))}.",
+            )
+        degradacion = (usuario.rol == models.RolUsuario.admin
+                       and cambios.rol != models.RolUsuario.admin.value)
+        if degradacion and es_uno_mismo:
+            raise HTTPException(
+                status_code=409,
+                detail="No puedes retirarte a ti mismo el rol de administrador.",
+            )
+        usuario.rol = models.RolUsuario(cambios.rol)
+
+    if cambios.email_verificado is not None:
+        usuario.email_verificado = cambios.email_verificado
+
+    if cambios.activo is not None:
+        if not cambios.activo and es_uno_mismo:
+            raise HTTPException(
+                status_code=409, detail="No puedes desactivar tu propia cuenta.",
+            )
+        usuario.activo = cambios.activo
+
+    db.commit()
+    db.refresh(usuario)
+    logger.info(
+        "admin_usuario_actualizado",
+        extra={"admin_id": admin.id, "usuario_id": usuario.id,
+               "rol": usuario.rol.value, "activo": usuario.activo,
+               "email_verificado": usuario.email_verificado},
+    )
+    return schemas.UsuarioAdminRespuesta(
+        id=usuario.id,
+        nombre=usuario.nombre,
+        email=usuario.email,
+        rol=usuario.rol.value if usuario.rol else "biologo",
+        email_verificado=usuario.email_verificado,
+        activo=usuario.activo,
+        fecha_registro=usuario.fecha_registro,
+    )
+
+
+@app.patch("/admin/algoritmos/{algoritmo_id}", response_model=schemas.AlgoritmoRespuesta)
+def admin_actualizar_algoritmo(
+    algoritmo_id: int,
+    cambios: schemas.AlgoritmoAdminActualizar,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(requiere_rol("admin")),
+):
+    """
+    Retira un algoritmo de circulacion, lo reactiva, o corrige sus metadatos.
+
+    Es la palanca que le faltaba al administrador. El banco de pruebas
+    comprueba que un algoritmo FUNCIONA --que se ejecuta, que es del tipo que
+    declara y que produce una salida utilizable--, no que sea cientificamente
+    correcto: eso no es verificable automaticamente, ni tampoco por revision,
+    porque dos algoritmos correctos del mismo tipo dan resultados distintos.
+    La correccion se gestiona por tanto de forma reactiva, y esto es lo que
+    convierte "nos hemos dado cuenta de que ese algoritmo esta mal" en una
+    accion concreta.
+
+    Desactivar surte efecto en los tres caminos por los que se ejecuta un
+    algoritmo: desaparece del catalogo (GET /algoritmos), se rechazan las
+    peticiones nuevas que lo pidan (POST /peticiones) y los workflows ya
+    guardados que lo referencien por nombre fallan al llegar a ese nodo
+    (resolver_algoritmo, en app/workflow_executor.py).
+
+    No se toca el .py del disco: reactivarlo tiene que ser posible, y las
+    peticiones antiguas conservan la referencia a lo que realmente ejecutaron.
+    """
+    algoritmo = db.query(models.Algoritmo).filter(models.Algoritmo.id == algoritmo_id).first()
+    if algoritmo is None:
+        raise HTTPException(status_code=404, detail="Algoritmo no encontrado")
+
+    if cambios.activo is not None:
+        algoritmo.activo = cambios.activo
+    if cambios.es_publico is not None:
+        algoritmo.es_publico = cambios.es_publico
+    if cambios.nombre is not None:
+        algoritmo.nombre = cambios.nombre
+    if cambios.descripcion is not None:
+        algoritmo.descripcion = cambios.descripcion
+
+    db.commit()
+    db.refresh(algoritmo)
+    logger.info(
+        "admin_algoritmo_actualizado",
+        extra={"admin_id": admin.id, "algoritmo_id": algoritmo.id,
+               "activo": algoritmo.activo},
+    )
+    return algoritmo
+
+
+@app.get("/admin/moleculas")
+def admin_listar_moleculas(
+    response: Response,
+    db: Session = Depends(get_db),
+    pagina: Paginacion = Depends(),
+    admin: models.Usuario = Depends(requiere_rol("admin")),
+):
+    """
+    Todos los ficheros de uploads/, con dueño y visibilidad.
+
+    A diferencia de GET /moleculas --que muestra la biblioteca compartida mas
+    lo propio de quien pregunta, que es lo correcto para trabajar-- aqui se ven
+    tambien los resultados privados de cada usuario, porque el administrador
+    necesita poder localizar y liberar espacio de cualquiera.
+
+    Para borrarlos se usa el DELETE /moleculas/{nombre} que ya existe, que
+    admite a cualquier admin (ver app/permisos.py).
+    """
+    consulta = db.query(models.Archivo)
+    response.headers["X-Total-Count"] = str(consulta.count())
+    archivos = (
+        consulta.order_by(models.Archivo.fecha_creacion.desc())
+        .offset(pagina.offset).limit(pagina.limit).all()
+    )
+
+    ids_propietarios = {a.propietario_id for a in archivos if a.propietario_id}
+    duenos = {
+        u.id: u.email
+        for u in db.query(models.Usuario).filter(models.Usuario.id.in_(ids_propietarios)).all()
+    } if ids_propietarios else {}
+
+    return [
+        {
+            "nombre": a.nombre,
+            "visibilidad": a.visibilidad.value if a.visibilidad else None,
+            "tipo": a.tipo.value if a.tipo else None,
+            "num_moleculas": a.num_moleculas,
+            "propietario_id": a.propietario_id,
+            # Sin dueño consta el fichero anterior al registro de propiedad
+            # (ver scripts/migrate.py): se trata como biblioteca compartida.
+            "propietario_email": duenos.get(a.propietario_id),
+            "tamano_kb": round((a.tamano_bytes or 0) / 1024, 1),
+            "fecha_creacion": a.fecha_creacion,
+        }
+        for a in archivos
+    ]

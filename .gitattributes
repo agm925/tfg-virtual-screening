@@ -1,0 +1,41 @@
+# Fin de línea LF obligatorio en todo lo que ejecuta Linux dentro de Docker.
+#
+# Por qué existe: un .sh con fin de línea CRLF hace que el shebang quede como
+# "#!/bin/bash\r", y Linux busca literalmente un intérprete llamado
+# "/bin/bash\r" que no existe. El error que da es
+#
+#     exec /app/scripts/docker-entrypoint.sh: no such file or directory
+#
+# que señala al script --que sí está ahí-- en vez de al intérprete, así que
+# se investiga en la dirección equivocada.
+#
+# Pasa solo, sin tocar el contenido: basta con abrir uno de estos ficheros en
+# un editor de Windows y guardarlo, o reescribirlo desde Python en modo texto
+# (que traduce \n a os.linesep). Con core.autocrlf activado, git además lo
+# hace al hacer checkout. Estas reglas lo fijan para todo el que clone el
+# repositorio, en vez de depender de la configuración de cada máquina.
+
+*.sh            text eol=lf
+*.conf          text eol=lf
+Dockerfile*     text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# El resto se normaliza a LF en el repositorio; en el working copy cada uno
+# tiene lo que le dé su configuración, que para estos no afecta a nada.
+*.py            text
+*.yml           text
+*.yaml          text
+*.json          text
+*.md            text
+*.jsx           text
+*.js            text
+*.css           text
+*.html          text
+
+# Binarios: que git no intente normalizar nada.
+*.png           binary
+*.jpg           binary
+*.pdf           binary
+*.mol2          binary
+*.sdf           binary
+*.pdbqt         binary

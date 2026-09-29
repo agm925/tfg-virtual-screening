@@ -92,7 +92,7 @@ export default function RealizarPeticion({ usuario }) {
   // ── Crear petición ───────────────────────────────────────────────────────
   const subirMolecula = async (e) => {
     e.preventDefault();
-    if (!archivo) { setMensaje('Selecciona un archivo .mol2'); return; }
+    if (!archivo) { setMensaje('Selecciona un archivo de molécula (.mol2, .sdf o .mol)'); return; }
     setCargando(true); setMensaje('');
     const fd = new FormData();
     fd.append('algoritmo_id', algoritmoSel);
@@ -160,8 +160,13 @@ export default function RealizarPeticion({ usuario }) {
                   <option key={a.id} value={a.id}>{a.nombre} ({a.tipo})</option>
                 ))}
           </select>
-          <label>Molécula (.mol2)</label>
-          <input type="file" accept=".mol2" onChange={e => setArchivo(e.target.files[0])} required />
+          {/* Los tres formatos que los algoritmos del catálogo saben leer
+              (ver EXTENSIONES_ENTRADA_ALGORITMO en app/formatos.py). Antes
+              solo se admitía .mol2, lo que obligaba a convertir cualquier
+              SDF descargado de ChEMBL o PubChem -- y esa conversión degrada
+              la química de muchos heterociclos aromáticos. */}
+          <label>Molécula (.mol2, .sdf o .mol)</label>
+          <input type="file" accept=".mol2,.sdf,.mol" onChange={e => setArchivo(e.target.files[0])} required />
           <button type="submit" className="btn-primary verde" disabled={cargando}>
             {cargando ? '⏳ Enviando...' : '📤 Enviar a la cola'}
           </button>

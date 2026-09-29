@@ -13,6 +13,64 @@ from datetime import datetime
 from app.ejecutor import ejecutar_algoritmo
 
 
+def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
+    """
+    Devuelve la ruta del script de un algoritmo, comprobando que se pueda usar.
+
+    Los nodos del grafo referencian el algoritmo por el nombre de su fichero,
+    no por su id en la base de datos, asi que un workflow GUARDADO sigue
+    apuntando al mismo .py indefinidamente. Sin esta comprobacion, desactivar
+    un algoritmo desde el panel de administracion lo retiraria del catalogo y
+    de las peticiones nuevas, pero los flujos ya guardados seguirian
+    ejecutandolo tal cual: el agujero justo por donde se colaria el algoritmo
+    incorrecto que el administrador acaba de retirar.
+
+    Por la misma razon se comprueba aqui la VISIBILIDAD, y no solo en el
+    listado: el grafo lo manda el cliente, asi que puede nombrar el .py de un
+    algoritmo privado ajeno aunque no aparezca en ningun desplegable. Filtrar
+    el catalogo no es control de acceso; esto si lo es.
+
+    Se bloquea solo si el algoritmo CONSTA en la base. Un .py del catalogo sin
+    fila asociada --los que vienen con el repositorio, y los que crean los
+    tests-- se sigue aceptando como hasta ahora: aqui se aplica una retirada o
+    una privacidad explicitas, no se exige estar registrado.
+    """
+    ruta_algoritmo = os.path.join("algoritmos", f"{nombre_base}.py")
+    if not os.path.exists(ruta_algoritmo):
+        raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
+
+    # Import diferido y sesion propia: esto corre dentro de un worker de
+    # Celery, no en una peticion HTTP, asi que no hay sesion que heredar.
+    from app.database import SessionLocal
+    from app import models
+
+    db = SessionLocal()
+    try:
+        registro = (
+            db.query(models.Algoritmo)
+            .filter(models.Algoritmo.ruta_archivo == f"{nombre_base}.py")
+            .first()
+        )
+        if registro is not None and not registro.activo:
+            raise ValueError(
+                f"El algoritmo '{registro.nombre}' ha sido desactivado por un "
+                f"administrador y no puede ejecutarse."
+            )
+
+        if registro is not None and not registro.es_publico:
+            usuario = (db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+                       if usuario_id is not None else None)
+            es_admin = bool(usuario and usuario.rol and usuario.rol.value == "admin")
+            if registro.autor_id != usuario_id and not es_admin:
+                raise ValueError(
+                    f"El algoritmo '{registro.nombre}' es privado de otro usuario."
+                )
+    finally:
+        db.close()
+
+    return ruta_algoritmo
+
+
 class WorkflowExecutor:
     """Ejecuta workflows compilando el grafo y ejecutando nodos en orden topológico."""
 
@@ -146,9 +204,7 @@ class WorkflowExecutor:
             if not archivo_entrada:
                 raise ValueError(f"Nodo {nodo_id}: sin entrada de molécula")
 
-            ruta_algoritmo = os.path.join("algoritmos", f"{algoritmo_nombre}.py")
-            if not os.path.exists(ruta_algoritmo):
-                raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
+            ruta_algoritmo = resolver_algoritmo(algoritmo_nombre, self.usuario_id)
 
             base, ext  = os.path.splitext(os.path.basename(archivo_entrada))
             # alinear3D y alinearMCS siempre fuerzan la salida a .sdf internamente
@@ -205,9 +261,7 @@ class WorkflowExecutor:
             if not archivo_mol1 or not archivo_mol2:
                 raise ValueError(f"Nodo {nodo_id}: faltan las dos moléculas de entrada")
 
-            ruta_algoritmo = os.path.join("algoritmos", f"{ruta_script}.py")
-            if not os.path.exists(ruta_algoritmo):
-                raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
+            ruta_algoritmo = resolver_algoritmo(ruta_script, self.usuario_id)
 
             # Los algoritmos de comparación que producen molécula (alinear3D, alinearMCS)
             # usan extensión .sdf; los de métricas (tanimoto, rmsd) usan .json
@@ -264,9 +318,7 @@ class WorkflowExecutor:
             if not archivo_entrada:
                 raise ValueError(f"Nodo {nodo_id}: sin entrada de molécula")
 
-            ruta_algoritmo = os.path.join("algoritmos", f"{algoritmo_nombre}.py")
-            if not os.path.exists(ruta_algoritmo):
-                raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
+            ruta_algoritmo = resolver_algoritmo(algoritmo_nombre, self.usuario_id)
 
             # filtroLipinski produce JSON; filtroObabel filtra y devuelve molécula; el resto produce molécula
             nombre_base = algoritmo_nombre.lower()
@@ -285,7 +337,8 @@ class WorkflowExecutor:
 
             if "filtro" in nombre_base and "lipinski" not in nombre_base:
                 expresion_filtro = datos.get("filtro_expresion") or "MW>200"
-                resultado = ejecutar_algoritmo(ruta_algoritmo, archivo_entrada, ruta_salida, expresion_filtro)
+                resultado = ejecutar_algoritmo(ruta_algoritmo, archivo_entrada, ruta_salida,
+                                               flags=[expresion_filtro])
             elif "preparacionobabel" in nombre_base:
                 flags = []
                 if datos.get("sin_h"):
@@ -294,7 +347,8 @@ class WorkflowExecutor:
                     flags.append("--sin-3d")
                 if datos.get("sin_center"):
                     flags.append("--sin-center")
-                resultado = ejecutar_algoritmo(ruta_algoritmo, archivo_entrada, ruta_salida, *flags)
+                resultado = ejecutar_algoritmo(ruta_algoritmo, archivo_entrada, ruta_salida,
+                                               flags=flags)
             else:
                 resultado = ejecutar_algoritmo(ruta_algoritmo, archivo_entrada, ruta_salida)
 
@@ -339,9 +393,7 @@ class WorkflowExecutor:
             if not archivo_ligando or not archivo_receptor:
                 raise ValueError(f"Nodo {nodo_id}: se necesitan ligando y receptor")
 
-            ruta_algoritmo = os.path.join("algoritmos", f"{algoritmo_nombre}.py")
-            if not os.path.exists(ruta_algoritmo):
-                raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
+            ruta_algoritmo = resolver_algoritmo(algoritmo_nombre, self.usuario_id)
 
             nombre_salida = f"docking_{nodo_id}{self.token}.sdf"
             ruta_salida   = os.path.join("uploads", nombre_salida)
@@ -364,7 +416,7 @@ class WorkflowExecutor:
                     flags += ["--referencia", archivo_referencia]
 
             resultado = ejecutar_algoritmo(
-                ruta_algoritmo, archivo_ligando, archivo_receptor, ruta_salida, *flags
+                ruta_algoritmo, archivo_ligando, archivo_receptor, ruta_salida, flags=flags
             )
 
             if not resultado.get("exito"):
@@ -379,6 +431,13 @@ class WorkflowExecutor:
             if os.path.exists(ruta_json):
                 with open(ruta_json, "r", encoding="utf-8") as f:
                     energias = json.load(f)
+                # Se anota como generado para que quede registrado con dueño y
+                # como resultado PRIVADO, igual que las poses. Sin esto queda
+                # en uploads/ sin constar en la tabla `archivos`, y lo que no
+                # consta se trata como biblioteca compartida: las afinidades
+                # de un cribado ajeno se podían descargar sabiendo el nombre,
+                # que es deducible del id de la ejecución.
+                self.archivos_generados.append(os.path.basename(ruta_json))
 
             self.resultados[nodo_id] = {
                 "tipo":             "docking",
@@ -561,20 +620,46 @@ class BatchWorkflowExecutor:
         return None
 
     @staticmethod
-    def indices_validos(ruta_sdf: str) -> List[int]:
+    def inventario_sdf(ruta_sdf: str) -> Tuple[List[int], int]:
         """
-        Indices de las moleculas parseables del SDF, sin escribir nada a disco.
+        (indices de las moleculas parseables, total de registros del fichero).
 
-        Se separa de la extraccion porque el reparto en bloques necesita saber
-        CUANTAS hay antes de procesar ninguna, y materializar la biblioteca
-        entera solo para contarla era justamente el problema: el metodo
-        anterior escribia un fichero temporal por molecula antes de empezar,
-        de modo que un SDF de 100.000 compuestos creaba 100.000 ficheros de
-        golpe en uploads/.
+        Devuelve las DOS cifras porque no tienen por que coincidir y la
+        diferencia importa: antes solo se contaban las parseables, asi que una
+        biblioteca con registros defectuosos se cribaba a medias y el informe
+        decia "4 moleculas procesadas, 0 errores, exito" sobre un fichero de
+        10.000. Las bibliotecas comerciales (ZINC, Enamine) traen registros
+        que RDKit rechaza con normalidad, asi que el caso no es raro: es el
+        habitual en cuanto se sale de un fichero de pruebas.
+
+        Se recorre sin escribir nada a disco. El reparto en bloques necesita
+        saber cuantas hay antes de procesar ninguna, y materializar la
+        biblioteca entera solo para contarla era justamente el problema que
+        tenia el metodo anterior: un SDF de 100.000 compuestos creaba 100.000
+        ficheros temporales de golpe en uploads/.
         """
         from rdkit import Chem
+
+        from app.formatos import contar_moleculas_sdf
+
         supplier = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
-        return [i for i, mol in enumerate(supplier) if mol is not None]
+        indices = [i for i, mol in enumerate(supplier) if mol is not None]
+
+        # El total se cuenta por separadores ($$$$), no por lo que itere el
+        # supplier. Ante un registro malformado RDKit salta al siguiente
+        # separador y por el camino se come alguno, de modo que su recuento ya
+        # viene mermado: sobre un fichero de 5 registros con 2 corruptos
+        # iteraba 3, y el informe habria dicho "2 sin leer" en vez de 4.
+        # Ademas es el mismo criterio con el que se conto `num_moleculas` al
+        # subir la biblioteca, asi que el cribado y el listado de Moleculas
+        # dicen la misma cifra.
+        total = contar_moleculas_sdf(ruta_sdf)
+        return indices, max(total, len(indices))
+
+    @staticmethod
+    def indices_validos(ruta_sdf: str) -> List[int]:
+        """Solo los indices parseables. Ver inventario_sdf."""
+        return BatchWorkflowExecutor.inventario_sdf(ruta_sdf)[0]
 
     def extraer_moleculas(self, ruta_sdf: str, indices: List[int]) -> List[Dict]:
         """

@@ -9,8 +9,15 @@ Base = declarative_base()
 
 # Definimos las opciones cerradas (Enums) para los Roles y los Estados
 class RolUsuario(enum.Enum):
+    # Solo hay dos roles. "biologo" es el rol de trabajo: puede usar TODA la
+    # funcionalidad cientifica de la plataforma (subir moleculas, subir
+    # algoritmos al catalogo, lanzar peticiones y workflows). "admin" es
+    # biologo mas la administracion de la propia plataforma (panel de
+    # sistema, y la futura pagina de administracion de usuarios, moleculas
+    # y algoritmos). El rol intermedio "desarrollador" desaparecio: no
+    # anadia ningun permiso que el biologo no deba tener, y obligaba a
+    # repetir la lista de roles en cada endpoint.
     admin = "admin"
-    desarrollador = "desarrollador"
     biologo = "biologo"
 
 class EstadoPeticion(enum.Enum):
@@ -43,6 +50,15 @@ class Usuario(Base):
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     email_verificado = Column(Boolean, default=False, nullable=False)
     token_verificacion = Column(String, nullable=True)
+    # Desactivacion en lugar de borrado. Un usuario tiene peticiones, workflows
+    # y ficheros colgando de el por clave foranea, y sus moleculas pueden estar
+    # en la biblioteca compartida, referenciadas por nombre desde los grafos de
+    # workflow que OTROS usuarios tienen guardados: borrar la fila romperia la
+    # integridad de la base y, con ella, flujos ajenos. Desactivar corta el
+    # acceso --no puede iniciar sesion ni usar un token ya emitido, ver
+    # app/auth.py-- y conserva intacto el historial. Es ademas reversible, que
+    # es lo que se quiere de una medida administrativa.
+    activo = Column(Boolean, default=True, nullable=False, index=True)
 
     # Relaciones (Un usuario puede tener muchos algoritmos y muchas peticiones)
     algoritmos = relationship("Algoritmo", back_populates="autor")
@@ -70,6 +86,17 @@ class Algoritmo(Base):
     formato_salida = Column(String, nullable=True)   # "molecula" | "json"
     clave_score = Column(String, nullable=True)      # p.ej. "rmsd_angstroms"
     verificado = Column(Boolean, default=False, nullable=False)
+
+    # Retirada del catalogo sin borrar la fila.
+    #
+    # Es la palanca que le faltaba al admin: el banco de pruebas comprueba que
+    # un algoritmo FUNCIONA, no que sea correcto --dos algoritmos correctos del
+    # mismo tipo dan resultados distintos--, asi que la correccion cientifica
+    # se gestiona de forma reactiva: cuando se detecta que un algoritmo esta
+    # mal, se desactiva. Deja de ofrecerse y deja de poder ejecutarse, pero las
+    # peticiones que ya lo usaron siguen apuntando a el y conservan su
+    # historial, que es justo lo que se perderia borrandolo.
+    activo = Column(Boolean, default=True, nullable=False, index=True)
 
     # Relaciones
     autor = relationship("Usuario", back_populates="algoritmos")
@@ -153,6 +180,27 @@ class VisibilidadArchivo(str, enum.Enum):
     resultado = "resultado"
 
 
+class TipoArchivo(str, enum.Enum):
+    """
+    QUÉ es un fichero de uploads/, como eje independiente de `visibilidad`
+    (QUIÉN puede verlo). Antes se confundían: el frontend deducía el icono
+    "🗄️ base de datos" a partir de `visibilidad == resultado`, así que la
+    molécula de entrada de una petición cualquiera --privada, pero una
+    molécula normal y corriente-- se mostraba como si fuera una base de
+    datos, y un .sdf con 10.000 compuestos subido a la biblioteca compartida
+    salía con el mismo icono que un .mol2 de un único compuesto.
+
+    molecula:       un único compuesto (cualquier extensión, incluido un
+                     .sdf con un solo registro).
+    base_de_datos:  un .sdf con más de un registro.
+    resultado:      lo ha producido la propia plataforma --una petición o una
+                     ejecución de workflow--, no lo subió nadie a mano.
+    """
+    molecula = "molecula"
+    base_de_datos = "base_de_datos"
+    resultado = "resultado"
+
+
 class Archivo(Base):
     """
     Registro de propiedad de los ficheros de uploads/.
@@ -195,5 +243,13 @@ class Archivo(Base):
     peticion_id = Column(Integer, ForeignKey("peticiones.id"), nullable=True, index=True)
     tamano_bytes = Column(Integer, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+    # Nulo solo en filas anteriores a esta columna; scripts/migrate.py las
+    # rellena en el primer arranque (backfill_tipo_archivo). El código nuevo
+    # SIEMPRE lo rellena al registrar un fichero.
+    tipo = Column(Enum(TipoArchivo), nullable=True, index=True)
+    # Cacheado en la subida (o en el backfill) para no releer el fichero
+    # entero cada vez que se lista: solo tiene sentido para un .sdf, que es
+    # el único formato que puede contener más de un registro.
+    num_moleculas = Column(Integer, nullable=True)
 
     propietario = relationship("Usuario")

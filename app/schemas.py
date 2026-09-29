@@ -36,6 +36,9 @@ class AlgoritmoRespuesta(BaseModel):
     formato_salida: Optional[str] = None
     clave_score: Optional[str] = None
     verificado: bool = False
+    # Un algoritmo desactivado desaparece del catalogo y no puede ejecutarse,
+    # pero su fila --y el historial de peticiones que lo usaron-- se conserva.
+    activo: bool = True
 
     class Config:
         from_attributes = True
@@ -132,3 +135,38 @@ class WorkflowExecutionRespuesta(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Administracion de la plataforma (ver los endpoints /admin de main.py) ---
+#
+# Todos los campos son opcionales a proposito: el panel envia solo lo que
+# cambia, de modo que marcar una casilla no arrastra sin querer el resto de
+# valores que el administrador tenia en pantalla.
+
+class UsuarioAdminActualizar(BaseModel):
+    """Lo que un administrador puede cambiar de una cuenta ajena."""
+    rol: Optional[str] = None               # "admin" | "biologo"
+    email_verificado: Optional[bool] = None  # para desbloquear a mano si el correo no llego
+    activo: Optional[bool] = None            # desactivar en vez de borrar
+
+
+class UsuarioAdminRespuesta(BaseModel):
+    id: int
+    nombre: str
+    email: str
+    rol: str
+    email_verificado: bool
+    activo: bool
+    fecha_registro: Optional[datetime] = None
+    # Contexto para decidir: desactivar a alguien con trabajo detras no es lo
+    # mismo que desactivar una cuenta recien creada que no ha hecho nada.
+    n_algoritmos: int = 0
+    n_peticiones: int = 0
+
+
+class AlgoritmoAdminActualizar(BaseModel):
+    """Lo que un administrador puede cambiar de un algoritmo del catalogo."""
+    activo: Optional[bool] = None
+    es_publico: Optional[bool] = None
+    nombre: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    descripcion: Optional[str] = Field(default=None, max_length=2000)

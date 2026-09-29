@@ -39,7 +39,17 @@ export default function Moleculas() {
       const data = await resp.json()
       if (resp.ok) {
         const extra = data.num_moleculas != null ? ` (${data.num_moleculas} moléculas)` : ''
-        setMsg({ ok: true, texto: `✅ "${data.nombre}" subido correctamente${extra}.` })
+        // El backend verifica el tipo contra el contenido real, no se fía de
+        // lo que se marcó en el formulario (ver /moleculas/subir): un .sdf
+        // con un único registro se guarda como molécula aunque se subiera
+        // por "Base de Datos", y viceversa. Si ha corregido lo que se pidió,
+        // se avisa -- si no, pasaría desapercibido y el fichero aparecería
+        // en la columna "equivocada" sin explicación.
+        const corregido = data.tipo && data.tipo !== tipo
+          ? ` (guardado como ${data.tipo === 'base_de_datos' ? 'base de datos' : 'molécula individual'}` +
+            `${data.tipo === 'molecula' ? ': solo tiene una molécula' : ': tiene varias moléculas'})`
+          : ''
+        setMsg({ ok: true, texto: `✅ "${data.nombre}" subido correctamente${extra}.${corregido}` })
         if (resetRef?.current) resetRef.current.value = ''
         tipo === 'molecula' ? setFileMol(null) : setFileBD(null)
         cargarArchivos()
@@ -75,12 +85,15 @@ export default function Moleculas() {
   }
 
   // ── Filtrado y clasificación ─────────────────────────────────────────────
-  const esBD = (a) => a.nombre.endsWith('.sdf') && a.tamano_kb > 10
+  // `tipo` lo verifica el backend contra el contenido real al subir el
+  // fichero (ver /moleculas/subir), no se adivina aquí por extensión y
+  // tamaño: ese heurístico clasificaba mal cualquier .sdf pequeño con varias
+  // moléculas diminutas, o cualquier .sdf grande con una sola.
   const lista = archivos.filter(a =>
     a.nombre.toLowerCase().includes(filtroBuscar.toLowerCase())
   )
-  const moleculas = lista.filter(a => !esBD(a))
-  const bases     = lista.filter(a =>  esBD(a))
+  const moleculas = lista.filter(a => a.tipo !== 'base_de_datos')
+  const bases     = lista.filter(a => a.tipo === 'base_de_datos')
 
   const puedeVer3D = (nombre) => /\.(sdf|mol2|mol|pdb)$/i.test(nombre)
 
@@ -210,7 +223,10 @@ export default function Moleculas() {
                   <div key={a.nombre} className="archivo-card">
                     <div className="archivo-info">
                       <span className="archivo-nombre">{a.nombre}</span>
-                      <span className="archivo-meta">{a.tamano_kb} KB · {a.nombre.split('.').pop().toUpperCase()}</span>
+                      <span className="archivo-meta">
+                        {a.tamano_kb} KB · {a.nombre.split('.').pop().toUpperCase()}
+                        {a.tipo === 'resultado' && ' · resultado propio'}
+                      </span>
                     </div>
                     <div className="archivo-acciones">
                       {puedeVer3D(a.nombre) && (
@@ -233,7 +249,10 @@ export default function Moleculas() {
                   <div key={a.nombre} className="archivo-card bd">
                     <div className="archivo-info">
                       <span className="archivo-nombre">{a.nombre}</span>
-                      <span className="archivo-meta">{a.tamano_kb} KB · SDF</span>
+                      <span className="archivo-meta">
+                        {a.tamano_kb} KB · SDF
+                        {a.num_moleculas != null && ` · ${a.num_moleculas} moléculas`}
+                      </span>
                     </div>
                     <div className="archivo-acciones">
                       <button onClick={() => descargar(a.nombre)} className="btn-dl">⬇️</button>

@@ -93,7 +93,7 @@ def test_uploads_sin_token_devuelve_401(client):
 
 
 def test_uploads_de_peticion_ajena_devuelve_403(
-    client, usuario_autenticado, desarrollador_autenticado, mock_celery
+    client, usuario_autenticado, otro_usuario_autenticado, mock_celery
 ):
     # Endpoint hallado y arreglado en el security-review: GET /uploads/{nombre}
     # servia cualquier fichero sin comprobar propietario.
@@ -104,9 +104,9 @@ def test_uploads_de_peticion_ajena_devuelve_403(
               b"shutil.copyfile(sys.argv[1], sys.argv[-1])\n")
     algoritmo_id = client.post(
         "/algoritmos",
-        data={"nombre": "dummy", "descripcion": "dummy", "tipo": "preprocesado"},
+        data={"nombre": "dummy", "descripcion": "dummy", "tipo": "preprocesado", "es_publico": "true"},
         files={"archivo": ("test_dummy_uploads_algo.py", script, "text/x-python")},
-        headers=desarrollador_autenticado["headers"],
+        headers=otro_usuario_autenticado["headers"],
     ).json()["id"]
 
     peticion = client.post(
@@ -117,7 +117,7 @@ def test_uploads_de_peticion_ajena_devuelve_403(
     ).json()
 
     respuesta_ajeno = client.get(
-        f"/uploads/{peticion['ruta_mol_original']}", headers=desarrollador_autenticado["headers"]
+        f"/uploads/{peticion['ruta_mol_original']}", headers=otro_usuario_autenticado["headers"]
     )
     assert respuesta_ajeno.status_code == 403
 

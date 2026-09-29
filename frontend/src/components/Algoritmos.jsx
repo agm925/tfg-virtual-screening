@@ -45,7 +45,7 @@ const estadoInicial = {
   cargando: false, resultado: null,
 }
 
-export default function Algoritmos({ usuario }) {
+export default function Algoritmos() {
   const [form, setForm] = useState(estadoInicial)
   const tipoActual = TIPOS.find(t => t.valor === form.tipo)
 
@@ -88,9 +88,6 @@ export default function Algoritmos({ usuario }) {
       const d = datos.detail
       if (resp.status === 422 && d && typeof d === 'object') {
         setForm(s => ({ ...s, resultado: { ok: false, ...d } }))
-      } else if (resp.status === 403) {
-        setForm(s => ({ ...s, resultado: { ok: false,
-          motivo: `Tu rol (${usuario.rol}) no puede subir algoritmos. Solo admin o desarrollador.` } }))
       } else {
         setForm(s => ({ ...s, resultado: { ok: false,
           motivo: typeof d === 'string' ? d : 'No se pudo subir el algoritmo.' } }))
@@ -112,7 +109,13 @@ export default function Algoritmos({ usuario }) {
         Si falla, no se añade al catálogo y verás aquí el motivo.
       </p>
 
-      <form onSubmit={registrarAlgoritmo} className="formulario" style={{ maxWidth: 640, marginTop: '1.5rem' }}>
+      {/* .seccion-wrapper no centra su contenido -- es un panel a ancho
+          completo --, así que un bloque con maxWidth se queda pegado al
+          borde izquierdo en vez de quedar en medio de la página. margin
+          left/right auto es lo que lo centra; marginTop no puede ir en el
+          shorthand `margin` sin repetirlo, así que se deja aparte. */}
+      <form onSubmit={registrarAlgoritmo} className="formulario"
+            style={{ maxWidth: 640, marginTop: '1.5rem', marginLeft: 'auto', marginRight: 'auto' }}>
 
         <label>¿Qué hace el algoritmo?</label>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
@@ -124,6 +127,11 @@ export default function Algoritmos({ usuario }) {
               style={{
                 padding: '10px 8px', cursor: 'pointer', fontSize: '0.9rem',
                 borderRadius: 6, textAlign: 'left',
+                // Explícito: sin color propio, un botón hereda el color de
+                // sistema `buttontext`, que con el `color-scheme: light dark`
+                // de index.css es BLANCO si el sistema operativo está en modo
+                // oscuro, y estas tarjetas tienen el fondo blanco.
+                color: '#2c3e50',
                 border: form.tipo === t.valor ? `2px solid ${t.color}` : '1px solid #ccc',
                 background: form.tipo === t.valor ? `${t.color}18` : 'white',
                 fontWeight: form.tipo === t.valor ? 600 : 400,
@@ -167,9 +175,6 @@ export default function Algoritmos({ usuario }) {
           onChange={e => setForm(s => ({ ...s, archivo: e.target.files[0], resultado: null }))}
           required
         />
-        <p style={{ fontSize: '0.85rem', color: '#7f8c8d', marginTop: '0.5rem' }}>
-          El script debe incluir <code>{`# TIPO_ALGORITMO: ${form.tipo}`}</code>
-        </p>
 
         <button type="submit" className="btn-primary" disabled={form.cargando}>
           {form.cargando ? 'Validando el algoritmo…' : 'Subir y validar'}
@@ -185,6 +190,7 @@ export default function Algoritmos({ usuario }) {
       {r && r.ok && (
         <div style={{
           marginTop: '1.5rem', maxWidth: 640, padding: '1rem 1.25rem',
+          marginLeft: 'auto', marginRight: 'auto',
           background: '#d5f4e6', color: '#1e6b45', borderRadius: 6,
         }}>
           <strong>✅ «{r.nombre}» superó la validación y ya está en el catálogo.</strong>
@@ -198,6 +204,7 @@ export default function Algoritmos({ usuario }) {
       {r && !r.ok && (
         <div style={{
           marginTop: '1.5rem', maxWidth: 640, padding: '1rem 1.25rem',
+          marginLeft: 'auto', marginRight: 'auto',
           background: '#fadbd8', color: '#922b21', borderRadius: 6,
         }}>
           <strong>❌ {r.mensaje || 'No se pudo subir el algoritmo'}</strong>

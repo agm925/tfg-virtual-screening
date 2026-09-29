@@ -90,6 +90,18 @@ def obtener_usuario_actual(
     usuario = db.query(models.Usuario).filter(models.Usuario.id == int(usuario_id)).first()
     if usuario is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado.")
+    # La cuenta desactivada se rechaza AQUI, y no solo en el login, porque el
+    # token ya emitido sigue siendo criptograficamente valido hasta que caduca
+    # --JWT_EXPIRE_MINUTES son 1440 por defecto, un dia entero--. Comprobarlo
+    # solo al iniciar sesion dejaria a un usuario recien desactivado trabajando
+    # con normalidad durante 24 horas, que es justo lo contrario de lo que el
+    # administrador acaba de pedir. El usuario ya se recarga de la base en cada
+    # peticion (ver el docstring), asi que el coste es nulo.
+    if not usuario.activo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta cuenta está desactivada. Contacta con un administrador.",
+        )
     return usuario
 
 
@@ -99,10 +111,15 @@ def es_admin(usuario: models.Usuario) -> bool:
 
 def requiere_rol(*roles_permitidos: str):
     """
-    Fabrica de dependencias: `Depends(requiere_rol("admin", "desarrollador"))`
-    exige que el usuario autenticado tenga uno de los roles indicados,
-    ademas de estar autenticado. Da el efecto real sobre el campo `rol`
-    del modelo de datos que antes no tenia ninguna consecuencia.
+    Fabrica de dependencias: `Depends(requiere_rol("admin"))` exige que el
+    usuario autenticado tenga uno de los roles indicados, ademas de estar
+    autenticado. Da el efecto real sobre el campo `rol` del modelo de datos
+    que antes no tenia ninguna consecuencia.
+
+    Con solo dos roles (ver models.RolUsuario) el unico uso real es
+    `requiere_rol("admin")`, reservado para la administracion de la
+    plataforma: todo lo cientifico esta abierto a cualquier usuario
+    autenticado y no debe protegerse con esta dependencia.
     """
     def _verificar(usuario: models.Usuario = Depends(obtener_usuario_actual)) -> models.Usuario:
         rol_actual = usuario.rol.value if usuario.rol else "biologo"

@@ -87,7 +87,7 @@ SMTP_USER     = os.getenv("SMTP_USER",     "")   # tu cuenta Gmail
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")   # contraseña de aplicación
 EMAIL_FROM    = os.getenv("EMAIL_FROM",    SMTP_USER)
 
-# --- Modo de ejecución de algoritmos: "local" (subprocess) o "slurm" (clúster Picasso, SCBI-UMA) ---
+# --- Modo de ejecución de algoritmos: "local" (subprocess) o "slurm" (clúster bullx, HPCA-UAL) ---
 EXECUTION_MODE = os.getenv("EXECUTION_MODE", "local")
 
 # Tiempo máximo (segundos) que se le concede a un algoritmo en modo local antes
@@ -98,8 +98,27 @@ EXECUTION_MODE = os.getenv("EXECUTION_MODE", "local")
 # Celery bloqueada entera, sin más forma de recuperarla que matar el worker.
 ALGORITMO_TIMEOUT = int(os.getenv("ALGORITMO_TIMEOUT", "1800"))   # 30 min
 
-# --- SLURM / Clúster Picasso (SCBI, Universidad de Málaga) — solo se usan si EXECUTION_MODE=slurm ---
-SLURM_HOST            = os.getenv("SLURM_HOST", "picasso.scbi.uma.es")
+# --- Banco de pruebas de algoritmos ---
+#
+# URL del servicio aislado que ejecuta los algoritmos recien subidos para
+# comprobarlos antes de aceptarlos (ver app/banco_pruebas.py y
+# app/banco_servidor.py).
+#
+# Si esta vacia, el banco se ejecuta EN ESTE MISMO PROCESO. Eso es lo correcto
+# para los tests y para usar el modulo como biblioteca, pero NO para un
+# despliegue: significaria ejecutar codigo recien subido, y todavia no
+# aceptado, con los privilegios y el entorno del backend --que incluye la clave
+# de firma de los JWT y la contrasena de la base de datos--.
+#
+# En docker-compose.yml se fija BANCO_SOCKET, porque el contenedor del banco no
+# tiene red en absoluto (network_mode "none") y se le habla por un socket Unix
+# en un volumen compartido. BANCO_URL queda como alternativa por si algun dia
+# el sandbox vive en otra maquina.
+BANCO_SOCKET = os.getenv("BANCO_SOCKET", "").strip()
+BANCO_URL = os.getenv("BANCO_URL", "").strip()
+
+# --- SLURM / Clúster bullx (HPCA, Universidad de Almería) — solo se usan si EXECUTION_MODE=slurm ---
+SLURM_HOST            = os.getenv("SLURM_HOST", "bullxual.hpca.ual.es")
 SLURM_PORT            = int(os.getenv("SLURM_PORT", "22"))
 SLURM_USER            = os.getenv("SLURM_USER", "")
 SLURM_SSH_KEY_PATH    = os.getenv("SLURM_SSH_KEY_PATH", "")   # ruta a clave privada; vacío = usar password

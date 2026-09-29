@@ -12,7 +12,7 @@
 # Aquí se resuelve con ssh-keyscan, es decir, confiando en la clave que ofrezca
 # el host la primera vez. Eso es aceptable ÚNICAMENTE en esta simulación local:
 # el contenedor slurm vive en la red interna de Docker Compose y se destruye con
-# ella. Contra Picasso NO se hace así: allí la huella se verifica por un canal
+# ella. Contra el bullx NO se hace así: allí la huella se verifica por un canal
 # de confianza y se añade a mano al known_hosts, como haría cualquier cliente
 # SSH la primera vez.
 set -euo pipefail

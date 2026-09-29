@@ -168,10 +168,23 @@ const VisualBuilder = ({ usuario }) => {
   };
 
   // Cargar workflow guardado
+  // React Flow exige que TODO nodo traiga `position: {x, y}`; si falta, revienta
+  // con "Cannot read properties of undefined (reading 'x')" y se lleva por
+  // delante la página entera: pantalla en blanco, sin mensaje. Y el grafo puede
+  // venir sin ella perfectamente, porque la API lo acepta y el motor lo ejecuta
+  // igual (la posición es cosa del lienzo, no del cálculo). Se colocan en
+  // cascada los que no la traigan, que es mejor que no poder abrir el flujo.
+  const conPosicion = (nodos) =>
+    (nodos || []).map((nodo, i) => (
+      nodo && typeof nodo.position?.x === 'number' && typeof nodo.position?.y === 'number'
+        ? nodo
+        : { ...nodo, position: { x: 80 + (i % 4) * 260, y: 80 + Math.floor(i / 4) * 170 } }
+    ));
+
   const cargarWorkflow = (workflow) => {
     setWorkflowActual(workflow);
     const grafo = workflow.grafo_json || { nodes: [], edges: [] };
-    setNodes(grafo.nodes || []);
+    setNodes(conPosicion(grafo.nodes));
     setEdges(grafo.edges || []);
     setResultsPanel(null);
   };
@@ -385,6 +398,19 @@ const VisualBuilder = ({ usuario }) => {
                     <span className="batch-stat ok">✅ {resultsPanel.total_exito} procesadas</span>
                     {resultsPanel.total_error > 0 && (
                       <span className="batch-stat err">❌ {resultsPanel.total_error} errores</span>
+                    )}
+                    {/* Registros del SDF que RDKit no pudo leer, y que por
+                        tanto NO se han cribado. Se enseña aunque sea una
+                        mala noticia: antes desaparecían sin dejar rastro y el
+                        panel decía "N procesadas, 0 errores" sobre una
+                        biblioteca de la que faltaba la mitad. */}
+                    {resultsPanel.moleculas_descartadas > 0 && (
+                      <span
+                        className="batch-stat err"
+                        title={`El fichero tiene ${resultsPanel.registros_en_fichero} registros, pero ${resultsPanel.moleculas_descartadas} no se pudieron leer y han quedado fuera del cribado`}
+                      >
+                        ⚠️ {resultsPanel.moleculas_descartadas} sin leer
+                      </span>
                     )}
                     <span className="batch-stat bd">📂 {resultsPanel.base_de_datos}</span>
                   </div>

@@ -8,6 +8,7 @@ import VisualBuilder from './components/VisualBuilder'
 import Tutorial from './components/Tutorial'
 import Moleculas from './components/Moleculas'
 import Sistema from './components/Sistema'
+import Administracion from './components/Administracion'
 import { getToken, setToken, clearToken, tokenValido, alExpirarSesion } from './api/client'
 import './App.css'
 
@@ -56,12 +57,13 @@ function App() {
       />
       <main className="contenido-principal">
         {paginaActual === 'home'      && <Home usuario={usuario} setPaginaActual={setPaginaActual} />}
-        {paginaActual === 'algoritmos' && <Algoritmos usuario={usuario} />}
+        {paginaActual === 'algoritmos' && <Algoritmos />}
         {paginaActual === 'moleculas'  && <Moleculas />}
         {paginaActual === 'peticiones' && <RealizarPeticion key={usuario.id} usuario={usuario} />}
         {paginaActual === 'visual'    && <VisualBuilder key={usuario.id} usuario={usuario} />}
         {paginaActual === 'tutorial'  && <Tutorial />}
         {paginaActual === 'sistema'   && usuario.rol === 'admin' && <Sistema />}
+        {paginaActual === 'administracion' && usuario.rol === 'admin' && <Administracion usuario={usuario} />}
       </main>
     </div>
   );

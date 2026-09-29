@@ -73,7 +73,8 @@ const SelectDBNodoNode = ({ data, id }) => {
             >
               {bases.map(m => (
                 <option key={m.nombre} value={m.nombre}>
-                  📦 {m.nombre} ({m.tamano_kb} KB)
+                  📦 {m.nombre}
+                  {m.num_moleculas != null ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
                 </option>
               ))}
             </select>

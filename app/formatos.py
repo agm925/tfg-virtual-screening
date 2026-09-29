@@ -25,8 +25,48 @@ puede predecir por el nombre.
 import json
 import os
 
+from app.config import TAMANO_TROZO_SUBIDA
+
 # Extensiones que la plataforma considera "una molécula".
 EXTENSIONES_MOLECULA = (".mol2", ".sdf", ".mol", ".pdb", ".pdbqt", ".smi", ".xyz")
+
+# Lo que los algoritmos del catálogo saben LEER como entrada.
+#
+# Es un subconjunto de EXTENSIONES_MOLECULA a propósito: la biblioteca acepta
+# más formatos --un .pdbqt de receptor, por ejemplo, es una molécula válida que
+# guardar-- pero `cargar_moleculas` de los scripts solo distingue .mol2, .sdf y
+# .mol, y con cualquier otra cosa levanta "Formato no soportado: {ext}".
+#
+# Sirve para rechazar en el endpoint, con un mensaje claro, lo que de todas
+# formas iba a fallar dentro del worker media hora después.
+EXTENSIONES_ENTRADA_ALGORITMO = (".mol2", ".sdf", ".mol")
+
+
+def contar_moleculas_sdf(ruta: str) -> int:
+    """Cuenta los separadores de registro de un SDF leyendo por trozos.
+
+    Vive aquí y no en app/main.py porque scripts/migrate.py también lo
+    necesita (para el `tipo` de los ficheros .sdf ya registrados antes de que
+    existiera esa columna) y no puede importar app.main sin arrastrar la
+    aplicación FastAPI entera como efecto secundario de un simple import.
+
+    Se relee el fichero en lugar de contar durante la escritura porque el
+    separador ($$$$) puede quedar partido entre dos trozos; aquí se arrastra
+    el solapamiento explícitamente.
+    """
+    separador = b"$$$$"
+    total = 0
+    sobrante = b""
+    with open(ruta, "rb") as f:
+        while True:
+            trozo = f.read(TAMANO_TROZO_SUBIDA)
+            if not trozo:
+                break
+            datos = sobrante + trozo
+            total += datos.count(separador)
+            # Conservar los últimos bytes por si el separador cruza la frontera.
+            sobrante = datos[-(len(separador) - 1):]
+    return total
 
 # Algoritmos del catálogo base cuyo resultado principal es un JSON de métricas.
 #

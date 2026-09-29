@@ -14,16 +14,17 @@ shutil.copyfile(entrada, salida)
 print("dummy: copiada la entrada a la salida")
 """
 CONTENIDO_MOL2_DUMMY = b"@<TRIPOS>MOLECULE\ndummy\n1 0 0 0 0\nSMALL\nNO_CHARGES\n"
+CONTENIDO_SDF_DUMMY = b"dummy\n\n\n  0  0\nM  END\n$$$$\n"
 
 
-def _crear_algoritmo(client, desarrollador_autenticado) -> int:
+def _crear_algoritmo(client, otro_usuario_autenticado) -> int:
     import uuid
 
     respuesta = client.post(
         "/algoritmos",
-        data={"nombre": "Dummy peticiones", "descripcion": "Para tests de /peticiones", "tipo": "preprocesado"},
+        data={"nombre": "Dummy peticiones", "descripcion": "Para tests de /peticiones", "tipo": "preprocesado", "es_publico": "true"},
         files={"archivo": (f"test_dummy_{uuid.uuid4().hex[:8]}.py", SCRIPT_DUMMY_PREPROCESADO, "text/x-python")},
-        headers=desarrollador_autenticado["headers"],
+        headers=otro_usuario_autenticado["headers"],
     )
     assert respuesta.status_code == 200, respuesta.text
     return respuesta.json()["id"]
@@ -40,9 +41,9 @@ def test_crear_peticion_sin_token_devuelve_401(client, mock_celery):
 
 
 def test_crear_peticion_encola_tarea_celery_y_asigna_propietario_del_token(
-    client, mock_celery, usuario_autenticado, desarrollador_autenticado
+    client, mock_celery, usuario_autenticado, otro_usuario_autenticado
 ):
-    algoritmo_id = _crear_algoritmo(client, desarrollador_autenticado)
+    algoritmo_id = _crear_algoritmo(client, otro_usuario_autenticado)
 
     respuesta = client.post(
         "/peticiones",
@@ -57,23 +58,51 @@ def test_crear_peticion_encola_tarea_celery_y_asigna_propietario_del_token(
     assert len(mock_celery) == 1
 
 
-def test_crear_peticion_con_extension_no_mol2_devuelve_400(client, mock_celery, usuario_autenticado, desarrollador_autenticado):
-    algoritmo_id = _crear_algoritmo(client, desarrollador_autenticado)
+def test_crear_peticion_con_formato_que_ningun_algoritmo_lee_devuelve_400(
+    client, mock_celery, usuario_autenticado, otro_usuario_autenticado
+):
+    """
+    Se rechaza lo que los algoritmos NO saben leer, no todo lo que no sea
+    .mol2. La lista esta en EXTENSIONES_ENTRADA_ALGORITMO (app/formatos.py) y
+    sale de lo que hace `cargar_moleculas` en los scripts del catalogo.
+    """
+    algoritmo_id = _crear_algoritmo(client, otro_usuario_autenticado)
 
     respuesta = client.post(
         "/peticiones",
         data={"algoritmo_id": str(algoritmo_id)},
-        files={"archivo_mol": ("test_dummy.sdf", b"contenido irrelevante", "chemical/x-mdl-sdfile")},
+        files={"archivo_mol": ("test_dummy.pdbqt", b"contenido irrelevante", "chemical/x-pdbqt")},
         headers=usuario_autenticado["headers"],
     )
     assert respuesta.status_code == 400
     assert len(mock_celery) == 0
 
 
+def test_crear_peticion_acepta_sdf(client, mock_celery, usuario_autenticado, otro_usuario_autenticado):
+    """
+    El SDF es el formato que entregan ChEMBL y PubChem, y el unico que TODO
+    algoritmo del catalogo ha demostrado leer --el banco de pruebas los valida
+    contra ficheros .sdf de referencia--. Exigir .mol2 obligaba a convertir, y
+    RDKit lee mal el .mol2 de muchos heterociclos aromaticos: la cafeina salia
+    con LogP -3,42 en vez de -1,03, informado como exito.
+    """
+    algoritmo_id = _crear_algoritmo(client, otro_usuario_autenticado)
+
+    respuesta = client.post(
+        "/peticiones",
+        data={"algoritmo_id": str(algoritmo_id)},
+        files={"archivo_mol": ("test_dummy_entrada.sdf", CONTENIDO_SDF_DUMMY, "chemical/x-mdl-sdfile")},
+        headers=usuario_autenticado["headers"],
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json()["ruta_mol_original"].endswith(".sdf")
+    assert len(mock_celery) == 1
+
+
 def test_estado_peticion_solo_visible_para_el_propietario(
-    client, mock_celery, usuario_autenticado, desarrollador_autenticado
+    client, mock_celery, usuario_autenticado, otro_usuario_autenticado
 ):
-    algoritmo_id = _crear_algoritmo(client, desarrollador_autenticado)
+    algoritmo_id = _crear_algoritmo(client, otro_usuario_autenticado)
     respuesta_creacion = client.post(
         "/peticiones",
         data={"algoritmo_id": str(algoritmo_id)},
@@ -87,7 +116,7 @@ def test_estado_peticion_solo_visible_para_el_propietario(
     assert respuesta_propietario.json()["estado"] == "PENDIENTE"
 
     # otro usuario autenticado, pero no el propietario ni admin
-    respuesta_intruso = client.get(f"/peticiones/{peticion_id}/estado", headers=desarrollador_autenticado["headers"])
+    respuesta_intruso = client.get(f"/peticiones/{peticion_id}/estado", headers=otro_usuario_autenticado["headers"])
     assert respuesta_intruso.status_code == 403
 
     respuesta_sin_token = client.get(f"/peticiones/{peticion_id}/estado")
@@ -95,9 +124,9 @@ def test_estado_peticion_solo_visible_para_el_propietario(
 
 
 def test_admin_puede_ver_el_estado_de_cualquier_peticion(
-    client, mock_celery, usuario_autenticado, desarrollador_autenticado, admin_autenticado
+    client, mock_celery, usuario_autenticado, otro_usuario_autenticado, admin_autenticado
 ):
-    algoritmo_id = _crear_algoritmo(client, desarrollador_autenticado)
+    algoritmo_id = _crear_algoritmo(client, otro_usuario_autenticado)
     respuesta_creacion = client.post(
         "/peticiones",
         data={"algoritmo_id": str(algoritmo_id)},
@@ -111,9 +140,9 @@ def test_admin_puede_ver_el_estado_de_cualquier_peticion(
 
 
 def test_borrar_peticion_ajena_devuelve_403(
-    client, mock_celery, usuario_autenticado, desarrollador_autenticado
+    client, mock_celery, usuario_autenticado, otro_usuario_autenticado
 ):
-    algoritmo_id = _crear_algoritmo(client, desarrollador_autenticado)
+    algoritmo_id = _crear_algoritmo(client, otro_usuario_autenticado)
     respuesta_creacion = client.post(
         "/peticiones",
         data={"algoritmo_id": str(algoritmo_id)},
@@ -122,7 +151,7 @@ def test_borrar_peticion_ajena_devuelve_403(
     )
     peticion_id = respuesta_creacion.json()["id"]
 
-    respuesta_borrado_ajeno = client.delete(f"/peticiones/{peticion_id}", headers=desarrollador_autenticado["headers"])
+    respuesta_borrado_ajeno = client.delete(f"/peticiones/{peticion_id}", headers=otro_usuario_autenticado["headers"])
     assert respuesta_borrado_ajeno.status_code == 403
 
     respuesta_borrado_propio = client.delete(f"/peticiones/{peticion_id}", headers=usuario_autenticado["headers"])

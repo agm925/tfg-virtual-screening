@@ -123,6 +123,44 @@ def anadir_columnas_faltantes() -> None:
     print(f"Columnas verificadas: {anadidas} añadidas.")
 
 
+def migrar_rol_desarrollador() -> None:
+    """
+    Pasa a `biologo` los usuarios que quedaran con el rol `desarrollador`.
+
+    El rol desaparecio del modelo (ver models.RolUsuario): ahora solo hay
+    `admin` y `biologo`, y el biologo ya puede hacer todo lo que hacia el
+    desarrollador. Sin esta migracion, una fila que siguiera con el valor
+    antiguo reventaria al leerla --SQLAlchemy no sabria a que miembro del
+    Enum corresponde--, de modo que ese usuario no podria ni iniciar sesion.
+
+    Se hace con SQL en crudo, y no con el ORM, precisamente porque el valor
+    ya no existe en el Enum de Python: mapearlo es justo lo que falla. Y se
+    compara `CAST(rol AS TEXT)` en vez de `rol = 'desarrollador'` porque en
+    PostgreSQL la columna es un ENUM nativo: sobre una base creada ya con el
+    modelo nuevo, el tipo no tiene esa etiqueta y la comparacion directa
+    reventaria con "invalid input value for enum".
+
+    Es idempotente: sobre una base ya migrada no hay filas que tocar.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if not inspector.has_table("usuarios"):
+        return
+
+    try:
+        with engine.begin() as conexion:
+            resultado = conexion.execute(
+                text("UPDATE usuarios SET rol = 'biologo' WHERE CAST(rol AS TEXT) = 'desarrollador'")
+            )
+        if resultado.rowcount:
+            print(f"Rol 'desarrollador' migrado a 'biologo': {resultado.rowcount} usuario(s).")
+        else:
+            print("Rol 'desarrollador': ningún usuario que migrar.")
+    except Exception as e:  # noqa: BLE001
+        print(f"Aviso: no se pudo migrar el rol 'desarrollador': {e}", file=sys.stderr)
+
+
 def registrar_archivos_existentes() -> None:
     """
     Da de alta en la tabla `archivos` los ficheros que ya estaban en uploads/.
@@ -186,13 +224,80 @@ def registrar_archivos_existentes() -> None:
         db.close()
 
 
+def backfill_tipo_archivo() -> None:
+    """
+    Rellena `archivos.tipo` ("molecula" | "base_de_datos" | "resultado") en
+    las filas que se registraron antes de que existiera esa columna.
+
+    Antes, el frontend adivinaba si un fichero era "base de datos" a partir
+    de `visibilidad`: cualquier fichero privado (resultado) se mostraba con
+    el icono de base de datos, así que la molécula de entrada de una
+    petición cualquiera --privada, pero una molécula corriente-- salía mal
+    etiquetada. Con la columna nueva (ver app/models.py) el tipo se decide
+    por lo que el fichero ES, no por quién puede verlo, y el código nuevo ya
+    lo rellena al registrar cada fichero (ver registrar_archivo en
+    app/main.py y _registrar_resultados en app/tasks.py). Esto es solo para
+    lo que quedó registrado antes de ese cambio.
+
+    Regla:
+      - visibilidad=resultado  -> tipo=resultado (lo produjo la plataforma).
+      - visibilidad=biblioteca y extensión .sdf -> se relee el fichero: mas
+        de un registro es base_de_datos, uno solo es molecula. Se aprovecha
+        para cachear num_moleculas de paso.
+      - visibilidad=biblioteca y cualquier otra extensión -> molecula (una
+        "base de datos" que no sea .sdf no existe, ver /moleculas/subir).
+      - fichero que ya no existe en disco (fila huérfana) -> se deja como
+        molecula por defecto, sin intentar leerlo.
+
+    Es idempotente: solo toca las filas con tipo IS NULL.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app.formatos import contar_moleculas_sdf
+    from app.models import TipoArchivo, VisibilidadArchivo
+
+    directorio = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+
+    Sesion = sessionmaker(bind=engine)
+    db = Sesion()
+    try:
+        pendientes = db.query(models.Archivo).filter(models.Archivo.tipo.is_(None)).all()
+        if not pendientes:
+            print("Tipo de archivo: nada que rellenar.")
+            return
+
+        rellenados = 0
+        for archivo in pendientes:
+            if archivo.visibilidad == VisibilidadArchivo.resultado:
+                archivo.tipo = TipoArchivo.resultado
+            elif archivo.nombre.lower().endswith(".sdf"):
+                ruta = os.path.join(directorio, archivo.nombre)
+                if os.path.isfile(ruta):
+                    n = contar_moleculas_sdf(ruta)
+                    archivo.num_moleculas = n
+                    archivo.tipo = TipoArchivo.base_de_datos if n > 1 else TipoArchivo.molecula
+                else:
+                    archivo.tipo = TipoArchivo.molecula
+            else:
+                archivo.tipo = TipoArchivo.molecula
+            rellenados += 1
+            if rellenados % 500 == 0:
+                db.commit()
+        db.commit()
+        print(f"Tipo de archivo rellenado en {rellenados} fila(s).")
+    finally:
+        db.close()
+
+
 def main() -> None:
     esperar_base_de_datos()
     models.Base.metadata.create_all(bind=engine)
     print("Tablas creadas/verificadas correctamente.")
     anadir_columnas_faltantes()
     crear_indices_faltantes()
+    migrar_rol_desarrollador()
     registrar_archivos_existentes()
+    backfill_tipo_archivo()
 
 
 if __name__ == "__main__":

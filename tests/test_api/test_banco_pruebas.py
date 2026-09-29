@@ -15,8 +15,8 @@ import os
 
 import pytest
 
-from app.banco_pruebas import (LIGANDO_A, LIGANDO_B, RECEPTOR, elegir_clave_score,
-                               probar_algoritmo)
+from app.banco_pruebas import (LIGANDO_A, LIGANDO_B, RECEPTOR, _entorno_minimo,
+                               elegir_clave_score, probar_algoritmo)
 
 
 def _escribir(tmp_path, nombre, codigo):
@@ -162,7 +162,7 @@ def test_eleccion_de_la_clave_de_puntuacion(claves, esperada):
 
 # --------------------------------------------- integracion con el endpoint
 def test_un_algoritmo_rechazado_no_deja_rastro_en_el_catalogo(
-    client, db_session, desarrollador_autenticado
+    client, db_session, otro_usuario_autenticado
 ):
     """
     Si no supera la prueba, no debe quedar ni el fichero en algoritmos/ ni la
@@ -179,7 +179,7 @@ def test_un_algoritmo_rechazado_no_deja_rastro_en_el_catalogo(
         files={"archivo": (nombre_fichero,
                            b"# TIPO_ALGORITMO: preprocesado\nraise SystemExit(3)\n",
                            "text/x-python")},
-        headers=desarrollador_autenticado["headers"],
+        headers=otro_usuario_autenticado["headers"],
     )
 
     assert respuesta.status_code == 422
@@ -189,7 +189,7 @@ def test_un_algoritmo_rechazado_no_deja_rastro_en_el_catalogo(
 
 
 def test_un_algoritmo_valido_se_acepta_y_guarda_lo_observado(
-    client, db_session, desarrollador_autenticado
+    client, db_session, otro_usuario_autenticado
 ):
     from app import models
 
@@ -201,7 +201,7 @@ def test_un_algoritmo_valido_se_acepta_y_guarda_lo_observado(
                            b"import json, sys\n"
                            b"json.dump({'similitud': 0.9}, open(sys.argv[-1], 'w'))\n",
                            "text/x-python")},
-        headers=desarrollador_autenticado["headers"],
+        headers=otro_usuario_autenticado["headers"],
     )
 
     assert respuesta.status_code == 200, respuesta.text
@@ -209,3 +209,71 @@ def test_un_algoritmo_valido_se_acepta_y_guarda_lo_observado(
     assert cuerpo["formato_salida"] == "json"
     assert cuerpo["clave_score"] == "similitud"
     assert cuerpo["verificado"] is True
+
+
+# ------------------------------------------------------------- aislamiento
+#
+# Probar un algoritmo es ejecutar codigo que acaba de llegar y que todavia no
+# se ha aceptado. Estos tests no comprueban una funcionalidad: fijan una
+# PROPIEDAD DE SEGURIDAD, para que no se pierda en un cambio futuro sin que
+# nadie se entere. La primera version del banco ejecutaba el script en el
+# proceso del backend, como root y con su entorno completo --incluida la clave
+# de firma de los JWT--, y el fallo no se vio hasta que alguien lo pregunto.
+
+SENSIBLES = ("JWT_SECRET_KEY", "DATABASE_URL", "SMTP_PASSWORD", "SLURM_PASSWORD")
+
+
+def test_el_entorno_del_subproceso_no_arrastra_secretos(monkeypatch):
+    for clave in SENSIBLES:
+        monkeypatch.setenv(clave, "valor-secreto-de-prueba")
+
+    entorno = _entorno_minimo()
+
+    for clave in SENSIBLES:
+        assert clave not in entorno, f"{clave} no debe llegar al algoritmo"
+    # Y sigue siendo utilizable: sin PATH no encontraria obabel ni smina.
+    assert entorno.get("PATH")
+
+
+def test_un_algoritmo_no_puede_leer_los_secretos_del_proceso(tmp_path, monkeypatch):
+    """Lo mismo, pero de extremo a extremo: ejecutando de verdad."""
+    monkeypatch.setenv("JWT_SECRET_KEY", "clave-que-no-debe-verse")
+
+    ruta = _escribir(tmp_path, "fisgon.py",
+                     "# TIPO_ALGORITMO: preprocesado\n"
+                     "import json, os, sys\n"
+                     "json.dump({'visto': os.environ.get('JWT_SECRET_KEY', 'NADA'), 'n': 1.0},\n"
+                     "          open(sys.argv[-1], 'w'))\n"
+                     "print('JWT_SECRET_KEY =', os.environ.get('JWT_SECRET_KEY', 'NADA'))\n")
+
+    r = probar_algoritmo(ruta, "preprocesado")
+    assert r.valido, r.motivo
+    assert "clave-que-no-debe-verse" not in (r.log or "")
+    assert "NADA" in (r.log or "")
+
+
+def test_si_el_servicio_aislado_no_responde_el_script_no_se_ejecuta_aqui(tmp_path, monkeypatch):
+    """
+    El comportamiento tiene que ser FALLAR CERRADO.
+
+    Recurrir a ejecutar el script en el proceso que llama, cuando el sandbox no
+    esta disponible, reintroduciria el problema entero justo en el momento en
+    que nadie esta mirando. Es preferible rechazar la subida.
+    """
+    import app.banco_pruebas as bp
+
+    testigo = tmp_path / "se_ejecuto.txt"
+    ruta = _escribir(tmp_path, "con_testigo.py",
+                     "# TIPO_ALGORITMO: preprocesado\n"
+                     "import json, sys\n"
+                     f"open(r'{testigo}', 'w').write('si')\n"
+                     "json.dump({'n': 1.0}, open(sys.argv[-1], 'w'))\n")
+
+    monkeypatch.setattr(bp, "BANCO_SOCKET", "/tmp/no-existe-este-socket.sock")
+    monkeypatch.setattr(bp, "BANCO_URL", "")
+
+    r = probar_algoritmo(ruta, "preprocesado")
+
+    assert not r.valido
+    assert "no está disponible" in (r.motivo or "")
+    assert not testigo.exists(), "el script NO debe haberse ejecutado en este proceso"

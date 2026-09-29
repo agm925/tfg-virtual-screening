@@ -232,15 +232,15 @@ export default function Tutorial() {
                 <li>Rellena el nombre y la descripción.</li>
                 <li>Selecciona el tipo correcto: preprocesado, alineacion, comparacion o docking.</li>
                 <li>Elige el archivo <code>.py</code> desde tu ordenador.</li>
-                <li>El sistema validará que el script contenga la etiqueta
-                  <code> # TIPO_ALGORITMO: preprocesado</code> (u otro tipo) en las primeras líneas.</li>
+                <li>El sistema ejecutará el script sobre moléculas de referencia, invocándolo
+                  como corresponde al tipo elegido, antes de aceptarlo en el catálogo.</li>
                 <li>Si todo es correcto, el algoritmo aparecerá en el listado y estará disponible
                   en el Constructor Visual.</li>
               </ol>
 
               <div className="tutorial-callout warning">
-                ⚠️ Si el script no tiene la etiqueta <code># TIPO_ALGORITMO</code>, la subida fallará.
-                El tipo del formulario debe coincidir exactamente con el del script.
+                ⚠️ Si el script falla, no escribe el resultado en el último argumento, o no
+                termina con código 0, la subida se rechazará con el motivo y la salida del script.
               </div>
             </section>
           )}

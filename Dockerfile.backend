@@ -43,6 +43,23 @@ COPY . .
 RUN mkdir -p uploads algoritmos secrets \
     && chmod +x scripts/docker-entrypoint.sh
 
+# Punto de montaje del socket del banco de pruebas. Se crea aqui, y con dueno
+# nobody, porque un volumen con nombre hereda los permisos de la ruta que
+# exista en la imagen la primera vez que se crea: sin esto, el volumen seria de
+# root y uvicorn --uds no podria crear el socket corriendo como nobody.
+RUN mkdir -p /sock && chown 65534:65534 /sock
+
+# El contenedor del banco de pruebas (docker-compose.yml, servicio "banco")
+# construye esta misma imagen con PURGAR_CATALOGO=1. El sandbox solo necesita
+# app/ y referencia/ para ejecutar el algoritmo que le llega: no debe llevarse
+# dentro el catalogo, porque ahi tambien viven los algoritmos PRIVADOS de otros
+# desarrolladores y no hay razon para que un script no verificado pueda leerlos.
+#
+# Se hace con un ARG y no con un Dockerfile aparte para que las capas caras
+# --apt, pip, la descarga de smina-- se compartan entre las dos imagenes.
+ARG PURGAR_CATALOGO=0
+RUN if [ "$PURGAR_CATALOGO" = "1" ]; then rm -rf /app/algoritmos/* /app/uploads/*; fi
+
 EXPOSE 8000
 
 # El entrypoint solo añade un paso: registrar la clave SSH del clúster en

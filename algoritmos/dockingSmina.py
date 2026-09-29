@@ -89,12 +89,34 @@ def verificar_smina() -> None:
         )
 
 
+# Una fila de la tabla de poses de smina: cuatro columnas numéricas y nada más.
+#
+#     mode |   affinity | dist from best mode
+#          | (kcal/mol) | rmsd l.b.| rmsd u.b.
+#     -----+------------+----------+----------
+#     1       -9.1       0.000      0.000
+#
+# El patrón anterior era `\s+(\d+)\s+([-\d.]+)\s+[-\d.]+\s+[-\d.]+`, que exigía
+# al menos un espacio ANTES del número de pose. Smina las escribe pegadas al
+# margen, así que no casaba NUNCA: toda ejecución de docking devolvía
+# "poses_generadas: 0" y "mejor_afinidad: null" aunque el fichero de poses
+# estuviera bien escrito. Y como de "mejor_afinidad" sale el score del cribado
+# por lotes (ver _extraer_score en app/workflow_executor.py), el ranking de una
+# campaña de docking salía entero a null sin un solo error por ninguna parte.
+#
+# Exigir que la línea ENTERA sean cuatro números, en vez de solo mirar su
+# comienzo, evita además el falso positivo con la tabla de pesos que smina
+# imprime antes ("0.8          repulsion(o=0,_c=8)"), que sí empieza por dígito.
+_FILA_POSE = re.compile(
+    r"^\s*(\d+)\s+(-?\d+(?:\.\d+)?)\s+-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?\s*$"
+)
+
+
 def parsear_energias(log: str) -> list:
     """Extrae las energías de afinidad del output de Smina."""
     energias = []
     for linea in log.splitlines():
-        # Líneas con formato: "   1         -8.4      0.000      0.000"
-        match = re.match(r"\s+(\d+)\s+([-\d.]+)\s+[-\d.]+\s+[-\d.]+", linea)
+        match = _FILA_POSE.match(linea)
         if match:
             energias.append({
                 "pose": int(match.group(1)),
