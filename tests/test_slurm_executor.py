@@ -536,3 +536,196 @@ def test_si_no_hay_manera_el_error_dice_cuantos_intentos_se_hicieron(monkeypatch
 
     assert len(intentos) == slurm_executor._INTENTOS_CONEXION
     assert "4 intentos" in str(error.value)
+
+
+# ---------------------------------------------------------------------------
+# 8. Lote: un job array para N invocaciones
+# ---------------------------------------------------------------------------
+
+
+class FakeSSHArray:
+    """
+    Doble de SSH para ejecutar_lote.
+
+    Entiende las tres ordenes propias del camino en lote: el mkdir con
+    expansion de llaves, el sbatch del array y el bucle que recoge los codigos
+    de salida de las N tareas.
+    """
+
+    JOB_ID = "777"
+
+    def __init__(self, sftp, codigos, genera=None):
+        self._sftp = sftp
+        self.comandos = []
+        self.codigos = list(codigos)
+        self.genera = genera or {}       # indice de tarea -> {nombre: contenido}
+        self.lote_dir = None
+
+    def open_sftp(self):
+        return self._sftp
+
+    def exec_command(self, comando):
+        self.comandos.append(comando)
+        salida, error, codigo = "", "", 0
+
+        if comando.startswith("mkdir -p"):
+            self.lote_dir = comando.split(" ", 2)[2].split("/tarea_")[0].strip("\"'")
+        elif comando.startswith("sbatch"):
+            # A partir de aqui el array "ha corrido": cada tarea deja sus
+            # ficheros de SLURM y lo que haya generado el algoritmo.
+            for i in range(len(self.codigos)):
+                directorio = self.lote_dir + "/tarea_" + str(i)
+                self._sftp.remotos[directorio + "/slurm-" + self.JOB_ID + "_" + str(i) + ".out"] = b"log de la tarea"
+                self._sftp.remotos[directorio + "/slurm-" + self.JOB_ID + "_" + str(i) + ".err"] = b""
+                for nombre, contenido in self.genera.get(i, {}).items():
+                    self._sftp.remotos[directorio + "/" + nombre] = contenido
+            salida = "Submitted batch job " + self.JOB_ID
+        elif comando.startswith("squeue"):
+            salida = ""              # el array ya no esta en la cola
+        elif comando.startswith("for i in $(seq"):
+            salida = chr(10).join(self.codigos) + chr(10)
+
+        canal = SimpleNamespace(recv_exit_status=lambda: codigo)
+        stdout = SimpleNamespace(read=lambda: salida.encode(), channel=canal)
+        stderr = SimpleNamespace(read=lambda: error.encode())
+        return None, stdout, stderr
+
+    def close(self):
+        pass
+
+
+@pytest.fixture()
+def ejecutor_lote(monkeypatch):
+    """SlurmExecutor preparado para ejecutar_lote, con el SSH sustituido."""
+
+    def _construir(codigos, genera=None):
+        sftp = FakeSFTP()
+        ssh = FakeSSHArray(sftp, codigos, genera)
+        ejec = SlurmExecutor()
+        ejec.remote_base = "/remoto/jobs"
+        ejec.poll_interval = 0
+        conexiones = []
+
+        def _conectar():
+            conexiones.append(ssh)
+            return ssh
+
+        monkeypatch.setattr(ejec, "_conectar", _conectar)
+        return ejec, ssh, sftp, conexiones
+
+    return _construir
+
+
+def _invocacion(tmp_path, nombre, flags=()):
+    entrada = tmp_path / (nombre + "_entrada.sdf")
+    entrada.write_bytes(b"molecula")
+    salida = tmp_path / (nombre + "_salida.json")
+    return (str(tmp_path / "algo.py"), [str(entrada), str(salida)], list(flags))
+
+
+def _run_sh(sftp, indice):
+    """El run.sh que se subio para la tarea `indice`, ya troceado."""
+    for ruta, fichero in sftp.escritos.items():
+        if ruta.endswith("/tarea_" + str(indice) + "/run.sh"):
+            for linea in fichero.read().decode().splitlines():
+                if linea.startswith("python3"):
+                    return shlex.split(linea)[1:]
+    raise AssertionError("no se subio run.sh para la tarea " + str(indice))
+
+
+def test_las_n_invocaciones_viajan_en_un_solo_array(ejecutor_lote, tmp_path):
+    """
+    Lo que justifica todo el camino en lote: una conexion, un sbatch y una
+    espera para las N moleculas, en vez de N de cada.
+    """
+    ejec, ssh, sftp, conexiones = ejecutor_lote(["0", "0", "0"])
+
+    resultados = ejec.ejecutar_lote([_invocacion(tmp_path, "m%d" % i) for i in range(3)])
+
+    assert [r["exito"] for r in resultados] == [True, True, True]
+    assert len(conexiones) == 1, "una sola conexion SSH para todo el lote"
+    assert sum(1 for c in ssh.comandos if c.startswith("sbatch")) == 1
+
+    sbatch = [f.read().decode() for r, f in sftp.escritos.items() if r.endswith(".sbatch")][0]
+    assert "--array=0-2" in sbatch
+
+
+def test_cada_tarea_del_array_recibe_sus_propios_argumentos(ejecutor_lote, tmp_path):
+    """
+    Un array comparte script, asi que el riesgo propio de este camino es que
+    las tareas se mezclen los argumentos. Cada una lleva los suyos en su
+    run.sh.
+    """
+    ejec, _, sftp, _ = ejecutor_lote(["0", "0"])
+
+    ejec.ejecutar_lote([
+        _invocacion(tmp_path, "primera", flags=["--scoring", "vinardo"]),
+        _invocacion(tmp_path, "segunda", flags=["--scoring", "vina"]),
+    ])
+
+    argumentos_0 = _run_sh(sftp, 0)
+    argumentos_1 = _run_sh(sftp, 1)
+
+    assert any(a.endswith("primera_entrada.sdf") for a in argumentos_0)
+    assert not any("segunda" in a for a in argumentos_0)
+    assert "vinardo" in argumentos_0 and "vina" in argumentos_1
+    # Y las opciones siguen sin convertirse en rutas remotas.
+    assert "--scoring" in argumentos_0
+
+
+def test_el_veredicto_de_cada_tarea_es_el_suyo(ejecutor_lote, tmp_path):
+    """
+    Que una tarea falle no invalida a las demas: cada molecula tiene su propio
+    centinela y el orden de los resultados es el de las invocaciones.
+    """
+    ejec, _, _, _ = ejecutor_lote(
+        ["0", "3", "0"],
+        genera={0: {"m0_salida.json": b"{}"}, 2: {"m2_salida.json": b"{}"}})
+
+    invocaciones = [_invocacion(tmp_path, "m%d" % i) for i in range(3)]
+    resultados = ejec.ejecutar_lote(invocaciones)
+
+    assert [r["exito"] for r in resultados] == [True, False, True]
+    assert "codigo 3" in resultados[1]["error"]
+    # La que fallo no deja resultado; las otras dos si.
+    assert (tmp_path / "m0_salida.json").exists()
+    assert (tmp_path / "m2_salida.json").exists()
+    assert not (tmp_path / "m1_salida.json").exists()
+
+
+def test_los_ficheros_de_slurm_no_se_bajan_como_resultados(ejecutor_lote, tmp_path):
+    """
+    En un array los logs se llaman slurm-<array>_<tarea>.out, no
+    slurm-<job>.out. Con el nombre de un job suelto no se reconocerian y
+    acabarian en uploads/ como si fueran salidas del algoritmo.
+    """
+    ejec, _, _, _ = ejecutor_lote(["0"], genera={0: {"m0_salida.json": b"{}"}})
+
+    ejec.ejecutar_lote([_invocacion(tmp_path, "m0")])
+
+    for ruta in tmp_path.iterdir():
+        assert not ruta.name.startswith("slurm-"), ruta.name
+        assert ruta.name != "job.rc"
+        assert ruta.name != "run.sh"
+
+
+def test_un_lote_mas_grande_que_el_maximo_se_parte_en_varios(ejecutor_lote, tmp_path, monkeypatch):
+    """
+    SLURM rechaza de entrada un array por encima de MaxArraySize (1001 en el
+    bullx), y rechaza el lote ENTERO: sin partirlo, una biblioteca grande no
+    se cribaria a medias sino nada.
+    """
+    monkeypatch.setattr(slurm_executor, "_MAX_TAREAS_ARRAY", 2)
+    ejec, ssh, _, _ = ejecutor_lote(["0", "0"])
+
+    resultados = ejec.ejecutar_lote([_invocacion(tmp_path, "m%d" % i) for i in range(4)])
+
+    assert len(resultados) == 4
+    assert sum(1 for c in ssh.comandos if c.startswith("sbatch")) == 2
+
+
+def test_un_lote_vacio_no_toca_el_cluster(ejecutor_lote, tmp_path):
+    ejec, ssh, _, conexiones = ejecutor_lote([])
+
+    assert ejec.ejecutar_lote([]) == []
+    assert conexiones == []

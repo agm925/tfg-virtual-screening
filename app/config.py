@@ -130,5 +130,9 @@ SLURM_CPUS_PER_TASK   = int(os.getenv("SLURM_CPUS_PER_TASK", "1"))
 SLURM_MEM             = os.getenv("SLURM_MEM", "4G")
 SLURM_MODULES         = os.getenv("SLURM_MODULES", "")   # módulos a cargar, separados por coma (ej: "miniconda")
 SLURM_CONDA_ENV       = os.getenv("SLURM_CONDA_ENV", "")   # entorno conda a activar en el nodo remoto
+# Tareas de un job array que SLURM puede correr a la vez (el %K de
+# --array=0-N%K). 0 las deja todas sueltas, que es lo que se quiere si el
+# cluster esta libre; un valor bajo es lo educado si se comparte.
+SLURM_ARRAY_THROTTLE  = int(os.getenv("SLURM_ARRAY_THROTTLE", "0"))
 SLURM_POLL_INTERVAL   = int(os.getenv("SLURM_POLL_INTERVAL", "10"))   # segundos entre consultas a sacct
 SLURM_JOB_TIMEOUT     = int(os.getenv("SLURM_JOB_TIMEOUT", "3600"))   # segundos máx. de espera total

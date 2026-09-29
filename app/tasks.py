@@ -404,6 +404,8 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
         generados = [a for r in planos for a in (r.get("archivos") or [])]
         if resultado.get("csv_ranking"):
             generados.append(resultado["csv_ranking"])
+        if resultado.get("json_resultados"):
+            generados.append(resultado["json_resultados"])
         _registrar_resultados(db, generados, usuario_id, ejecucion_id=ejecucion_id)
 
         estado_final = resultado.get("estado", "completado")
@@ -417,6 +419,10 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
             "total_error":      resultado.get("total_error", 0),
             "tipo_score":       resultado.get("tipo_score"),
             "csv_ranking":      resultado.get("csv_ranking"),
+            # El cribado completo: todas las moleculas con sus numeros. En la
+            # base de datos solo caben las 25 primeras (abajo), asi que este
+            # fichero es el unico sitio donde esta el resultado entero.
+            "json_resultados":  resultado.get("json_resultados"),
             "base_de_datos":    resultado.get("base_de_datos"),
             "duracion_segundos": resultado.get("duracion_segundos", 0),
             "ranking":          resultado.get("ranking", [])[:25],   # solo top-25 en BD

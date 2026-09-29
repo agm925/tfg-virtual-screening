@@ -1,6 +1,8 @@
+import contextvars
 import os
 import sys
 import subprocess
+from contextlib import contextmanager
 from app.config import ALGORITMO_TIMEOUT, EXECUTION_MODE
 
 # Los algoritmos imprimen caracteres no ASCII en sus resúmenes por consola
@@ -45,6 +47,15 @@ def ejecutar_algoritmo(ruta_algoritmo: str, *archivos, flags=()) -> dict:
         - log   (str): salida estándar del script
         - error (str): mensaje de error si falla
     """
+    # El cribado en lote desvia las invocaciones para agruparlas (ver
+    # desviar_invocaciones). Si no hay desvio puesto, o el gancho decide no
+    # hacerse cargo, se sigue por donde siempre.
+    gancho = _desvio.get()
+    if gancho is not None:
+        resultado = gancho(ruta_algoritmo, archivos, flags)
+        if resultado is not None:
+            return resultado
+
     if EXECUTION_MODE == "slurm":
         return _ejecutar_en_slurm(ruta_algoritmo, *archivos, flags=flags)
     return _ejecutar_local(ruta_algoritmo, *archivos, flags=flags)
@@ -103,3 +114,53 @@ def _ejecutar_en_slurm(ruta_algoritmo: str, *archivos, flags=()) -> dict:
     from app.slurm_executor import SlurmExecutor
 
     return SlurmExecutor().ejecutar_algoritmo(ruta_algoritmo, *archivos, flags=flags)
+
+
+# ---------------------------------------------------------------------------
+# Desvio de invocaciones (lo usa el cribado en lote)
+# ---------------------------------------------------------------------------
+
+_desvio = contextvars.ContextVar("desvio_invocaciones", default=None)
+
+
+@contextmanager
+def desviar_invocaciones(gancho):
+    """
+    Mientras dure el bloque, cada ejecutar_algoritmo pasa antes por `gancho`.
+
+    `gancho(ruta_algoritmo, archivos, flags)` devuelve un resultado con el que
+    sustituir la ejecucion, o None para dejarla seguir su camino normal.
+
+    Existe por el cribado en lote. El motor de workflows ejecuta el grafo
+    molecula a molecula y no sabe nada de SLURM --ni debe--, asi que este es el
+    punto por el que BatchWorkflowExecutor puede recoger las N invocaciones,
+    mandarlas como UN job array y luego servir cada resultado sin volver a
+    tocar el cluster. La alternativa era que el camino en lote se
+    reimplementara la logica de cada tipo de nodo: dos sitios donde arreglar
+    cada cosa, y uno de los dos siempre se queda atras.
+    """
+    testigo = _desvio.set(gancho)
+    try:
+        yield
+    finally:
+        _desvio.reset(testigo)
+
+
+def ejecutar_algoritmos_en_lote(invocaciones) -> list:
+    """
+    N invocaciones independientes de una vez, en el mismo orden.
+
+    Cada invocacion es (ruta_algoritmo, archivos, flags). En modo slurm se
+    manda como UN job array --una conexion, un sbatch, una espera-- y en local
+    no hay nada que agrupar: se ejecutan en serie, exactamente como antes.
+    """
+    invocaciones = list(invocaciones)
+    if not invocaciones:
+        return []
+
+    if EXECUTION_MODE == "slurm":
+        from app.slurm_executor import SlurmExecutor
+        return SlurmExecutor().ejecutar_lote(invocaciones)
+
+    return [_ejecutar_local(ruta, *archivos, flags=flags)
+            for ruta, archivos, flags in invocaciones]

@@ -424,6 +424,20 @@ const VisualBuilder = ({ usuario }) => {
                     </button>
                   )}
 
+                  {/* El CSV es el ranking: posicion, nombre y score. Este JSON
+                      lleva TODAS las moleculas con los numeros de cada nodo
+                      --MW, LogP, HBD, Tanimoto, afinidades--, que antes solo
+                      existian repartidos en un fichero por molecula. */}
+                  {resultsPanel.json_resultados && (
+                    <button
+                      onClick={() => descargarResultado(resultsPanel.json_resultados)}
+                      className="btn-csv-download"
+                      title="Todas las moléculas con los valores calculados por cada nodo"
+                    >
+                      📥 Descargar resultados completos (JSON)
+                    </button>
+                  )}
+
                   {resultsPanel.ranking && resultsPanel.ranking.length > 0 && (
                     <div className="batch-ranking">
                       <p className="ranking-tipo">

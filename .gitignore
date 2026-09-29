@@ -30,3 +30,16 @@ htmlcov/
 Thumbs.db
 .vscode/
 .idea/
+
+# Bibliotecas descargadas (DUD-E, ZINC, ChEMBL...). Son datos, no codigo:
+# decenas de MB que se vuelven a bajar cuando hacen falta.
+*.sdf.gz
+*.mol2.gz
+*.tar.gz
+# Sondas de la validacion del sandbox (listar uploads/, salir a internet,
+# recolectar variables con secretos). Sirvieron para probar el aislamiento
+# del banco de pruebas; dentro de algoritmos/ serian parte del catalogo.
+algoritmos/test_sandbox_*.py
+
+# Documento de traspaso entre sesiones: local, y con datos de cuentas.
+CONTEXTO_SESION.md

@@ -10,7 +10,8 @@ import os
 import re
 from typing import Dict, List, Any, Tuple
 from datetime import datetime
-from app.ejecutor import ejecutar_algoritmo
+from app.ejecutor import (ejecutar_algoritmo, ejecutar_algoritmos_en_lote,
+                          desviar_invocaciones)
 
 
 def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
@@ -602,6 +603,10 @@ class BatchWorkflowExecutor:
     el workflow completo para cada una, devolviendo un ranking ordenado.
     """
 
+    # Extensiones cuyo contenido cabe dentro del JSON consolidado y por tanto
+    # no necesitan un fichero por molecula (ver _recoger_ficheros_por_molecula).
+    EXTENSIONES_DE_DATOS = {".json", ".csv"}
+
     def __init__(self, workflow_json: Dict[str, Any], usuario_id: int,
                  ejecucion_id: int = None):
         self.workflow_json = workflow_json
@@ -670,9 +675,18 @@ class BatchWorkflowExecutor:
         """
         from rdkit import Chem
         pedidos   = set(indices)
-        supplier  = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
+        # Los bloques son tramos contiguos de la lista de indices, asi que en
+        # cuanto se pasa del ultimo que pide este bloque no queda nada por
+        # encontrar. Sin este corte, CADA bloque recorria el fichero completo:
+        # con una biblioteca de un millon repartida en bloques de mil, eran mil
+        # pasadas enteras sobre varios GB, y el cribado se iba en releer en vez
+        # de en calcular.
+        ultimo     = max(pedidos) if pedidos else -1
+        supplier   = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
         moleculas = []
         for i, mol in enumerate(supplier):
+            if i > ultimo:
+                break
             if i not in pedidos or mol is None:
                 continue
             nombre_raw  = mol.GetProp("_Name").strip() if mol.HasProp("_Name") else ""
@@ -867,6 +881,343 @@ class BatchWorkflowExecutor:
             raise ValueError(f"Base de datos '{nombre_archivo}' no encontrada en uploads/")
         return nombre_archivo, ruta_sdf
 
+
+    def _preparar_molecula(self, mol_info: Dict, nodo_bd_id: str):
+        """
+        El grafo de UNA molecula: el nodo de base de datos pasa a ser un
+        selectMol que apunta a su fichero temporal.
+        """
+        workflow_mod = copy.deepcopy(self.workflow_json)
+        for nodo in workflow_mod["nodes"]:
+            if nodo["id"] == nodo_bd_id:
+                nodo["type"] = "selectMol"
+                nodo["data"]["nombre_archivo"] = os.path.basename(mol_info["ruta"])
+                break
+
+        # sufijo_extra: dentro de una misma ejecucion las N moleculas pasan por
+        # los mismos nodos, asi que el id de ejecucion solo no basta para
+        # distinguir sus salidas.
+        return WorkflowExecutor(
+            workflow_mod, self.usuario_id,
+            ejecucion_id=self.ejecucion_id,
+            sufijo_extra="m{}".format(mol_info["indice"]))
+
+    def _resultado_molecula(self, mol_info: Dict, executor, resultado: Dict) -> Dict:
+        score, tipo_score = self._extraer_score(resultado)
+        return {
+            "nombre":       mol_info["nombre"],
+            "score":        score,
+            "tipo_score":   tipo_score,
+            "exito":        resultado.get("exito", False),
+            "errores_nodo": resultado.get("errores", []),
+            "archivos":     executor.archivos_generados,
+            # Los numeros de cada nodo. Sin esto solo sobrevivia el score, y
+            # el MW/LogP/HBD de un Lipinski o el Tanimoto de una comparacion
+            # existian UNICAMENTE dentro del JSON por molecula: de ahi venia
+            # tener un fichero por molecula para poder consultarlos.
+            "detalle":      self._detalle_por_nodo(resultado),
+        }
+
+    @staticmethod
+    def _clave_invocacion(invocacion) -> tuple:
+        ruta, archivos, flags = invocacion
+        return (ruta, tuple(archivos), tuple(flags))
+
+
+    def _invocaciones_del_bloque(self, moleculas: List[Dict], nodo_bd_id: str):
+        """
+        Que invocacion de algoritmo pide cada molecula, recorriendo el grafo EN
+        SECO: las llamadas se desvian y no se ejecuta nada.
+
+        Devuelve None si alguna molecula no pide exactamente una. Con dos
+        algoritmos encadenados no sirve ni el array ni el trozo: el segundo
+        necesita la salida del primero, y aqui todo va a la vez.
+        """
+        invocaciones = []
+        for mol_info in moleculas:
+            anotadas = []
+
+            def anotar(ruta, archivos, flags, _destino=anotadas):
+                _destino.append((ruta, list(archivos), list(flags)))
+                # Se finge exito para que el resto del grafo siga su curso: lo
+                # que interesa de esta pasada es llegar al final, no el
+                # resultado, que se tira.
+                return {"exito": True, "log": "", "error": None}
+
+            with desviar_invocaciones(anotar):
+                self._preparar_molecula(mol_info, nodo_bd_id).ejecutar()
+
+            if len(anotadas) != 1:
+                return None
+            invocaciones.append(anotadas[0])
+        return invocaciones
+
+    def _segunda_pasada(self, moleculas: List[Dict], nodo_bd_id: str,
+                        calculado: Dict, on_molecula=None) -> List[Dict]:
+        """
+        Recorre el grafo de verdad, sirviendo desde `calculado` los algoritmos
+        que ya se han ejecutado.
+
+        Es lo que permite no reimplementar nada: el registro de ficheros, el
+        score y el nodo de descarga son los de siempre, porque el grafo se
+        ejecuta igual. Lo unico que cambia es de donde sale el resultado del
+        algoritmo.
+        """
+        def servir(ruta, archivos, flags):
+            # Un fallo de cuenta aqui no rompe nada: devolver None deja que esa
+            # invocacion se ejecute por su cuenta, como antes.
+            return calculado.get(self._clave_invocacion((ruta, archivos, flags)))
+
+        resultados = []
+        for mol_info in moleculas:
+            try:
+                executor = self._preparar_molecula(mol_info, nodo_bd_id)
+                with desviar_invocaciones(servir):
+                    resultado = executor.ejecutar()
+                resultados.append(
+                    self._resultado_molecula(mol_info, executor, resultado))
+            except Exception as e:  # noqa: BLE001
+                resultados.append({
+                    "nombre":       mol_info["nombre"],
+                    "score":        None,
+                    "tipo_score":   None,
+                    "exito":        False,
+                    "errores_nodo": [str(e)],
+                    "archivos":     [],
+                })
+            finally:
+                if os.path.exists(mol_info["ruta"]):
+                    os.remove(mol_info["ruta"])
+                if on_molecula is not None:
+                    on_molecula(mol_info["nombre"])
+
+        return resultados
+
+    # ------------------------------------------------------------------
+    # Troceado: UN job para el bloque entero
+    # ------------------------------------------------------------------
+
+    def _plantilla_de_trozo(self, moleculas: List[Dict], invocaciones: List):
+        """
+        Si las N invocaciones solo se diferencian en la molecula de entrada y en
+        el fichero de salida, devuelve con que llamar al algoritmo una sola vez.
+        En cualquier otro caso, None.
+
+        Se comprueba de verdad y no se da por supuesto porque las N van a
+        compartir un unico job: si una referencia o una opcion cambiara de una
+        molecula a otra, el trozo estaria calculando otra cosa. Y la salida
+        tiene que ser un JSON: de un fichero de moleculas no se puede repartir
+        por nombre lo que vuelve.
+        """
+        primera_ruta, primeros_archivos, primeros_flags = invocaciones[0]
+        if len(primeros_archivos) < 2:
+            return None
+        if os.path.splitext(primeros_archivos[-1])[1].lower() != ".json":
+            return None
+
+        # La entrada que cambia es el temporal de la molecula.
+        try:
+            posicion = primeros_archivos.index(moleculas[0]["ruta"])
+        except ValueError:
+            return None
+        if posicion == len(primeros_archivos) - 1:
+            return None            # la molecula no puede ser la salida
+
+        for mol_info, (ruta, archivos, flags) in zip(moleculas, invocaciones):
+            if ruta != primera_ruta or list(flags) != list(primeros_flags):
+                return None
+            if len(archivos) != len(primeros_archivos):
+                return None
+            if archivos[posicion] != mol_info["ruta"]:
+                return None
+            # Todo lo que no sea la molecula ni la salida tiene que coincidir.
+            for i, valor in enumerate(archivos[:-1]):
+                if i != posicion and valor != primeros_archivos[i]:
+                    return None
+
+        return {
+            "algoritmo":     primera_ruta,
+            "archivos":      list(primeros_archivos),
+            "flags":         list(primeros_flags),
+            "pos_molecula":  posicion,
+        }
+
+    def _escribir_trozo(self, moleculas: List[Dict]) -> str:
+        """Las N moleculas del bloque en un solo SDF."""
+        sufijo = "e{}_".format(self.ejecucion_id) if self.ejecucion_id else ""
+        ruta = os.path.join(
+            "uploads", "_btrozo_{}{}.sdf".format(sufijo, moleculas[0]["indice"]))
+
+        with open(ruta, "wb") as destino:
+            for mol_info in moleculas:
+                with open(mol_info["ruta"], "rb") as origen:
+                    datos = origen.read()
+                destino.write(datos)
+                # El separador es lo que distingue un SDF de varias moleculas de
+                # uno solo mal pegado. Si el fichero no lo trae, se pone: sin el,
+                # RDKit lee el trozo entero como un unico registro roto.
+                if not datos.rstrip().endswith(b"$$$$"):
+                    destino.write(b"$$$$" + bytes([10]))
+        return ruta
+
+    def _repartir_salida_del_trozo(self, ruta_salida: str, moleculas: List[Dict]):
+        """
+        (resultados por molecula en su orden, salida completa del trozo), o None
+        si lo que devolvio el algoritmo no se puede repartir.
+
+        Aqui se comprueba lo unico que no se podia saber de antemano: si el
+        algoritmo sabe tragar varias moleculas. Los que devuelven una lista en
+        "moleculas" --el contrato que ya valida el banco de pruebas al aceptar
+        un algoritmo-- si; uno que solo mire su primer argumento devolvera un
+        resultado en vez de N, y entonces se vuelve por el camino de un job por
+        molecula.
+        """
+        try:
+            with open(ruta_salida, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+        except (OSError, ValueError):
+            return None
+
+        if not isinstance(datos, dict):
+            return None
+        lista = datos.get("moleculas")
+        if not isinstance(lista, list) or len(lista) != len(moleculas):
+            return None
+
+        # Emparejar por nombre cuando los nombres bastan para distinguirlas; si
+        # no, por orden, que es el que sigue el algoritmo al recorrer el SDF.
+        por_nombre = {}
+        for entrada in lista:
+            if isinstance(entrada, dict) and entrada.get("nombre") is not None:
+                por_nombre.setdefault(entrada["nombre"], []).append(entrada)
+
+        if (len(por_nombre) == len(moleculas)
+                and all(len(v) == 1 for v in por_nombre.values())
+                and all(m["nombre"] in por_nombre for m in moleculas)):
+            return [por_nombre[m["nombre"]][0] for m in moleculas], datos
+
+        return lista, datos
+
+    @staticmethod
+    def _escribir_salida_individual(ruta: str, datos_trozo: Dict, entrada: Dict) -> None:
+        """
+        La parte del trozo que le toca a una molecula, con la misma forma que
+        tendria si se hubiera ejecutado sola.
+
+        Se escribe para que la segunda pasada del grafo no note la diferencia:
+        el nodo lee su fichero de salida como siempre y de ahi sale el score.
+        """
+        individual = {k: v for k, v in datos_trozo.items() if k != "moleculas"}
+        individual["total"] = 1
+        individual["moleculas"] = [entrada]
+        if "pass" in datos_trozo or "fail" in datos_trozo:
+            paso = str(entrada.get("estado", "")).upper() == "PASS"
+            individual["pass"] = 1 if paso else 0
+            individual["fail"] = 0 if paso else 1
+
+        directorio = os.path.dirname(ruta)
+        if directorio:
+            os.makedirs(directorio, exist_ok=True)
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(individual, f, ensure_ascii=False)
+
+    def _procesar_en_trozo(self, moleculas: List[Dict], nodo_bd_id: str,
+                           on_molecula=None):
+        """
+        Manda el bloque entero como UN job: las N moleculas en un SDF y el
+        algoritmo recorriendolo completo. Devuelve None si no se presta, y
+        entonces se intenta un job por molecula.
+
+        Es el mismo trabajo que hace una peticion suelta sobre una biblioteca, y
+        de ahi viene la medida que lo justifica: 10.000 moleculas asi tardaron
+        143 s contra el bullx, mientras que molecula a molecula son 10.000
+        transferencias y 10.000 tareas. El coste no esta en el calculo, esta en
+        el viaje.
+        """
+        if len(moleculas) < 2:
+            return None
+
+        invocaciones = self._invocaciones_del_bloque(moleculas, nodo_bd_id)
+        if invocaciones is None:
+            return None
+
+        plantilla = self._plantilla_de_trozo(moleculas, invocaciones)
+        if plantilla is None:
+            return None
+
+        ruta_trozo = None
+        ruta_salida = None
+        try:
+            ruta_trozo = self._escribir_trozo(moleculas)
+            sufijo = "e{}_".format(self.ejecucion_id) if self.ejecucion_id else ""
+            ruta_salida = os.path.join(
+                "uploads",
+                "_btrozo_{}{}_salida.json".format(sufijo, moleculas[0]["indice"]))
+
+            argumentos = list(plantilla["archivos"])
+            argumentos[plantilla["pos_molecula"]] = ruta_trozo
+            argumentos[-1] = ruta_salida
+
+            resultado = ejecutar_algoritmo(plantilla["algoritmo"], *argumentos,
+                                           flags=plantilla["flags"])
+            if not resultado.get("exito"):
+                return None
+
+            reparto = self._repartir_salida_del_trozo(ruta_salida, moleculas)
+            if reparto is None:
+                return None
+            entradas, datos_trozo = reparto
+
+            # Cada molecula recibe su parte donde el grafo la espera.
+            for invocacion, entrada in zip(invocaciones, entradas):
+                self._escribir_salida_individual(
+                    invocacion[1][-1], datos_trozo, entrada)
+
+            log = resultado.get("log") or ""
+            calculado = {self._clave_invocacion(inv): {"exito": True, "log": log,
+                                                       "error": None}
+                         for inv in invocaciones}
+            return self._segunda_pasada(moleculas, nodo_bd_id, calculado, on_molecula)
+
+        finally:
+            for ruta in (ruta_trozo, ruta_salida):
+                if ruta and os.path.exists(ruta):
+                    os.remove(ruta)
+
+    def _procesar_en_array(self, moleculas: List[Dict], nodo_bd_id: str,
+                           on_molecula=None):
+        """
+        Despacha el bloque entero como UN job array, o devuelve None si este
+        grafo no se presta y hay que ir molecula a molecula.
+
+        Por que en dos pasadas y no reimplementando aqui lo que hace cada nodo:
+        el grafo es el que sabe que algoritmo toca, con que ficheros y con que
+        opciones --y eso cambia segun el tipo de nodo--. La primera pasada lo
+        recorre EN SECO, con las llamadas al algoritmo desviadas, solo para
+        anotar que pide cada molecula. La segunda lo recorre de verdad, con los
+        resultados ya calculados servidos desde el desvio, de modo que el
+        registro de ficheros, el score y el nodo de descarga siguen siendo los
+        de siempre, sin una segunda copia que mantener.
+
+        Solo se presta un grafo con EXACTAMENTE una invocacion por molecula. Si
+        hay dos algoritmos encadenados, el segundo necesita la salida del
+        primero y las tareas de un array corren a la vez: irian con la entrada
+        sin escribir todavia.
+        """
+        if len(moleculas) < 2:
+            return None
+
+        invocaciones = self._invocaciones_del_bloque(moleculas, nodo_bd_id)
+        if invocaciones is None:
+            return None
+
+        resultados_lote = ejecutar_algoritmos_en_lote(invocaciones)
+
+        calculado = {self._clave_invocacion(inv): res
+                     for inv, res in zip(invocaciones, resultados_lote)}
+
+        return self._segunda_pasada(moleculas, nodo_bd_id, calculado, on_molecula)
+
     def procesar_bloque(self, indices: List[int], on_molecula=None,
                         debe_parar=None) -> List[Dict]:
         """
@@ -884,6 +1235,21 @@ class BatchWorkflowExecutor:
         nodo_bd_id = self._encontrar_nodo_bd()["id"]
 
         moleculas = self.extraer_moleculas(ruta_sdf, indices)
+
+        # Tres caminos, del mas barato al mas caro, y cada uno devuelve None
+        # cuando el grafo no se presta:
+        #
+        #   1. Un job para el bloque entero, con las N moleculas en un SDF.
+        #      Pide que el algoritmo sepa recorrer varias.
+        #   2. Un job array, una tarea por molecula. Una conexion y una
+        #      espera, pero N transferencias.
+        #   3. Molecula a molecula, que es como estaba.
+        if debe_parar is None or not debe_parar():
+            for camino in (self._procesar_en_trozo, self._procesar_en_array):
+                resultados = camino(moleculas, nodo_bd_id, on_molecula=on_molecula)
+                if resultados is not None:
+                    return resultados
+
         resultados = []
 
         for mol_info in moleculas:
@@ -894,32 +1260,10 @@ class BatchWorkflowExecutor:
                         os.remove(pendiente["ruta"])
                 break
             try:
-                # Reemplazar selectDB -> selectMol apuntando al fichero temporal
-                workflow_mod = copy.deepcopy(self.workflow_json)
-                for nodo in workflow_mod["nodes"]:
-                    if nodo["id"] == nodo_bd_id:
-                        nodo["type"] = "selectMol"
-                        nodo["data"]["nombre_archivo"] = os.path.basename(mol_info["ruta"])
-                        break
-
-                # sufijo_extra: dentro de una misma ejecucion las N moleculas
-                # pasan por los mismos nodos, asi que el id de ejecucion solo
-                # no basta para distinguir sus salidas.
-                executor = WorkflowExecutor(
-                    workflow_mod, self.usuario_id,
-                    ejecucion_id=self.ejecucion_id,
-                    sufijo_extra=f"m{mol_info['indice']}")
+                executor = self._preparar_molecula(mol_info, nodo_bd_id)
                 resultado = executor.ejecutar()
-
-                score, tipo_score = self._extraer_score(resultado)
-                resultados.append({
-                    "nombre":       mol_info["nombre"],
-                    "score":        score,
-                    "tipo_score":   tipo_score,
-                    "exito":        resultado.get("exito", False),
-                    "errores_nodo": resultado.get("errores", []),
-                    "archivos":     executor.archivos_generados,
-                })
+                resultados.append(
+                    self._resultado_molecula(mol_info, executor, resultado))
             except Exception as e:
                 resultados.append({
                     "nombre":       mol_info["nombre"],
@@ -936,6 +1280,70 @@ class BatchWorkflowExecutor:
                     on_molecula(mol_info["nombre"])
 
         return resultados
+
+
+    @staticmethod
+    def _detalle_por_nodo(resultado: Dict) -> Dict:
+        """
+        Lo que ha calculado cada nodo para esta molecula, sin los logs.
+
+        Se toma `resultado_json` --y `energias` en el docking, que lo escribe
+        aparte-- y no el nodo entero a proposito: ahi dentro tambien viaja la
+        salida por consola del algoritmo, que multiplicada por las moleculas de
+        una biblioteca es la diferencia entre un fichero manejable y uno que no
+        se puede abrir.
+        """
+        detalle = {}
+        for nodo_id, nodo_res in (resultado.get("resultados") or {}).items():
+            if not isinstance(nodo_res, dict):
+                continue
+            datos = nodo_res.get("resultado_json") or {}
+            if not datos and isinstance(nodo_res.get("energias"), dict):
+                datos = nodo_res["energias"]
+            if datos:
+                detalle[nodo_id] = {"tipo": nodo_res.get("tipo"), "datos": datos}
+        return detalle
+
+    @classmethod
+    def _recoger_ficheros_por_molecula(cls, nombres: List[str]) -> List[str]:
+        """
+        Borra los ficheros de datos de UNA molecula y devuelve los que quedan.
+
+        Su contenido acaba de copiarse al JSON consolidado, asi que conservarlos
+        es tener la misma cifra en dos sitios y, en una biblioteca de verdad,
+        un fichero y una fila en `archivos` por molecula: diez mil moleculas
+        eran diez mil de cada.
+
+        Lo que lleva estructura --poses de un docking, una alineacion-- NO se
+        borra: eso no cabe dentro de un JSON y es el resultado en si, no una
+        forma de consultarlo.
+        """
+        supervivientes = []
+        for nombre in nombres:
+            if os.path.splitext(nombre)[1].lower() in cls.EXTENSIONES_DE_DATOS:
+                ruta = os.path.join("uploads", nombre)
+                if os.path.exists(ruta):
+                    os.remove(ruta)
+                continue
+            supervivientes.append(nombre)
+        return supervivientes
+
+    def _generar_json_resultados(self, resumen: Dict, moleculas: List[Dict],
+                                 nombre_bd: str) -> str:
+        """
+        El cribado entero en un fichero: el resumen y TODAS las moleculas con
+        sus numeros, no solo las 25 del ranking que se guardan en la base de
+        datos.
+        """
+        sufijo = "_e{}".format(self.ejecucion_id) if self.ejecucion_id else ""
+        nombre = "resultados_{}{}_{}.json".format(
+            os.path.splitext(nombre_bd)[0], sufijo,
+            datetime.utcnow().strftime("%Y%m%d_%H%M%S"))
+
+        with open(os.path.join("uploads", nombre), "w", encoding="utf-8") as f:
+            json.dump({"resumen": resumen, "moleculas": moleculas}, f,
+                      ensure_ascii=False, indent=2)
+        return nombre
 
     def consolidar(self, resultados: List[Dict], nombre_bd: str,
                    total_moleculas: int, duracion: float) -> Dict[str, Any]:
@@ -962,7 +1370,13 @@ class BatchWorkflowExecutor:
         ranking  = validos + invalidos
         ruta_csv = self._generar_csv(ranking, nombre_bd, tipo_score_global)
 
-        return {
+        # El resultado del cribado es UN fichero, no uno por molecula: los de
+        # datos se borran una vez su contenido esta en el JSON consolidado.
+        for molecula in ranking:
+            molecula["archivos"] = self._recoger_ficheros_por_molecula(
+                molecula.get("archivos") or [])
+
+        resumen = {
             "modo":             "batch",
             "estado":           "completado" if validos else "error",
             "exito":            len(validos) > 0,
@@ -970,11 +1384,15 @@ class BatchWorkflowExecutor:
             "total_exito":      len(validos),
             "total_error":      len(invalidos),
             "tipo_score":       tipo_score_global,
-            "ranking":          ranking,
-            "csv_ranking":      ruta_csv,
             "base_de_datos":    nombre_bd,
             "duracion_segundos": duracion,
         }
+        nombre_json = self._generar_json_resultados(resumen, ranking, nombre_bd)
+
+        return dict(resumen,
+                    ranking=ranking,
+                    csv_ranking=ruta_csv,
+                    json_resultados=nombre_json)
 
     def ejecutar_batch(self, on_progreso=None) -> Dict[str, Any]:
         inicio = datetime.utcnow()
