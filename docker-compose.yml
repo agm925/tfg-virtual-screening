@@ -84,6 +84,13 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./algoritmos:/app/algoritmos
+      # Credenciales del cluster, en solo lectura y en un directorio aparte.
+      # El entrypoint las instala en /root/.ssh con los permisos que exige
+      # SSH (600): un bind mount desde Windows llega con permisos que el
+      # cliente ssh rechaza por demasiado abiertos, y /root/.ssh no puede
+      # montarse de solo lectura porque el propio entrypoint escribe ahi.
+      # En modo local el directorio puede estar vacio: no se usa.
+      - ${SLURM_SSH_DIR:-./secrets/ssh}:/ssh_ro:ro
       # Solo el socket del sandbox. El banco no ve ninguno de los otros dos.
       - banco_sock:/sock
     ports:
@@ -111,6 +118,13 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./algoritmos:/app/algoritmos
+      # Credenciales del cluster, en solo lectura y en un directorio aparte.
+      # El entrypoint las instala en /root/.ssh con los permisos que exige
+      # SSH (600): un bind mount desde Windows llega con permisos que el
+      # cliente ssh rechaza por demasiado abiertos, y /root/.ssh no puede
+      # montarse de solo lectura porque el propio entrypoint escribe ahi.
+      # En modo local el directorio puede estar vacio: no se usa.
+      - ${SLURM_SSH_DIR:-./secrets/ssh}:/ssh_ro:ro
     depends_on:
       db:
         condition: service_healthy

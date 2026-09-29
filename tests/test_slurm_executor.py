@@ -17,14 +17,22 @@ se descubren hasta estar ejecutando en el bullx y mirando resultados raros:
      escribe por su cuenta se quedaba en el cluster. El motor no lo encontraba
      y seguia con energias={}, y de ahi sale el score del cribado por lotes:
      el ranking habria salido entero a null.
+
+  3. El estado del job se sondeaba con `sacct`, que necesita slurmdbd. El
+     bullx no lo tiene levantado, asi que ahi no contesta nunca: todo job
+     terminaba en TimeoutError al agotar SLURM_JOB_TIMEOUT. Ahora se pregunta
+     a squeue y scontrol, que los sirve slurmctld, con el codigo de salida
+     que el propio sbatch deja escrito como ultimo recurso.
 """
 import os
 import shlex
 import stat
 from types import SimpleNamespace
 
+import paramiko
 import pytest
 
+from app import slurm_executor
 from app.slurm_executor import SlurmExecutor
 
 MODO_FICHERO_REGULAR = stat.S_IFREG | 0o644
@@ -115,12 +123,25 @@ class FakeSSH:
         self._sftp = sftp
         self.comandos = []
         self.remote_dir = None
+        # Codigo con el que "termina" el algoritmo dentro del job.
+        self.codigo_salida_job = 0
+        # Respuestas al sondeo de estado, como (salida, error, codigo). Por
+        # defecto se imita al bullx: el job ya salio de la cola y quien
+        # contesta es scontrol, porque alli no hay contabilidad que consultar.
+        self.respuestas_squeue = [("", "", 0)]
+        self.respuestas_scontrol = [("JobId=12345 JobState=COMPLETED", "", 0)]
+
+    def _siguiente(self, respuestas):
+        """La ultima respuesta se repite: el sondeo puede preguntar mas veces
+        de las que el test haya previsto."""
+        return respuestas[0] if len(respuestas) == 1 else respuestas.pop(0)
 
     def open_sftp(self):
         return self._sftp
 
     def exec_command(self, comando):
         self.comandos.append(comando)
+        error, codigo = "", 0
 
         if comando.startswith("mkdir -p"):
             self.remote_dir = comando.split(" ", 2)[2].strip("'\"")
@@ -130,15 +151,24 @@ class FakeSSH:
             self._sftp.sembrar_salida_del_job(self.remote_dir)
             self._sftp.remotos[f"{self.remote_dir}/slurm-12345.out"] = b"log del job"
             self._sftp.remotos[f"{self.remote_dir}/slurm-12345.err"] = b""
+            # El centinela que escribe el propio sbatch con su codigo de salida.
+            self._sftp.remotos[f"{self.remote_dir}/job.rc"] = (
+                f"{self.codigo_salida_job}\n".encode())
             salida = "Submitted batch job 12345"
-        elif comando.startswith("sacct"):
-            salida = "COMPLETED\n"
+        elif comando.startswith("squeue"):
+            salida, error, codigo = self._siguiente(self.respuestas_squeue)
+        elif comando.startswith("scontrol show job"):
+            salida, error, codigo = self._siguiente(self.respuestas_scontrol)
+        elif comando.startswith("cat "):
+            contenido = self._sftp.remotos.get(shlex.split(comando)[1])
+            salida = "" if contenido is None else contenido.decode()
+            codigo = 1 if contenido is None else 0
         else:
             salida = ""
 
-        canal = SimpleNamespace(recv_exit_status=lambda: 0)
+        canal = SimpleNamespace(recv_exit_status=lambda: codigo)
         stdout = SimpleNamespace(read=lambda: salida.encode(), channel=canal)
-        stderr = SimpleNamespace(read=lambda: b"")
+        stderr = SimpleNamespace(read=lambda: error.encode())
         return None, stdout, stderr
 
     def close(self):
@@ -288,7 +318,7 @@ def test_no_se_traen_ni_el_script_ni_el_sbatch_ni_los_logs_de_slurm(ejecutor, tm
 
     ejec.ejecutar_algoritmo(str(script), str(entrada), str(salida))
 
-    for no_deseado in ("job.sbatch", "slurm-12345.out", "slurm-12345.err"):
+    for no_deseado in ("job.sbatch", "slurm-12345.out", "slurm-12345.err", "job.rc"):
         assert not (tmp_path / no_deseado).exists(), f"{no_deseado} no debia bajarse"
     # Y el script del algoritmo no debe volver pisando el original.
     assert script.read_bytes() == b"print('hola')"
@@ -321,3 +351,188 @@ def test_un_extra_que_no_se_puede_traer_no_tumba_el_job(ejecutor, tmp_path, monk
     assert resultado["exito"] is True
     assert "extra_que_falla.json" in resultado["log"]
     assert salida.read_bytes() == b"resultado"
+
+
+# ---------------------------------------------------------------------------
+# 6. De donde sale el estado del job
+# ---------------------------------------------------------------------------
+
+
+def _correr(ejec, tmp_path):
+    """Un job cualquiera: aqui lo que se mira es el sondeo, no los ficheros."""
+    entrada = tmp_path / "entrada.sdf"
+    entrada.write_bytes(b"molecula")
+    return ejec.ejecutar_algoritmo(
+        str(tmp_path / "algo.py"), str(entrada), str(tmp_path / "salida.sdf"))
+
+
+def test_nunca_se_le_pregunta_a_sacct(ejecutor, tmp_path):
+    """
+    El sondeo usaba `sacct`, que depende de slurmdbd: un servicio opcional
+    que el bullx no tiene levantado. Alli contesta "Problem talking to the
+    database: Connection refused", asi que el estado no llegaba nunca y todo
+    job acababa en TimeoutError... cuatro horas despues, que es lo que vale
+    SLURM_JOB_TIMEOUT. squeue y scontrol los sirve el propio slurmctld.
+    """
+    ejec, ssh, _ = ejecutor(genera_al_terminar={"salida.sdf": b"resultado"})
+
+    assert _correr(ejec, tmp_path)["exito"] is True
+    assert not any(c.startswith("sacct") for c in ssh.comandos)
+
+
+def test_mientras_el_job_sigue_en_la_cola_manda_squeue(ejecutor, tmp_path):
+    ejec, ssh, _ = ejecutor(genera_al_terminar={"salida.sdf": b"resultado"})
+    ejec.poll_interval = 0
+    ssh.respuestas_squeue = [("PENDING", "", 0), ("RUNNING", "", 0), ("", "", 0)]
+
+    assert _correr(ejec, tmp_path)["exito"] is True
+
+    # Tres sondeos: los dos primeros los resuelve la cola y solo el tercero,
+    # cuando el job ya no esta en ella, baja a preguntarle a scontrol.
+    assert sum(1 for c in ssh.comandos if c.startswith("squeue")) == 3
+    assert sum(1 for c in ssh.comandos if c.startswith("scontrol")) == 1
+
+
+def test_si_slurm_ya_no_conoce_el_job_decide_el_centinela(ejecutor, tmp_path):
+    """
+    slurmctld solo recuerda un job terminado durante MinJobAge (300 s por
+    defecto). Si el worker se queda sin preguntar mas tiempo del que dura esa
+    memoria --una desconexion larga, por ejemplo-- ni la cola ni scontrol
+    saben ya nada, y lo unico que queda en el nodo es el codigo de salida que
+    el propio sbatch dejo escrito.
+    """
+    desconocido = ("", "slurm_load_jobs error: Invalid job id specified", 1)
+    ejec, ssh, _ = ejecutor(genera_al_terminar={"salida.sdf": b"resultado"})
+    ssh.respuestas_squeue = [desconocido]
+    ssh.respuestas_scontrol = [desconocido]
+
+    assert _correr(ejec, tmp_path)["exito"] is True
+    assert any(c.startswith("cat ") for c in ssh.comandos)
+
+
+def test_el_centinela_tambien_delata_al_job_que_fallo(ejecutor, tmp_path):
+    desconocido = ("", "slurm_load_jobs error: Invalid job id specified", 1)
+    ejec, ssh, _ = ejecutor(genera_al_terminar={"salida.sdf": b"resultado"})
+    ssh.respuestas_squeue = [desconocido]
+    ssh.respuestas_scontrol = [desconocido]
+    ssh.codigo_salida_job = 3
+
+    assert _correr(ejec, tmp_path)["exito"] is False
+
+
+def test_un_fallo_pasajero_de_squeue_no_se_toma_por_un_job_fallado(ejecutor, tmp_path):
+    """
+    Un corte de red o un slurmctld ocupado no pueden confundirse con "el job
+    ha fallado": eso daria por perdida una peticion que va perfectamente. Se
+    distingue por lo que dice el error, no por el codigo de salida.
+    """
+    ejec, ssh, _ = ejecutor(genera_al_terminar={"salida.sdf": b"resultado"})
+    ejec.poll_interval = 0
+    ssh.respuestas_squeue = [
+        ("", "slurm_load_jobs error: Unable to contact slurm controller", 1),
+        ("", "", 0),
+    ]
+
+    assert _correr(ejec, tmp_path)["exito"] is True
+    # El sondeo fallido ni siquiera llega a consultar a scontrol: espera y
+    # vuelve a preguntar.
+    assert sum(1 for c in ssh.comandos if c.startswith("scontrol")) == 1
+
+
+# ---------------------------------------------------------------------------
+# 7. Reintentos de conexion
+# ---------------------------------------------------------------------------
+
+
+def _paramiko_falso(monkeypatch, errores):
+    """
+    Sustituye paramiko.SSHClient por uno que levanta, por orden, los errores de
+    `errores`, y conecta bien cuando se le acaban. Devuelve la lista de
+    intentos, que es lo que miden estos tests.
+    """
+    intentos = []
+
+    class ClienteFalso:
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, _politica):
+            pass
+
+        def close(self):
+            pass
+
+        def connect(self, **kwargs):
+            intentos.append(kwargs)
+            if len(intentos) <= len(errores):
+                raise errores[len(intentos) - 1]
+
+    monkeypatch.setattr(slurm_executor.paramiko, "SSHClient", ClienteFalso)
+    monkeypatch.setattr(slurm_executor.time, "sleep", lambda _s: None)
+    return intentos
+
+
+def _ejecutor_configurado():
+    ejec = SlurmExecutor()
+    ejec.user = "agm925"
+    ejec.key_path = "/root/.ssh/id_rsa_ual"
+    return ejec
+
+
+def _clave(nombre):
+    return SimpleNamespace(get_base64=lambda: nombre)
+
+
+def test_un_saludo_rechazado_por_sshd_se_reintenta(monkeypatch):
+    """
+    El cribado abre una conexion por molecula y las lanza a la vez. sshd corta
+    las que pasan de MaxStartups, y contra el bullx eso ya se vio: con 11
+    moleculas en paralelo, una acabo en el ranking como fallida con "Error
+    reading SSH protocol banner" sin tener nada de malo.
+    """
+    intentos = _paramiko_falso(monkeypatch, [
+        paramiko.SSHException("Error reading SSH protocol banner"),
+        paramiko.SSHException("Error reading SSH protocol banner"),
+    ])
+
+    _ejecutor_configurado()._conectar()
+
+    assert len(intentos) == 3, "deberia haber reintentado hasta conectar"
+
+
+def test_una_clave_de_host_que_no_cuadra_no_se_reintenta(monkeypatch):
+    """
+    Insistir aqui seria justo lo contrario de lo que se quiere: esa excepcion
+    es la senal que RejectPolicy existe para dar.
+    """
+    intentos = _paramiko_falso(monkeypatch, [
+        paramiko.BadHostKeyException("bullxual", _clave("otra"), _clave("la buena")),
+    ])
+
+    with pytest.raises(paramiko.BadHostKeyException):
+        _ejecutor_configurado()._conectar()
+
+    assert len(intentos) == 1
+
+
+def test_unas_credenciales_que_no_valen_no_se_reintentan(monkeypatch):
+    intentos = _paramiko_falso(monkeypatch, [
+        paramiko.AuthenticationException("Authentication failed."),
+    ])
+
+    with pytest.raises(paramiko.AuthenticationException):
+        _ejecutor_configurado()._conectar()
+
+    assert len(intentos) == 1
+
+
+def test_si_no_hay_manera_el_error_dice_cuantos_intentos_se_hicieron(monkeypatch):
+    """Que el mensaje distinga "no contesta" de "contesta y rechaza"."""
+    intentos = _paramiko_falso(monkeypatch, [
+        paramiko.SSHException("Error reading SSH protocol banner")] * 10)
+
+    with pytest.raises(ConnectionError) as error:
+        _ejecutor_configurado()._conectar()
+
+    assert len(intentos) == slurm_executor._INTENTOS_CONEXION
+    assert "4 intentos" in str(error.value)
