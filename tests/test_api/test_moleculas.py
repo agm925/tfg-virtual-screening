@@ -296,3 +296,33 @@ def test_registrar_resultados_marca_tipo_resultado(client, db_session, usuario_a
     assert archivo is not None
     assert archivo.tipo == models.TipoArchivo.resultado
     assert archivo.visibilidad == models.VisibilidadArchivo.resultado
+
+
+
+def test_subir_una_biblioteca_deja_su_indice_y_borrarla_lo_quita(client, usuario_autenticado):
+    """
+    El indice de posiciones se construye al subir (ver app/indice_sdf.py), que
+    es cuando el fichero ya se esta leyendo entero para contar sus moleculas.
+    Y se va con el fichero: un indice huerfano no hace dano, pero es basura en
+    uploads/.indices/.
+    """
+    import os
+
+    from app import indice_sdf
+
+    respuesta = client.post(
+        "/moleculas/subir",
+        data={"tipo": "base_de_datos"},
+        files={"archivo": ("test_indice_bd.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
+        headers=usuario_autenticado["headers"],
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    nombre = respuesta.json()["nombre"]
+    ruta = os.path.join("uploads", nombre)
+
+    assert os.path.exists(indice_sdf.ruta_indice(ruta))
+    assert len(indice_sdf.cargar(ruta)) - 1 == 2
+
+    borrado = client.delete(f"/moleculas/{nombre}", headers=usuario_autenticado["headers"])
+    assert borrado.status_code == 200, borrado.text
+    assert not os.path.exists(indice_sdf.ruta_indice(ruta))

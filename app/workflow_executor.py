@@ -642,24 +642,32 @@ class BatchWorkflowExecutor:
         biblioteca entera solo para contarla era justamente el problema que
         tenia el metodo anterior: un SDF de 100.000 compuestos creaba 100.000
         ficheros temporales de golpe en uploads/.
+
+        Los registros se numeran por sus separadores, con el indice de
+        app/indice_sdf.py, y no por lo que devuelve RDKit al iterar: ante un
+        registro malformado RDKit se salta separadores, y a partir de ahi sus
+        numeros ya no son las posiciones del fichero. Con la numeracion por
+        separadores un registro corrupto es simplemente uno que no se deja
+        leer, en su sitio, y el resto sigue donde estaba. Es la misma que
+        usan extraer_moleculas y el camino troceado: mezclar dos numeraciones
+        mandaria al cluster moleculas que no son las del bloque.
         """
         from rdkit import Chem
 
-        from app.formatos import contar_moleculas_sdf
+        from app import indice_sdf
 
-        supplier = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
-        indices = [i for i, mol in enumerate(supplier) if mol is not None]
-
-        # El total se cuenta por separadores ($$$$), no por lo que itere el
-        # supplier. Ante un registro malformado RDKit salta al siguiente
-        # separador y por el camino se come alguno, de modo que su recuento ya
-        # viene mermado: sobre un fichero de 5 registros con 2 corruptos
-        # iteraba 3, y el informe habria dicho "2 sin leer" en vez de 4.
-        # Ademas es el mismo criterio con el que se conto `num_moleculas` al
-        # subir la biblioteca, asi que el cribado y el listado de Moleculas
-        # dicen la misma cifra.
-        total = contar_moleculas_sdf(ruta_sdf)
-        return indices, max(total, len(indices))
+        limites = indice_sdf.obtener(ruta_sdf)
+        total = len(limites) - 1
+        indices = []
+        with open(ruta_sdf, "rb") as f:
+            for i in range(total):
+                registro = indice_sdf.leer_registro(f, limites, i)
+                mol = Chem.MolFromMolBlock(
+                    registro.decode("utf-8", errors="replace"),
+                    sanitize=False, removeHs=False)
+                if mol is not None:
+                    indices.append(i)
+        return indices, total
 
     @staticmethod
     def indices_validos(ruta_sdf: str) -> List[int]:
@@ -672,34 +680,29 @@ class BatchWorkflowExecutor:
 
         Cada subtarea extrae su propio bloque, asi que en ningun momento hay
         mas ficheros temporales que los del bloque en curso.
+
+        Salta directamente a cada registro con el indice del fichero (ver
+        app/indice_sdf.py) y copia sus bytes tal cual, sin pasar por RDKit:
+        ni se recorre lo que hay antes del bloque ni se reescribe la molecula.
         """
-        from rdkit import Chem
-        pedidos   = set(indices)
-        # Los bloques son tramos contiguos de la lista de indices, asi que en
-        # cuanto se pasa del ultimo que pide este bloque no queda nada por
-        # encontrar. Sin este corte, CADA bloque recorria el fichero completo:
-        # con una biblioteca de un millon repartida en bloques de mil, eran mil
-        # pasadas enteras sobre varios GB, y el cribado se iba en releer en vez
-        # de en calcular.
-        ultimo     = max(pedidos) if pedidos else -1
-        supplier   = Chem.SDMolSupplier(ruta_sdf, removeHs=False, sanitize=False)
+        from app import indice_sdf
+
+        limites = indice_sdf.obtener(ruta_sdf)
+        # El id de ejecucion en el nombre evita que dos ejecuciones
+        # concurrentes del mismo flujo se pisen los temporales.
+        sufijo = f"e{self.ejecucion_id}_" if self.ejecucion_id else ""
         moleculas = []
-        for i, mol in enumerate(supplier):
-            if i > ultimo:
-                break
-            if i not in pedidos or mol is None:
-                continue
-            nombre_raw  = mol.GetProp("_Name").strip() if mol.HasProp("_Name") else ""
-            nombre      = nombre_raw if nombre_raw else f"mol_{i + 1}"
-            nombre_safe = re.sub(r"[^\w\-]", "_", nombre)[:40]
-            # El id de ejecucion en el nombre evita que dos ejecuciones
-            # concurrentes del mismo flujo se pisen los temporales.
-            sufijo    = f"e{self.ejecucion_id}_" if self.ejecucion_id else ""
-            ruta_temp = os.path.join("uploads", f"_btmp_{sufijo}{nombre_safe}_{i}.sdf")
-            writer = Chem.SDWriter(ruta_temp)
-            writer.write(mol)
-            writer.close()
-            moleculas.append({"nombre": nombre, "ruta": ruta_temp, "indice": i})
+        with open(ruta_sdf, "rb") as f:
+            for i in sorted(set(indices)):
+                if not 0 <= i < len(limites) - 1:
+                    continue
+                registro = indice_sdf.leer_registro(f, limites, i)
+                nombre = indice_sdf.titulo(registro) or f"mol_{i + 1}"
+                nombre_safe = re.sub(r"[^\w\-]", "_", nombre)[:40]
+                ruta_temp = os.path.join("uploads", f"_btmp_{sufijo}{nombre_safe}_{i}.sdf")
+                with open(ruta_temp, "wb") as destino:
+                    destino.write(indice_sdf.terminado(registro))
+                moleculas.append({"nombre": nombre, "ruta": ruta_temp, "indice": i})
         return moleculas
 
     def _split_sdf(self, ruta_sdf: str) -> List[Dict]:
@@ -997,115 +1000,111 @@ class BatchWorkflowExecutor:
     # Troceado: UN job para el bloque entero
     # ------------------------------------------------------------------
 
-    def _plantilla_de_trozo(self, moleculas: List[Dict], invocaciones: List):
+    # Titulo con el que viaja cada molecula dentro del trozo (ver _escribir_trozo).
+    ETIQUETA_TROZO = "TFGMOL_{}"
+
+    def _escribir_trozo(self, ruta_sdf: str, indices: List[int]):
         """
-        Si las N invocaciones solo se diferencian en la molecula de entrada y en
-        el fichero de salida, devuelve con que llamar al algoritmo una sola vez.
-        En cualquier otro caso, None.
+        Las moleculas del bloque en un solo SDF, y quien es quien dentro de el.
 
-        Se comprueba de verdad y no se da por supuesto porque las N van a
-        compartir un unico job: si una referencia o una opcion cambiara de una
-        molecula a otra, el trozo estaria calculando otra cosa. Y la salida
-        tiene que ser un JSON: de un fichero de moleculas no se puede repartir
-        por nombre lo que vuelve.
+        Se copian los bytes de cada registro con el indice del fichero: sin
+        RDKit y sin un fichero por molecula. Lo unico que se toca es el titulo.
+        Cada registro viaja con una etiqueta unica, TFGMOL_<indice>, y su nombre
+        real se guarda aqui, para emparejar cada resultado con su molecula sin
+        ambiguedad aunque la biblioteca traiga nombres repetidos o vacios.
+        filtroLipinski, por ejemplo, nombra por posicion a las que no tienen
+        nombre, y con huecos por registros ilegibles esa posicion ya no seria la
+        del bloque. El titulo es solo una etiqueta: la quimica no cambia.
         """
-        primera_ruta, primeros_archivos, primeros_flags = invocaciones[0]
-        if len(primeros_archivos) < 2:
-            return None
-        if os.path.splitext(primeros_archivos[-1])[1].lower() != ".json":
-            return None
+        from app import indice_sdf
 
-        # La entrada que cambia es el temporal de la molecula.
-        try:
-            posicion = primeros_archivos.index(moleculas[0]["ruta"])
-        except ValueError:
-            return None
-        if posicion == len(primeros_archivos) - 1:
-            return None            # la molecula no puede ser la salida
-
-        for mol_info, (ruta, archivos, flags) in zip(moleculas, invocaciones):
-            if ruta != primera_ruta or list(flags) != list(primeros_flags):
-                return None
-            if len(archivos) != len(primeros_archivos):
-                return None
-            if archivos[posicion] != mol_info["ruta"]:
-                return None
-            # Todo lo que no sea la molecula ni la salida tiene que coincidir.
-            for i, valor in enumerate(archivos[:-1]):
-                if i != posicion and valor != primeros_archivos[i]:
-                    return None
-
-        return {
-            "algoritmo":     primera_ruta,
-            "archivos":      list(primeros_archivos),
-            "flags":         list(primeros_flags),
-            "pos_molecula":  posicion,
-        }
-
-    def _escribir_trozo(self, moleculas: List[Dict]) -> str:
-        """Las N moleculas del bloque en un solo SDF."""
+        limites = indice_sdf.obtener(ruta_sdf)
         sufijo = "e{}_".format(self.ejecucion_id) if self.ejecucion_id else ""
-        ruta = os.path.join(
-            "uploads", "_btrozo_{}{}.sdf".format(sufijo, moleculas[0]["indice"]))
+        ruta = os.path.join("uploads", "_btrozo_{}{}.sdf".format(sufijo, indices[0]))
 
-        with open(ruta, "wb") as destino:
-            for mol_info in moleculas:
-                with open(mol_info["ruta"], "rb") as origen:
-                    datos = origen.read()
-                destino.write(datos)
-                # El separador es lo que distingue un SDF de varias moleculas de
-                # uno solo mal pegado. Si el fichero no lo trae, se pone: sin el,
-                # RDKit lee el trozo entero como un unico registro roto.
-                if not datos.rstrip().endswith(b"$$$$"):
-                    destino.write(b"$$$$" + bytes([10]))
-        return ruta
+        moleculas = []
+        with open(ruta_sdf, "rb") as origen, open(ruta, "wb") as destino:
+            for i in indices:
+                registro = indice_sdf.leer_registro(origen, limites, i)
+                etiqueta = self.ETIQUETA_TROZO.format(i)
+                moleculas.append({
+                    "indice":   i,
+                    "nombre":   indice_sdf.titulo(registro) or "mol_{}".format(i + 1),
+                    "etiqueta": etiqueta,
+                })
+                destino.write(indice_sdf.terminado(indice_sdf.con_titulo(registro, etiqueta)))
+        return ruta, moleculas
 
-    def _repartir_salida_del_trozo(self, ruta_salida: str, moleculas: List[Dict]):
+    def _invocacion_del_trozo(self, ruta_trozo: str, nodo_bd_id: str, sufijo: str):
         """
-        (resultados por molecula en su orden, salida completa del trozo), o None
-        si lo que devolvio el algoritmo no se puede repartir.
+        La invocacion que pide el grafo con el trozo entero como molecula,
+        recorriendolo EN SECO, o None si no se presta a ir en un solo job.
 
-        Aqui se comprueba lo unico que no se podia saber de antemano: si el
-        algoritmo sabe tragar varias moleculas. Los que devuelven una lista en
-        "moleculas" --el contrato que ya valida el banco de pruebas al aceptar
-        un algoritmo-- si; uno que solo mire su primer argumento devolvera un
-        resultado en vez de N, y entonces se vuelve por el camino de un job por
-        molecula.
+        Hace falta que haya exactamente una --con dos algoritmos encadenados el
+        segundo necesita la salida del primero--, que el trozo sea una de sus
+        entradas y solo una, y que la salida sea un JSON: de un fichero de
+        moleculas no se puede repartir por nombre lo que le toca a cada una.
         """
-        try:
-            with open(ruta_salida, "r", encoding="utf-8") as f:
-                datos = json.load(f)
-        except (OSError, ValueError):
+        anotadas = []
+
+        def anotar(ruta, archivos, flags):
+            anotadas.append((ruta, list(archivos), list(flags)))
+            return {"exito": True, "log": "", "error": None}
+
+        with desviar_invocaciones(anotar):
+            self._preparar_molecula({"ruta": ruta_trozo, "indice": sufijo},
+                                    nodo_bd_id).ejecutar()
+
+        if len(anotadas) != 1:
+            return None
+        _, archivos, _ = anotadas[0]
+        if len(archivos) < 2 or os.path.splitext(archivos[-1])[1].lower() != ".json":
+            return None
+        if archivos[:-1].count(ruta_trozo) != 1:
+            return None
+        return anotadas[0]
+
+    def _emparejar_trozo(self, datos_trozo, moleculas: List[Dict]):
+        """
+        {indice: su entrada en el JSON del trozo, o None si no vino}, o None si
+        lo devuelto no se puede repartir.
+
+        Se empareja por la etiqueta con la que viajo cada molecula. Si el
+        algoritmo no la conserva --pone sus propios nombres-- pero devolvio
+        tantas entradas como moleculas, se empareja por orden, que es el que
+        sigue al recorrer el SDF.
+
+        Una sola entrada para varias moleculas es la firma de un algoritmo que
+        solo mira la primera: eso no vale y el bloque vuelve por el camino de
+        una tarea por molecula. Lo que si se acepta es que falten algunas --una
+        molecula que el algoritmo no consiguio procesar--: esas se dan por
+        fallidas una a una, en vez de mandar el bloque entero por el camino
+        lento por culpa de una.
+        """
+        lista = datos_trozo.get("moleculas") if isinstance(datos_trozo, dict) else None
+        if not isinstance(lista, list) or not lista:
+            return None
+        if len(lista) == 1 and len(moleculas) > 1:
             return None
 
-        if not isinstance(datos, dict):
-            return None
-        lista = datos.get("moleculas")
-        if not isinstance(lista, list) or len(lista) != len(moleculas):
-            return None
-
-        # Emparejar por nombre cuando los nombres bastan para distinguirlas; si
-        # no, por orden, que es el que sigue el algoritmo al recorrer el SDF.
-        por_nombre = {}
+        etiquetas = {m["etiqueta"]: m["indice"] for m in moleculas}
+        por_indice = {}
         for entrada in lista:
-            if isinstance(entrada, dict) and entrada.get("nombre") is not None:
-                por_nombre.setdefault(entrada["nombre"], []).append(entrada)
+            if isinstance(entrada, dict) and entrada.get("nombre") in etiquetas:
+                por_indice.setdefault(etiquetas[entrada["nombre"]], entrada)
 
-        if (len(por_nombre) == len(moleculas)
-                and all(len(v) == 1 for v in por_nombre.values())
-                and all(m["nombre"] in por_nombre for m in moleculas)):
-            return [por_nombre[m["nombre"]][0] for m in moleculas], datos
-
-        return lista, datos
+        if por_indice:
+            return {m["indice"]: por_indice.get(m["indice"]) for m in moleculas}
+        if len(lista) == len(moleculas):
+            return {m["indice"]: e for m, e in zip(moleculas, lista)}
+        return None
 
     @staticmethod
-    def _escribir_salida_individual(ruta: str, datos_trozo: Dict, entrada: Dict) -> None:
+    def _parte_de_una_molecula(datos_trozo: Dict, entrada: Dict) -> Dict:
         """
         La parte del trozo que le toca a una molecula, con la misma forma que
-        tendria si se hubiera ejecutado sola.
-
-        Se escribe para que la segunda pasada del grafo no note la diferencia:
-        el nodo lee su fichero de salida como siempre y de ahi sale el score.
+        tendria si se hubiera ejecutado sola: asi su score y su detalle salen de
+        las mismas funciones que en cualquier otro camino.
         """
         individual = {k: v for k, v in datos_trozo.items() if k != "moleculas"}
         individual["total"] = 1
@@ -1114,75 +1113,101 @@ class BatchWorkflowExecutor:
             paso = str(entrada.get("estado", "")).upper() == "PASS"
             individual["pass"] = 1 if paso else 0
             individual["fail"] = 0 if paso else 1
+        return individual
 
-        directorio = os.path.dirname(ruta)
-        if directorio:
-            os.makedirs(directorio, exist_ok=True)
-        with open(ruta, "w", encoding="utf-8") as f:
-            json.dump(individual, f, ensure_ascii=False)
-
-    def _procesar_en_trozo(self, moleculas: List[Dict], nodo_bd_id: str,
+    def _procesar_en_trozo(self, ruta_sdf: str, indices: List[int], nodo_bd_id: str,
                            on_molecula=None):
         """
-        Manda el bloque entero como UN job: las N moleculas en un SDF y el
-        algoritmo recorriendolo completo. Devuelve None si no se presta, y
-        entonces se intenta un job por molecula.
+        Manda el bloque entero como UN job: sus moleculas copiadas a un solo SDF
+        y el algoritmo recorriendolo completo, que es lo que hace una peticion
+        suelta sobre una biblioteca. Devuelve None si no se presta, y entonces
+        el bloque va por el camino de una tarea por molecula.
 
-        Es el mismo trabajo que hace una peticion suelta sobre una biblioteca, y
-        de ahi viene la medida que lo justifica: 10.000 moleculas asi tardaron
-        143 s contra el bullx, mientras que molecula a molecula son 10.000
-        transferencias y 10.000 tareas. El coste no esta en el calculo, esta en
-        el viaje.
+        El grafo se ejecuta UNA vez, con el trozo como molecula, y los
+        resultados de cada molecula se sacan del JSON que devuelve: ni un
+        fichero ni una ejecucion del grafo por molecula. Eran casi todo el
+        coste. Medido con 10.000 moleculas contra el bullx, el cluster tardaba
+        unos 10 s y el resto, mas de 400, se iba en escribir, leer y borrar
+        decenas de miles de ficheros pequenos en uploads/.
         """
-        if len(moleculas) < 2:
-            return None
-
-        invocaciones = self._invocaciones_del_bloque(moleculas, nodo_bd_id)
-        if invocaciones is None:
-            return None
-
-        plantilla = self._plantilla_de_trozo(moleculas, invocaciones)
-        if plantilla is None:
+        if len(indices) < 2:
             return None
 
         ruta_trozo = None
-        ruta_salida = None
+        salida = None
+        generados = []
         try:
-            ruta_trozo = self._escribir_trozo(moleculas)
-            sufijo = "e{}_".format(self.ejecucion_id) if self.ejecucion_id else ""
-            ruta_salida = os.path.join(
-                "uploads",
-                "_btrozo_{}{}_salida.json".format(sufijo, moleculas[0]["indice"]))
+            ruta_trozo, moleculas = self._escribir_trozo(ruta_sdf, indices)
+            sufijo = "t{}".format(indices[0])
 
-            argumentos = list(plantilla["archivos"])
-            argumentos[plantilla["pos_molecula"]] = ruta_trozo
-            argumentos[-1] = ruta_salida
+            invocacion = self._invocacion_del_trozo(ruta_trozo, nodo_bd_id, sufijo)
+            if invocacion is None:
+                return None
+            salida = invocacion[1][-1]
 
-            resultado = ejecutar_algoritmo(plantilla["algoritmo"], *argumentos,
-                                           flags=plantilla["flags"])
+            executor = self._preparar_molecula({"ruta": ruta_trozo, "indice": sufijo},
+                                               nodo_bd_id)
+            resultado = executor.ejecutar()
+            generados = list(executor.archivos_generados)
             if not resultado.get("exito"):
                 return None
 
-            reparto = self._repartir_salida_del_trozo(ruta_salida, moleculas)
-            if reparto is None:
+            nodo_id, nodo = next(
+                ((nid, n) for nid, n in (resultado.get("resultados") or {}).items()
+                 if isinstance(n, dict) and n.get("archivo_salida") == salida),
+                (None, None))
+            if nodo is None:
                 return None
-            entradas, datos_trozo = reparto
+            datos_trozo = nodo.get("resultado_json")
 
-            # Cada molecula recibe su parte donde el grafo la espera.
-            for invocacion, entrada in zip(invocaciones, entradas):
-                self._escribir_salida_individual(
-                    invocacion[1][-1], datos_trozo, entrada)
+            asignadas = self._emparejar_trozo(datos_trozo, moleculas)
+            if asignadas is None:
+                return None
 
-            log = resultado.get("log") or ""
-            calculado = {self._clave_invocacion(inv): {"exito": True, "log": log,
-                                                       "error": None}
-                         for inv in invocaciones}
-            return self._segunda_pasada(moleculas, nodo_bd_id, calculado, on_molecula)
+            resultados = []
+            for mol in moleculas:
+                entrada = asignadas.get(mol["indice"])
+                if entrada is None or entrada.get("exito") is False:
+                    error = ((entrada or {}).get("error")
+                             or "El algoritmo no devolvio resultado para esta molecula")
+                    resultados.append({
+                        "nombre": mol["nombre"], "score": None, "tipo_score": None,
+                        "exito": False, "errores_nodo": [str(error)], "archivos": [],
+                        "detalle": {},
+                    })
+                    continue
 
+                # Su nombre real, no la etiqueta con la que viajo.
+                entrada = dict(entrada, nombre=mol["nombre"])
+                propio = dict(resultado)
+                propio["resultados"] = dict(resultado["resultados"])
+                propio["resultados"][nodo_id] = dict(
+                    nodo, resultado_json=self._parte_de_una_molecula(datos_trozo, entrada))
+                score, tipo_score = self._extraer_score(propio)
+                resultados.append({
+                    "nombre": mol["nombre"], "score": score, "tipo_score": tipo_score,
+                    "exito": True, "errores_nodo": [], "archivos": [],
+                    "detalle": self._detalle_por_nodo(propio),
+                })
+
+        except Exception:  # noqa: BLE001
+            # Cualquier cosa que falle aqui deja el bloque en el camino de una
+            # tarea por molecula, que no depende de nada de esto.
+            return None
         finally:
-            for ruta in (ruta_trozo, ruta_salida):
+            # El trozo, su salida y lo que haya generado el grafo con ellos son
+            # de este bloque: los resultados ya van dentro de la respuesta.
+            for ruta in [ruta_trozo, salida] + [os.path.join("uploads", g) for g in generados]:
                 if ruta and os.path.exists(ruta):
                     os.remove(ruta)
+
+        # El avance se anuncia al final y no molecula a molecula: si algo
+        # fallara a medio camino y el bloque volviera por el camino lento, no
+        # se contarian dos veces.
+        if on_molecula is not None:
+            for mol in moleculas:
+                on_molecula(mol["nombre"])
+        return resultados
 
     def _procesar_en_array(self, moleculas: List[Dict], nodo_bd_id: str,
                            on_molecula=None):
@@ -1234,21 +1259,29 @@ class BatchWorkflowExecutor:
         nombre_bd, ruta_sdf = self.localizar_base_de_datos()
         nodo_bd_id = self._encontrar_nodo_bd()["id"]
 
-        moleculas = self.extraer_moleculas(ruta_sdf, indices)
-
         # Tres caminos, del mas barato al mas caro, y cada uno devuelve None
         # cuando el grafo no se presta:
         #
-        #   1. Un job para el bloque entero, con las N moleculas en un SDF.
-        #      Pide que el algoritmo sepa recorrer varias.
+        #   1. Un job para el bloque entero, con sus moleculas copiadas del
+        #      SDF a un solo fichero. Va ANTES de extraer: no necesita un
+        #      fichero por molecula, y escribirlos era la mayor parte del
+        #      tiempo de un cribado.
         #   2. Un job array, una tarea por molecula. Una conexion y una
         #      espera, pero N transferencias.
         #   3. Molecula a molecula, que es como estaba.
         if debe_parar is None or not debe_parar():
-            for camino in (self._procesar_en_trozo, self._procesar_en_array):
-                resultados = camino(moleculas, nodo_bd_id, on_molecula=on_molecula)
-                if resultados is not None:
-                    return resultados
+            en_trozo = self._procesar_en_trozo(
+                ruta_sdf, indices, nodo_bd_id, on_molecula=on_molecula)
+            if en_trozo is not None:
+                return en_trozo
+
+        moleculas = self.extraer_moleculas(ruta_sdf, indices)
+
+        if debe_parar is None or not debe_parar():
+            en_array = self._procesar_en_array(
+                moleculas, nodo_bd_id, on_molecula=on_molecula)
+            if en_array is not None:
+                return en_array
 
         resultados = []
 

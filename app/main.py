@@ -22,6 +22,7 @@ from app.rate_limit import verificar_no_bloqueado, registrar_intento_fallido, li
 from app.logging_config import logger, configurar_logging
 from app.banco_pruebas import probar_algoritmo
 from app.formatos import EXTENSIONES_ENTRADA_ALGORITMO, contar_moleculas_sdf
+from app import indice_sdf
 from datetime import datetime, timezone
 import shutil
 import tempfile
@@ -150,6 +151,9 @@ def borrar_archivos_registrados(db: Session, filtro) -> int:
             if os.path.exists(ruta):
                 os.remove(ruta)
                 borrados += 1
+            # Un indice huerfano no hace dano --caduca por tamano y fecha--,
+            # pero es basura en uploads/.indices/.
+            indice_sdf.borrar(ruta)
         except OSError as e:
             logger.warning("no_se_pudo_borrar_archivo",
                            extra={"nombre": archivo.nombre, "error": str(e)})
@@ -836,6 +840,17 @@ async def subir_molecula(
     # volcado es en streaming precisamente para no tenerlo entero en RAM.
     num_moleculas = contar_moleculas_sdf(ruta) if ext == ".sdf" else None
 
+    # El indice de posiciones de sus registros, para que el cribado salte
+    # a las moleculas de cada bloque en vez de recorrer el fichero entero
+    # (ver app/indice_sdf.py). Si fallara no se pierde nada: se construye
+    # la primera vez que se use la biblioteca.
+    if ext == ".sdf":
+        try:
+            indice_sdf.obtener(ruta)
+        except OSError as e:
+            logger.warning("indice_sdf_no_construido",
+                           extra={"nombre": nombre_fichero, "error": str(e)})
+
     # El tipo que se GUARDA se verifica contra el contenido, no se copia del
     # formulario: es la misma idea que el banco de pruebas con los
     # algoritmos --declarar no basta, hay que comprobarlo--, y aquí
@@ -894,6 +909,7 @@ def borrar_molecula(
     if not os.path.exists(ruta):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     os.remove(ruta)
+    indice_sdf.borrar(ruta)
     registro = _archivo_registrado(nombre_archivo, db)
     if registro is not None:
         db.delete(registro)

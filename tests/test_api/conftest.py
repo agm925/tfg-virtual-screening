@@ -110,7 +110,8 @@ def mock_celery(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _limpiar_ficheros_generados_por_el_test():
-    directorios = [ROOT / "algoritmos", ROOT / "uploads"]
+    # uploads/.indices: los indices que se construyen al subir un .sdf.
+    directorios = [ROOT / "algoritmos", ROOT / "uploads", ROOT / "uploads" / ".indices"]
     antes = {d: set(os.listdir(d)) if d.exists() else set() for d in directorios}
     yield
     for d in directorios:

@@ -12,6 +12,7 @@ catalogo-- sino que se sustituye por un grafo de mentira que solo hace lo
 unico que importa aqui: llamar al ejecutor N veces.
 """
 import json
+import os
 
 import pytest
 
@@ -266,185 +267,277 @@ def test_las_poses_y_alineaciones_si_se_conservan(consolidador, tmp_path):
 # ---------------------------------------------------------------------------
 # Troceado: UN job para el bloque entero
 # ---------------------------------------------------------------------------
+#
+# Aqui si hay ficheros de verdad: el trozo se construye copiando bytes del SDF
+# con su indice (app/indice_sdf.py), asi que hace falta una biblioteca en
+# disco. Lo que se sustituye es el algoritmo --por uno que cuenta lo que ve y
+# responde como filtroLipinski-- y el grafo, por uno de un solo nodo.
+
+_MOLBLOCK = (
+    "{titulo}\n  RDKit          3D\n\n"
+    "  1  0  0  0  0  0  0  0  0  0999 V2000\n"
+    "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+    "M  END\n"
+)
+
+
+def _biblioteca(ruta, titulos, separador_final=True):
+    registros = [_MOLBLOCK.format(titulo=t) + "$$$$\n" for t in titulos]
+    if not separador_final:
+        registros[-1] = registros[-1][: -len("$$$$\n")]
+    ruta.write_text("".join(registros), encoding="utf-8")
+
+
+def _titulos_del_sdf(ruta):
+    """El titulo de cada registro, en orden: la primera linea tras cada $$$$."""
+    with open(ruta, encoding="utf-8") as f:
+        texto = f.read()
+    registros = [r for r in texto.split("$$$$\n") if r.strip()]
+    return [r.split("\n", 1)[0] for r in registros]
+
+
+class GrafoDeUnNodo:
+    """
+    Doble de WorkflowExecutor con un unico nodo de algoritmo, como el de un
+    cribado con filtroLipinski: la molecula, `extras` y la salida.
+    """
+
+    def __init__(self, mol_info, salida_ext, extras, invocaciones):
+        self._mol = mol_info
+        self._salida = os.path.join(
+            "uploads", "salida_m{}{}".format(mol_info["indice"], salida_ext))
+        self._extras = extras
+        self._invocaciones = invocaciones
+        self.archivos_generados = []
+
+    def ejecutar(self):
+        from app.ejecutor import ejecutar_algoritmo as ejecutar
+
+        exito = True
+        for _ in range(self._invocaciones):
+            r = ejecutar("uploads/algo.py", self._mol["ruta"], *self._extras,
+                         self._salida, flags=[])
+            exito = exito and r.get("exito", False)
+
+        datos = None
+        if os.path.exists(self._salida):
+            self.archivos_generados.append(os.path.basename(self._salida))
+            with open(self._salida, encoding="utf-8") as f:
+                datos = json.load(f)
+        return {
+            "exito": exito,
+            "errores": [],
+            "resultados": {
+                "sel_1":  {"tipo": "selectMol", "estado": "exito"},
+                "prep_1": {"tipo": "preprocesado", "clave_score": "moleculas.MW",
+                           "archivo_salida": self._salida, "resultado_json": datos},
+            },
+        }
 
 
 @pytest.fixture()
-def bloque_troceable(monkeypatch, tmp_path):
+def trozo(monkeypatch, tmp_path):
     """
-    Un bloque listo para trocear, con un uploads/ propio.
+    (ejecutor, indices, algoritmo) para un bloque sobre una biblioteca real.
 
-    `salida` y `entradas_extra` permiten romper a proposito las condiciones que
-    el troceado exige: que la salida sea un JSON y que lo unico que cambie de
-    una molecula a otra sea su fichero.
+    `algoritmo` es un dict que los tests ajustan y en el que el algoritmo de
+    mentira anota lo que ha visto:
+      devolver         "todas", "una" o un indice que se salta
+      nombres_propios  si ignora los titulos y numera el mismo, como hace
+                       filtroLipinski con las moleculas sin nombre
     """
+    from app import ejecutor as modulo_ejecutor
 
-    def _construir(n_moleculas=3, salida=".json", entradas_extra=None):
+    def _construir(titulos=("MOL0", "MOL1", "MOL2", "MOL3"), salida=".json",
+                   extras=(), invocaciones=1, separador_final=True):
         (tmp_path / "uploads").mkdir()
         monkeypatch.chdir(tmp_path)
+        _biblioteca(tmp_path / "uploads" / "biblio.sdf", list(titulos), separador_final)
 
-        moleculas = []
-        for i in range(n_moleculas):
-            fichero = tmp_path / "mol{}.sdf".format(i)
-            # Un SDF de una molecula tal como lo escribe RDKit: acaba en $$$$.
-            fichero.write_text("MOL{}\n\n\n  0  0\nM  END\n$$$$\n".format(i),
-                               encoding="utf-8")
-            moleculas.append({"nombre": "MOL{}".format(i), "indice": i,
-                              "ruta": str(fichero)})
+        algoritmo = {"llamadas": 0, "vistos": None, "btmp_durante": None,
+                     "devolver": "todas", "nombres_propios": False}
+
+        def falso(ruta, *archivos, flags=()):
+            algoritmo["llamadas"] += 1
+            algoritmo["vistos"] = _titulos_del_sdf(archivos[0])
+            algoritmo["btmp_durante"] = [n for n in os.listdir("uploads")
+                                         if n.startswith("_btmp_")]
+            entradas = []
+            for i, titulo in enumerate(algoritmo["vistos"]):
+                if algoritmo["devolver"] == "una" and i > 0:
+                    break
+                if algoritmo["devolver"] == i:
+                    continue
+                nombre = "mol_{}".format(i + 1) if algoritmo["nombres_propios"] else titulo
+                entradas.append({"nombre": nombre, "MW": 100.0 + i, "estado": "PASS"})
+            with open(archivos[-1], "w", encoding="utf-8") as f:
+                json.dump({"exito": True, "total": len(entradas), "pass": len(entradas),
+                           "fail": 0, "moleculas": entradas}, f)
+            return {"exito": True, "log": "ok", "error": None}
+
+        monkeypatch.setattr(modulo_ejecutor, "EXECUTION_MODE", "local")
+        monkeypatch.setattr(modulo_ejecutor, "_ejecutar_local", falso)
 
         ejecutor = BatchWorkflowExecutor({"nodes": []}, usuario_id=1, ejecucion_id=9)
-
-        def preparar(mol_info, _nodo_bd_id):
-            archivos = [mol_info["ruta"]]
-            if entradas_extra is not None:
-                archivos.append(entradas_extra(mol_info))
-            archivos.append(str(tmp_path / "salida_m{}{}".format(mol_info["indice"], salida)))
-            return GrafoFalso([(str(tmp_path / "algo.py"), archivos, [])])
-
-        monkeypatch.setattr(ejecutor, "_preparar_molecula", preparar)
-        return ejecutor, moleculas
+        monkeypatch.setattr(
+            ejecutor, "_preparar_molecula",
+            lambda mol, _nodo: GrafoDeUnNodo(mol, salida, list(extras), invocaciones))
+        return ejecutor, list(range(len(titulos))), algoritmo
 
     return _construir
 
 
-def _algoritmo_de_mentira(monkeypatch, moleculas_devueltas):
+def _procesar(ejecutor, indices, **kw):
+    return ejecutor._procesar_en_trozo("uploads/biblio.sdf", indices, "nodo_bd", **kw)
+
+
+def test_el_bloque_entero_va_en_un_solo_job(trozo):
     """
-    Sustituye el ejecutor por un algoritmo que escribe en su salida una lista de
-    `moleculas_devueltas` entradas, contando los nombres que encuentra en el SDF
-    de entrada. Devuelve la lista de llamadas.
+    Lo que justifica el troceado: una ejecucion del algoritmo para todas las
+    moleculas del bloque, que es lo que hace una peticion suelta sobre una
+    biblioteca.
     """
-    llamadas = []
+    ejecutor, indices, algoritmo = trozo()
 
-    def falso(ruta_algoritmo, *archivos, flags=()):
-        llamadas.append({"algoritmo": ruta_algoritmo, "archivos": list(archivos),
-                         "flags": list(flags)})
-        entrada, salida = archivos[0], archivos[-1]
-        with open(entrada, encoding="utf-8") as f:
-            nombres = [l.strip() for l in f if l.startswith("MOL")]
-        llamadas[-1]["moleculas_vistas"] = len(nombres)
-        with open(salida, "w", encoding="utf-8") as f:
-            json.dump({
-                "exito": True,
-                "total": len(nombres),
-                "pass": len(nombres),
-                "fail": 0,
-                "moleculas": [{"nombre": n, "MW": 300.0 + i, "estado": "PASS"}
-                              for i, n in enumerate(nombres[:moleculas_devueltas])],
-            }, f)
-        return {"exito": True, "log": "procesadas {}".format(len(nombres)), "error": None}
+    resultados = _procesar(ejecutor, indices)
 
-    monkeypatch.setattr(workflow_executor, "ejecutar_algoritmo", falso)
-    return llamadas
+    assert algoritmo["llamadas"] == 1, "una sola ejecucion real para las cuatro"
+    assert [r["nombre"] for r in resultados] == ["MOL0", "MOL1", "MOL2", "MOL3"]
+    assert all(r["exito"] for r in resultados)
+    # El score sale de la parte de cada molecula, no de la primera del trozo.
+    assert [r["score"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
 
 
-def test_el_bloque_entero_va_en_un_solo_job(bloque_troceable, monkeypatch, tmp_path):
+def test_ni_un_fichero_por_molecula(trozo):
     """
-    Lo que justifica el troceado: una transferencia y un job para las N
-    moleculas, que es lo que hace una peticion suelta sobre una biblioteca.
+    Escribir, leer y borrar un fichero por molecula en uploads/ era casi todo
+    el coste de un cribado: el trozo se construye copiando bytes del SDF y los
+    resultados se reparten en memoria.
     """
-    ejecutor, moleculas = bloque_troceable(n_moleculas=3)
-    llamadas = _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=3)
+    ejecutor, indices, algoritmo = trozo()
 
-    resultados = ejecutor._procesar_en_trozo(moleculas, "nodo_bd")
+    _procesar(ejecutor, indices)
 
-    assert resultados is not None
-    assert len(llamadas) == 1, "una sola llamada al algoritmo para las tres"
-    assert [r["nombre"] for r in resultados] == ["MOL0", "MOL1", "MOL2"]
+    assert algoritmo["btmp_durante"] == [], "no debe haber temporales por molecula"
 
 
-def test_el_trozo_lleva_las_moleculas_con_su_separador(bloque_troceable, monkeypatch):
+def test_no_queda_nada_en_uploads(trozo, tmp_path):
+    ejecutor, indices, _ = trozo()
+
+    _procesar(ejecutor, indices)
+
+    assert sorted(os.listdir(tmp_path / "uploads")) == [".indices", "biblio.sdf"]
+
+
+def test_cada_molecula_viaja_etiquetada_y_vuelve_con_su_nombre(trozo):
     """
-    Si el SDF del trozo no trae los $$$$, RDKit lee todo como un unico registro
-    roto y el algoritmo devuelve una molecula en vez de N.
+    Dentro del trozo cada registro lleva una etiqueta unica en vez de su nombre,
+    para emparejar sin ambiguedad; fuera, en los resultados, la etiqueta no
+    puede asomar.
     """
-    ejecutor, moleculas = bloque_troceable(n_moleculas=4)
-    llamadas = _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=4)
+    ejecutor, indices, algoritmo = trozo()
 
-    ejecutor._procesar_en_trozo(moleculas, "nodo_bd")
+    resultados = _procesar(ejecutor, indices)
 
-    # El fichero del trozo ya se ha borrado, pero el algoritmo de mentira conto
-    # sus moleculas al leerlo: sin los separadores no habria encontrado cuatro.
-    assert len(llamadas) == 1
-    assert llamadas[0]["moleculas_vistas"] == 4
-
-
-def test_el_trozo_y_su_salida_no_se_quedan_en_uploads(bloque_troceable, monkeypatch, tmp_path):
-    ejecutor, moleculas = bloque_troceable(n_moleculas=3)
-    _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=3)
-
-    ejecutor._procesar_en_trozo(moleculas, "nodo_bd")
-
-    assert list((tmp_path / "uploads").iterdir()) == []
-    for mol in moleculas:
-        import os
-        assert not os.path.exists(mol["ruta"])
+    assert algoritmo["vistos"] == ["TFGMOL_0", "TFGMOL_1", "TFGMOL_2", "TFGMOL_3"]
+    for r in resultados:
+        datos = r["detalle"]["prep_1"]["datos"]
+        assert datos["moleculas"][0]["nombre"] == r["nombre"]
+        assert datos["total"] == 1
 
 
-def test_cada_molecula_recibe_su_parte_del_trozo(bloque_troceable, monkeypatch, tmp_path):
+def test_nombres_repetidos_o_vacios_no_confunden_el_reparto(trozo):
     """
-    El grafo se recorre despues como siempre y cada nodo lee su fichero de
-    salida: ahi tiene que estar la parte que le toca a esa molecula, con la
-    misma forma que si se hubiera ejecutado sola.
+    Con nombres repetidos, emparejar por nombre daria a las dos moleculas el
+    resultado de la primera; con nombres vacios, filtroLipinski numera por
+    posicion. La etiqueta hace que ninguna de las dos cosas importe.
     """
-    ejecutor, moleculas = bloque_troceable(n_moleculas=3)
-    _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=3)
+    ejecutor, indices, _ = trozo(titulos=("DUP", "DUP", "", "OTRA"))
 
-    ejecutor._procesar_en_trozo(moleculas, "nodo_bd")
+    resultados = _procesar(ejecutor, indices)
 
-    for i in range(3):
-        contenido = json.loads(
-            (tmp_path / "salida_m{}.json".format(i)).read_text(encoding="utf-8"))
-        assert contenido["total"] == 1
-        assert len(contenido["moleculas"]) == 1
-        assert contenido["moleculas"][0]["nombre"] == "MOL{}".format(i)
-        # Los recuentos del trozo se rehacen para una sola molecula.
-        assert contenido["pass"] == 1
+    assert [r["nombre"] for r in resultados] == ["DUP", "DUP", "mol_3", "OTRA"]
+    assert [r["score"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
 
 
-def test_un_algoritmo_que_solo_mira_la_primera_molecula_no_vale(bloque_troceable, monkeypatch):
+def test_un_algoritmo_de_una_sola_molecula_no_vale(trozo, tmp_path):
     """
-    Que el algoritmo sepa tragar varias no se puede saber de antemano: se
-    comprueba contando los resultados que devuelve. Si no vienen los N, se
-    vuelve por el camino de un job por molecula.
+    Una entrada para varias moleculas es la firma de un algoritmo que solo mira
+    la primera. El bloque vuelve entonces por el camino de una tarea por
+    molecula, y sin dejar nada atras.
     """
-    ejecutor, moleculas = bloque_troceable(n_moleculas=3)
-    _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=1)
+    ejecutor, indices, algoritmo = trozo()
+    algoritmo["devolver"] = "una"
 
-    assert ejecutor._procesar_en_trozo(moleculas, "nodo_bd") is None
+    assert _procesar(ejecutor, indices) is None
+    assert sorted(os.listdir(tmp_path / "uploads")) == [".indices", "biblio.sdf"]
 
 
-def test_un_algoritmo_que_devuelve_moleculas_no_se_trocea(bloque_troceable, monkeypatch):
+def test_si_falta_una_molecula_solo_falla_esa(trozo):
     """
-    De un SDF de vuelta no se puede repartir por nombre lo que le toca a cada
-    molecula. Y no se llega ni a intentarlo: se ve en la extension.
+    Una molecula que el algoritmo no consigue procesar no puede mandar el
+    bloque entero por el camino lento: falla ella sola, con su motivo.
     """
-    ejecutor, moleculas = bloque_troceable(n_moleculas=3, salida=".sdf")
-    llamadas = _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=3)
+    ejecutor, indices, algoritmo = trozo()
+    algoritmo["devolver"] = 2
 
-    assert ejecutor._procesar_en_trozo(moleculas, "nodo_bd") is None
-    assert llamadas == [], "no debe ejecutarse nada"
+    resultados = _procesar(ejecutor, indices)
+
+    assert [r["exito"] for r in resultados] == [True, True, False, True]
+    assert "no devolvio resultado" in resultados[2]["errores_nodo"][0]
+    assert resultados[3]["score"] == 103.0, "las demas no se corren de sitio"
 
 
-def test_una_referencia_distinta_por_molecula_impide_el_trozo(bloque_troceable, monkeypatch):
+def test_si_el_algoritmo_pone_sus_nombres_se_empareja_por_orden(trozo):
+    ejecutor, indices, algoritmo = trozo()
+    algoritmo["nombres_propios"] = True
+
+    resultados = _procesar(ejecutor, indices)
+
+    assert [r["nombre"] for r in resultados] == ["MOL0", "MOL1", "MOL2", "MOL3"]
+    assert [r["score"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
+
+
+def test_una_salida_que_no_es_json_no_se_trocea(trozo):
+    """De un SDF de vuelta no se puede repartir lo que le toca a cada una."""
+    ejecutor, indices, algoritmo = trozo(salida=".sdf")
+
+    assert _procesar(ejecutor, indices) is None
+    assert algoritmo["llamadas"] == 0, "se ve en seco, sin ejecutar nada"
+
+
+def test_dos_algoritmos_encadenados_no_se_trocean(trozo):
+    ejecutor, indices, algoritmo = trozo(invocaciones=2)
+
+    assert _procesar(ejecutor, indices) is None
+    assert algoritmo["llamadas"] == 0
+
+
+def test_una_referencia_comun_viaja_tal_cual(trozo):
+    """El cribado por similitud: la misma referencia para todo el bloque."""
+    ejecutor, indices, algoritmo = trozo(extras=("uploads/referencia.sdf",))
+
+    assert _procesar(ejecutor, indices) is not None
+    assert algoritmo["llamadas"] == 1
+
+
+def test_una_biblioteca_sin_separador_final(trozo):
     """
-    Las N van a compartir un unico job, asi que si una segunda entrada cambiara
-    de una molecula a otra el trozo estaria calculando otra cosa.
+    Los molfiles de ChEMBL llegan sin $$$$. Sin anadirselo al copiarlo, el
+    ultimo registro y lo que viniera detras se leerian como uno solo.
     """
-    ejecutor, moleculas = bloque_troceable(
-        n_moleculas=3,
-        entradas_extra=lambda mol: "referencia_{}.sdf".format(mol["indice"]))
-    llamadas = _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=3)
+    ejecutor, indices, algoritmo = trozo(separador_final=False)
 
-    assert ejecutor._procesar_en_trozo(moleculas, "nodo_bd") is None
-    assert llamadas == []
+    resultados = _procesar(ejecutor, indices)
+
+    assert len(algoritmo["vistos"]) == 4
+    assert len(resultados) == 4
 
 
-def test_una_referencia_comun_si_permite_el_trozo(bloque_troceable, monkeypatch):
-    """Lo habitual del cribado por similitud: la misma referencia para todas."""
-    ejecutor, moleculas = bloque_troceable(
-        n_moleculas=3, entradas_extra=lambda _mol: "referencia.sdf")
-    llamadas = _algoritmo_de_mentira(monkeypatch, moleculas_devueltas=3)
+def test_el_avance_se_anuncia_una_vez_por_molecula(trozo):
+    ejecutor, indices, _ = trozo()
 
-    assert ejecutor._procesar_en_trozo(moleculas, "nodo_bd") is not None
-    assert len(llamadas) == 1
-    # La referencia viaja tal cual; lo que se sustituye es la molecula.
-    assert llamadas[0]["archivos"][1] == "referencia.sdf"
+    avisadas = []
+    _procesar(ejecutor, indices, on_molecula=avisadas.append)
+
+    assert avisadas == ["MOL0", "MOL1", "MOL2", "MOL3"]
