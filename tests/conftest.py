@@ -42,6 +42,8 @@ import pytest  # noqa: E402
 from app.database import engine, SessionLocal  # noqa: E402
 from app import models  # noqa: E402
 
+from app.ejecutor import _ENTORNO_HIJO as _ENTORNO_ALGORITMOS  # noqa: E402
+
 ALGORITMOS_DIR = ROOT / "algoritmos"
 
 # Bloque SDF con valencia imposible (N con 4 enlaces simples, sin carga),
@@ -159,7 +161,8 @@ def ejecutar_script():
             #    y assertions como "Moleculas leidas: 3" fallaban por mojibake
             #    ("MolÃ©culas leÃ­das") sin que hubiera ningun fallo real.
             encoding="utf-8", errors="replace",
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            # El mismo entorno recortado que reciben en produccion.
+            env=_ENTORNO_ALGORITMOS,
         )
     return _ejecutar
 

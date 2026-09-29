@@ -12,7 +12,7 @@
 #
 # Hay dos caminos, y el que se toma depende de lo que venga montado:
 #
-#   · Si en el directorio montado en /ssh_ro (ver docker-compose.yml) viene un
+#   · Si en el directorio montado en /root/ssh_montado (ver docker-compose.yml) viene un
 #     known_hosts, se usa ese. Es el camino del clúster REAL: la huella se
 #     verifica por un canal de confianza fuera de aquí y se deja en
 #     secrets/ssh/known_hosts, igual que haría cualquier cliente SSH la
@@ -36,8 +36,8 @@ if [ "${EXECUTION_MODE:-local}" = "slurm" ] && [ -n "${SLURM_HOST:-}" ]; then
     # lectura y llega con los permisos que le dé el host: un bind mount desde
     # Windows aparece como 0777, y con eso el cliente ssh se niega a usar la
     # clave ("UNPROTECTED PRIVATE KEY FILE"). Aquí se les pone 600.
-    if [ -d /ssh_ro ] && [ -n "$(ls -A /ssh_ro 2>/dev/null)" ]; then
-        for origen in /ssh_ro/*; do
+    if [ -d /root/ssh_montado ] && [ -n "$(ls -A /root/ssh_montado 2>/dev/null)" ]; then
+        for origen in /root/ssh_montado/*; do
             [ -f "${origen}" ] || continue
             destino="/root/.ssh/$(basename "${origen}")"
             # known_hosts se acumula más abajo; el resto se copia tal cual.
@@ -47,12 +47,12 @@ if [ "${EXECUTION_MODE:-local}" = "slurm" ] && [ -n "${SLURM_HOST:-}" ]; then
             cp "${origen}" "${destino}"
             chmod 600 "${destino}"
         done
-        echo "[entrypoint] credenciales instaladas desde /ssh_ro"
+        echo "[entrypoint] credenciales instaladas desde /root/ssh_montado"
     fi
 
     # --- Clave del host ------------------------------------------------------
-    if [ -f /ssh_ro/known_hosts ] && grep -q . /ssh_ro/known_hosts; then
-        cat /ssh_ro/known_hosts >> /root/.ssh/known_hosts
+    if [ -f /root/ssh_montado/known_hosts ] && grep -q . /root/ssh_montado/known_hosts; then
+        cat /root/ssh_montado/known_hosts >> /root/.ssh/known_hosts
         echo "[entrypoint] known_hosts tomado del montaje (huella verificada fuera del contenedor)"
     else
         echo "[entrypoint] sin known_hosts montado — registrando la clave de ${SLURM_HOST}:${puerto} con ssh-keyscan"
@@ -79,6 +79,15 @@ if [ "${EXECUTION_MODE:-local}" = "slurm" ] && [ -n "${SLURM_HOST:-}" ]; then
     else
         echo "[entrypoint] AVISO: no se pudo obtener la clave de ${SLURM_HOST}; las conexiones SSH fallarán"
     fi
+fi
+
+# Los algoritmos corren como nobody (ver app/ejecutor.py) y escriben su salida
+# en uploads/. Desde Windows el montaje llega como 0777 y no hace falta nada,
+# pero en un host Linux el directorio es del usuario que clonó el repositorio y
+# nobody no podría escribir en él. Se le da el grupo de nobody con setgid, para
+# que lo que se cree dentro lo herede, en vez de abrirlo a todo el mundo.
+if [ -d /app/uploads ]; then
+    { chgrp 65534 /app/uploads && chmod g+rwxs /app/uploads; } 2>/dev/null || true
 fi
 
 exec "$@"

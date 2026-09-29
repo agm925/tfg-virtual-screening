@@ -91,7 +91,12 @@ services:
       # cliente ssh rechaza por demasiado abiertos, y /root/.ssh no puede
       # montarse de solo lectura porque el propio entrypoint escribe ahi.
       # En modo local el directorio puede estar vacio: no se usa.
-      - ${SLURM_SSH_DIR:-./secrets/ssh}:/ssh_ro:ro
+      #
+      # Se monta DENTRO de /root, que es 700, y no en la raiz: desde Windows
+      # llega con permisos 777, y los algoritmos corren como nobody (ver
+      # app/ejecutor.py). En /ssh_ro cualquier algoritmo leia la clave privada
+      # de tu cuenta del cluster; aqui ni siquiera puede entrar al directorio.
+      - ${SLURM_SSH_DIR:-./secrets/ssh}:/root/ssh_montado:ro
       # Solo el socket del sandbox. El banco no ve ninguno de los otros dos.
       - banco_sock:/sock
     ports:
@@ -116,6 +121,9 @@ services:
     command: celery -A app.celery_app worker --loglevel=info
     environment:
       <<: *backend-env
+      # El worker no firma ni valida tokens: la clave de los JWT solo le
+      # llegaba por compartir la plantilla con el backend.
+      JWT_SECRET_KEY: ""
     volumes:
       - ./uploads:/app/uploads
       - ./algoritmos:/app/algoritmos
@@ -125,7 +133,12 @@ services:
       # cliente ssh rechaza por demasiado abiertos, y /root/.ssh no puede
       # montarse de solo lectura porque el propio entrypoint escribe ahi.
       # En modo local el directorio puede estar vacio: no se usa.
-      - ${SLURM_SSH_DIR:-./secrets/ssh}:/ssh_ro:ro
+      #
+      # Se monta DENTRO de /root, que es 700, y no en la raiz: desde Windows
+      # llega con permisos 777, y los algoritmos corren como nobody (ver
+      # app/ejecutor.py). En /ssh_ro cualquier algoritmo leia la clave privada
+      # de tu cuenta del cluster; aqui ni siquiera puede entrar al directorio.
+      - ${SLURM_SSH_DIR:-./secrets/ssh}:/root/ssh_montado:ro
     depends_on:
       db:
         condition: service_healthy

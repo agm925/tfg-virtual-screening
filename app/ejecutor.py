@@ -2,19 +2,66 @@ import contextvars
 import os
 import sys
 import subprocess
+import tempfile
 from contextlib import contextmanager
 from app.config import ALGORITMO_TIMEOUT, EXECUTION_MODE
 
-# Los algoritmos imprimen caracteres no ASCII en sus resúmenes por consola
-# ("→" en filtroLipinski, "Å" en rmsdConformaciones, "✓"/"≤" en dockingSmina).
-# En Windows el proceso hijo hereda la codepage del sistema (cp1252), donde
-# esos caracteres no existen: el print() del script lanza UnicodeEncodeError,
-# el propio script lo captura como un fallo suyo y escribe {"exito": false}.
-# Resultado: esos algoritmos fallaban SIEMPRE en ejecución local sobre Windows,
-# mientras que en Docker (Linux/UTF-8) funcionaban. Forzamos UTF-8 en ambos
-# lados: PYTHONIOENCODING para que el hijo pueda emitirlos, y encoding= para
-# que el padre los decodifique igual.
-_ENTORNO_HIJO = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+# Variables que un algoritmo SÍ necesita. Todo lo demás se queda fuera.
+#
+# Antes el hijo heredaba os.environ entero, y el entorno del worker lleva la
+# URL de la base de datos con su contraseña, la contraseña del correo y la
+# clave con la que se firman los JWT. Cualquier usuario registrado puede subir
+# un algoritmo: bastaba con uno que pasara el banco de pruebas --donde no hay
+# secretos-- y que en la ejecución real volcara su entorno al JSON de salida
+# para fabricarse un token de administrador. Es la misma lista blanca que usa
+# el banco (app/banco_pruebas.py), más lo que Windows necesita para arrancar
+# un proceso Python en ejecución local fuera de Docker.
+_VARIABLES_HEREDABLES = (
+    "PATH", "LANG", "LC_ALL", "LANGUAGE", "TZ", "TMPDIR",
+    # Sin SYSTEMROOT, Python en Windows no puede ni inicializar su generador
+    # de números aleatorios; TEMP/TMP es donde las bibliotecas crean temporales.
+    "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT", "COMSPEC",
+    # Dónde busca Open Babel sus tablas si no están en la ruta por defecto.
+    "BABEL_DATADIR", "BABEL_LIBDIR", "LD_LIBRARY_PATH",
+)
+
+
+def _entorno_algoritmo() -> dict:
+    entorno = {k: v for k, v in os.environ.items() if k.upper() in _VARIABLES_HEREDABLES}
+    # HOME desechable: varias bibliotecas científicas escriben cachés en él, y
+    # el del worker es /root, donde viven las credenciales del clúster.
+    entorno["HOME"] = tempfile.gettempdir()
+    # Los algoritmos imprimen caracteres no ASCII en sus resúmenes por consola
+    # ("→" en filtroLipinski, "Å" en rmsdConformaciones, "✓"/"≤" en
+    # dockingSmina). En Windows el hijo usaría la codepage del sistema
+    # (cp1252), donde no existen: el print() lanzaba UnicodeEncodeError y el
+    # algoritmo fallaba SIEMPRE en local sobre Windows. PYTHONIOENCODING para
+    # que el hijo pueda emitirlos, y encoding= en subprocess.run para que el
+    # padre los decodifique igual.
+    entorno["PYTHONIOENCODING"] = "utf-8"
+    return entorno
+
+
+_ENTORNO_HIJO = _entorno_algoritmo()
+
+# Usuario con el que corre el algoritmo cuando el worker es root (en Docker).
+#
+# Filtrar el entorno no basta por sí solo: un proceso del mismo usuario puede
+# leer /proc/1/environ, que es el entorno completo del worker, y con él todos
+# los secretos que se acaban de quitar. Como nobody, el algoritmo no puede leer el entorno
+# de un proceso de root, ni entrar en /root, donde está la clave SSH del
+# clúster (ver docker-compose.yml). Es el mismo usuario con el que corre el
+# contenedor del banco de pruebas.
+#
+# Fuera de Docker el worker no es root y no puede cambiar de usuario: ahí el
+# algoritmo corre como quien lanzó el worker, igual que antes.
+_UID_ALGORITMOS = 65534
+
+
+def _credenciales_hijo() -> dict:
+    if os.name != "posix" or os.geteuid() != 0:
+        return {}
+    return {"user": _UID_ALGORITMOS, "group": _UID_ALGORITMOS, "extra_groups": []}
 
 
 def ejecutar_algoritmo(ruta_algoritmo: str, *archivos, flags=()) -> dict:
@@ -79,6 +126,7 @@ def _ejecutar_local(ruta_algoritmo: str, *archivos, flags=()) -> dict:
             encoding="utf-8",
             errors="replace",
             env=_ENTORNO_HIJO,
+            **_credenciales_hijo(),
             # Sin timeout, un algoritmo que se cuelga bloquea el worker de
             # Celery para siempre (ver ALGORITMO_TIMEOUT en app/config.py).
             timeout=ALGORITMO_TIMEOUT,
