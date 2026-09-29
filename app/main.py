@@ -613,11 +613,17 @@ def descargar_resultado(
     if not os.path.exists(ruta_archivo):
         raise HTTPException(status_code=404, detail="El archivo físico no se encuentra en el servidor")
 
-    # 5. Devolvemos el archivo para que el navegador lo descargue
+    # 5. Devolvemos el archivo para que el navegador lo descargue.
+    #
+    # Sin media_type a mano: FileResponse lo deduce de la extension del fichero.
+    # Antes iba fijo a 'chemical/x-mol2', que era mentira en cuanto el algoritmo
+    # devolvia un JSON --un filtro, una comparacion, un RMSD--, y es justo lo
+    # que corregir_extension (app/tasks.py) se ocupa de que no pase: ahi se
+    # renombra el resultado para que un JSON no se haga pasar por una molecula,
+    # y declararlo como mol2 al servirlo deshacia ese trabajo.
     return FileResponse(
-        path=ruta_archivo, 
-        filename=peticion.ruta_mol_resultado, 
-        media_type='chemical/x-mol2' # Le dice al navegador que es un archivo químico
+        path=ruta_archivo,
+        filename=peticion.ruta_mol_resultado,
     )
 
 

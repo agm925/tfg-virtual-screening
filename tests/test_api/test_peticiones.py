@@ -156,3 +156,96 @@ def test_borrar_peticion_ajena_devuelve_403(
 
     respuesta_borrado_propio = client.delete(f"/peticiones/{peticion_id}", headers=usuario_autenticado["headers"])
     assert respuesta_borrado_propio.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Descarga del resultado: la extension no puede mentir
+# ---------------------------------------------------------------------------
+
+
+def test_un_resultado_json_se_descarga_como_json(client, db_session, usuario_autenticado):
+    """
+    Un algoritmo de metricas --filtro, comparacion, RMSD-- devuelve un JSON, y
+    app/tasks.py renombra su salida a .json a proposito para que no se haga
+    pasar por una molecula (corregir_extension). El endpoint de descarga no
+    puede deshacerlo: declaraba 'chemical/x-mol2' a fuego para cualquier
+    resultado, de modo que el navegador recibia un JSON presentado como mol2.
+    """
+    import os
+
+    from app import models
+
+    usuario_id = usuario_autenticado["usuario"]["id"]
+
+    algoritmo = models.Algoritmo(
+        nombre="filtroLipinski",
+        descripcion="filtro",
+        tipo=models.TipoAlgoritmo.comparacion,
+        ruta_archivo="filtroLipinski",
+        autor_id=usuario_id,
+    )
+    db_session.add(algoritmo)
+    db_session.commit()
+
+    nombre_resultado = "entrada_de_prueba_resultado.json"
+    ruta = os.path.join("uploads", nombre_resultado)
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write('{"exito": true, "total": 2, "moleculas": []}')
+
+    peticion = models.Peticion(
+        estado="COMPLETADO",
+        ruta_mol_original="entrada_de_prueba.sdf",
+        ruta_mol_resultado=nombre_resultado,
+        usuario_id=usuario_id,
+        algoritmo_id=algoritmo.id,
+    )
+    db_session.add(peticion)
+    db_session.commit()
+
+    respuesta = client.get(f"/descargar/{peticion.id}",
+                           headers=usuario_autenticado["headers"])
+
+    assert respuesta.status_code == 200
+    # El nombre que se ofrece es el del resultado, no el de la entrada.
+    assert nombre_resultado in respuesta.headers.get("content-disposition", "")
+    assert "chemical/x-mol2" not in respuesta.headers.get("content-type", "")
+
+
+def test_el_historial_dice_como_se_llama_el_resultado(client, db_session, usuario_autenticado):
+    """
+    El boton de descarga de la interfaz necesita el nombre del resultado para
+    sugerirlo: sin el usaba el de la entrada, y un JSON acababa guardado como
+    .sdf en el disco del usuario.
+    """
+    import os
+
+    from app import models
+
+    usuario_id = usuario_autenticado["usuario"]["id"]
+
+    algoritmo = models.Algoritmo(
+        nombre="filtroLipinski2",
+        descripcion="filtro",
+        tipo=models.TipoAlgoritmo.comparacion,
+        ruta_archivo="filtroLipinski2",
+        autor_id=usuario_id,
+    )
+    db_session.add(algoritmo)
+    db_session.commit()
+
+    peticion = models.Peticion(
+        estado="COMPLETADO",
+        ruta_mol_original="entrada.sdf",
+        ruta_mol_resultado="entrada_resultado.json",
+        usuario_id=usuario_id,
+        algoritmo_id=algoritmo.id,
+    )
+    db_session.add(peticion)
+    db_session.commit()
+
+    respuesta = client.get(f"/peticiones/usuario/{usuario_id}",
+                           headers=usuario_autenticado["headers"])
+
+    assert respuesta.status_code == 200
+    fila = next(p for p in respuesta.json() if p["id"] == peticion.id)
+    assert fila["ruta_mol_resultado"] == "entrada_resultado.json"

@@ -220,8 +220,16 @@ export default function RealizarPeticion({ usuario }) {
               </td>
               <td className="acciones-celda">
                 {p.estado === 'COMPLETADO' && (
+                  /* El nombre sugerido es el del RESULTADO, no el de la entrada.
+                     descargarConToken hace a.download = nombreSugerido, que pisa
+                     el nombre que manda el servidor: con el de la entrada, un
+                     resultado JSON --un filtro, una comparacion, un RMSD-- se
+                     descargaba llamandose .sdf. El backend renombra esos
+                     ficheros a proposito (corregir_extension en app/tasks.py)
+                     para que no se hagan pasar por moleculas, y esto lo
+                     deshacia en el ultimo paso. */
                   <button
-                    onClick={() => descargarPeticion(p.id, p.ruta_mol_original)}
+                    onClick={() => descargarPeticion(p.id, p.ruta_mol_resultado || p.ruta_mol_original)}
                     className="btn-ejecutar"
                   >
                     📥 Descargar
