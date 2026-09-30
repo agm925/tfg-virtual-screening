@@ -391,9 +391,10 @@ def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
         }], "fragmento": None}
 
 
-# Los ficheros que genera la consolidacion de un cribado, segun su modo.
-_FICHEROS_DEL_CRIBADO = ("csv_ranking", "sdf_poses", "moleculas_resultado",
-                         "csv_propiedades", "json_resultados")
+# Los ficheros que genera la consolidacion de un cribado, segun su modo. Los
+# usa tambien el historial de ejecuciones (app/main.py) para ofrecerlos.
+FICHEROS_DEL_CRIBADO = ("moleculas_resultado", "csv_propiedades", "csv_ranking",
+                        "sdf_poses", "json_resultados")
 
 
 @celery_app.task(bind=True, max_retries=0)
@@ -441,7 +442,7 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
 
         # Los ficheros producidos son privados de su propietario.
         generados = [a for r in planos for a in (r.get("archivos") or [])]
-        generados += [resultado[clave] for clave in _FICHEROS_DEL_CRIBADO if resultado.get(clave)]
+        generados += [resultado[clave] for clave in FICHEROS_DEL_CRIBADO if resultado.get(clave)]
         _registrar_resultados(db, generados, usuario_id, ejecucion_id=ejecucion_id)
 
         estado_final = resultado.get("estado", "completado")

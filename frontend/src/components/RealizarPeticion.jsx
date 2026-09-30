@@ -12,6 +12,22 @@ const BADGE_LABEL  = { PENDIENTE:'⏳ En cola', PROCESANDO:'⚙️ Procesando', 
 
 const CANCELABLE = ['pendiente', 'procesando', 'PENDIENTE', 'PROCESANDO'];
 
+// Los ficheros de un cribado llevan en el nombre la base de datos, la ejecución
+// y la fecha, para que dos ejecuciones no se pisen. Como texto de un botón es
+// ilegible: se enseña qué es, y el nombre completo queda en el tooltip.
+const ETIQUETA_FICHERO = {
+  moleculas_:   'Moléculas',
+  propiedades_: 'Propiedades',
+  ranking_:     'Ranking',
+  poses_:       'Poses',
+  resultados_:  'Resultados completos',
+};
+
+function etiquetaFichero(nombre) {
+  const prefijo = Object.keys(ETIQUETA_FICHERO).find(p => nombre.startsWith(p));
+  return prefijo ? `${ETIQUETA_FICHERO[prefijo]} (${nombre.split('.').pop().toUpperCase()})` : nombre;
+}
+
 function formatFecha(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -279,10 +295,11 @@ export default function RealizarPeticion({ usuario }) {
                         key={f}
                         onClick={() => descargarConToken(`/uploads/${f}`, f).catch(err => alert(err.message))}
                         className="btn-ejecutar"
+                        title={f}
                         style={{ display:'inline-block',
                                  marginRight:'6px', marginBottom:'4px', fontSize:'11px' }}
                       >
-                        📥 {f}
+                        📥 {etiquetaFichero(f)}
                       </button>
                     ))
                   : <span style={{ fontSize:'12px', color:'#aaa' }}>—</span>

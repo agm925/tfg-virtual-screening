@@ -245,6 +245,35 @@ def test_listar_ejecuciones_de_usuario_propio(client, usuario_autenticado):
     assert respuesta.status_code == 200
 
 
+def test_el_historial_ofrece_todos_los_ficheros_de_un_cribado(
+    client, usuario_autenticado, db_session
+):
+    """
+    Solo se ofrecia el CSV de ranking. Un cribado de Lipinski o de preparacion
+    no tiene ranking, asi que en la pagina de peticiones no aparecia ningun
+    resultado, y el panel del editor se pierde al cambiar de pagina: el
+    usuario no tenia donde encontrar sus moleculas.
+    """
+    usuario_id = usuario_autenticado["usuario"]["id"]
+    workflow, ejecucion = _workflow_con_ejecucion(db_session, usuario_id)
+    ejecucion.estado = "completado"
+    ejecucion.resultados_json = {
+        "modo": "batch", "modo_resultado": "transformacion",
+        "moleculas_resultado": "moleculas_bd_e1.sdf",
+        "csv_propiedades": "propiedades_bd_e1.csv",
+        "json_resultados": "resultados_bd_e1.json",
+        "csv_ranking": None,
+    }
+    db_session.commit()
+
+    respuesta = client.get(f"/ejecuciones/usuario/{usuario_id}",
+                           headers=usuario_autenticado["headers"])
+
+    fila = next(e for e in respuesta.json() if e["id"] == ejecucion.id)
+    assert fila["archivos"] == ["moleculas_bd_e1.sdf", "propiedades_bd_e1.csv",
+                                "resultados_bd_e1.json"]
+
+
 def test_cancelar_ejecucion_ajena_devuelve_404(
     client, mock_celery, usuario_autenticado, otro_usuario_autenticado, db_session
 ):

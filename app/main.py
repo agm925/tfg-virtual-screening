@@ -7,7 +7,8 @@ from app import models, permisos, schemas
 from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
-from app.tasks import ejecutar_peticion_async, ejecutar_workflow_async, ejecutar_workflow_batch_async
+from app.tasks import (FICHEROS_DEL_CRIBADO, ejecutar_peticion_async,
+                       ejecutar_workflow_async, ejecutar_workflow_batch_async)
 from app.email_utils import correo_verificacion
 from app.auth import (
     hash_password, verify_password, crear_access_token,
@@ -729,9 +730,13 @@ def listar_ejecuciones_usuario(
         archivos = []
         if e.resultados_json and isinstance(e.resultados_json, dict):
             rj = e.resultados_json
-            # Modo batch: el CSV de ranking es el archivo principal
-            if rj.get("modo") == "batch" and rj.get("csv_ranking"):
-                archivos.append(os.path.basename(rj["csv_ranking"]))
+            # Un cribado ofrece TODOS sus ficheros, no solo el ranking: uno de
+            # Lipinski o de preparacion no tiene ranking, y su resultado --las
+            # moleculas y sus propiedades-- no aparecia en ninguna parte fuera
+            # del panel del editor, que se pierde al cambiar de pagina.
+            if rj.get("modo") == "batch":
+                archivos += [os.path.basename(rj[clave])
+                             for clave in FICHEROS_DEL_CRIBADO if rj.get(clave)]
             else:
                 nodos = rj.get("resultados", rj)
                 for nodo in nodos.values() if isinstance(nodos, dict) else []:
