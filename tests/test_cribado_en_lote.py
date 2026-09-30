@@ -355,7 +355,7 @@ def trozo(monkeypatch, tmp_path):
         _biblioteca(tmp_path / "uploads" / "biblio.sdf", list(titulos), separador_final)
 
         algoritmo = {"llamadas": 0, "vistos": None, "btmp_durante": None,
-                     "devolver": "todas", "nombres_propios": False}
+                     "devolver": "todas", "nombres_propios": False, "fallan": set()}
 
         def falso(ruta, *archivos, flags=()):
             algoritmo["llamadas"] += 1
@@ -369,7 +369,8 @@ def trozo(monkeypatch, tmp_path):
                 if algoritmo["devolver"] == i:
                     continue
                 nombre = "mol_{}".format(i + 1) if algoritmo["nombres_propios"] else titulo
-                entradas.append({"nombre": nombre, "MW": 100.0 + i, "estado": "PASS"})
+                entradas.append({"nombre": nombre, "MW": 100.0 + i,
+                                 "estado": "FAIL" if i in algoritmo["fallan"] else "PASS"})
             with open(archivos[-1], "w", encoding="utf-8") as f:
                 json.dump({"exito": True, "total": len(entradas), "pass": len(entradas),
                            "fail": 0, "moleculas": entradas}, f)
@@ -404,8 +405,10 @@ def test_el_bloque_entero_va_en_un_solo_job(trozo):
     assert algoritmo["llamadas"] == 1, "una sola ejecucion real para las cuatro"
     assert [r["nombre"] for r in resultados] == ["MOL0", "MOL1", "MOL2", "MOL3"]
     assert all(r["exito"] for r in resultados)
-    # El score sale de la parte de cada molecula, no de la primera del trozo.
-    assert [r["score"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
+    # Las propiedades salen de la parte de cada molecula, no de la primera
+    # del trozo. Un preprocesado no puntua: no hay score que ordenar.
+    assert [r["propiedades"]["MW"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
+    assert all(r["score"] is None for r in resultados)
 
 
 def test_ni_un_fichero_por_molecula(trozo):
@@ -457,7 +460,7 @@ def test_nombres_repetidos_o_vacios_no_confunden_el_reparto(trozo):
     resultados = _procesar(ejecutor, indices)
 
     assert [r["nombre"] for r in resultados] == ["DUP", "DUP", "mol_3", "OTRA"]
-    assert [r["score"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
+    assert [r["propiedades"]["MW"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
 
 
 def test_un_algoritmo_de_una_sola_molecula_no_vale(trozo, tmp_path):
@@ -485,7 +488,7 @@ def test_si_falta_una_molecula_solo_falla_esa(trozo):
 
     assert [r["exito"] for r in resultados] == [True, True, False, True]
     assert "no devolvio resultado" in resultados[2]["errores_nodo"][0]
-    assert resultados[3]["score"] == 103.0, "las demas no se corren de sitio"
+    assert resultados[3]["propiedades"]["MW"] == 103.0, "las demas no se corren de sitio"
 
 
 def test_si_el_algoritmo_pone_sus_nombres_se_empareja_por_orden(trozo):
@@ -495,7 +498,7 @@ def test_si_el_algoritmo_pone_sus_nombres_se_empareja_por_orden(trozo):
     resultados = _procesar(ejecutor, indices)
 
     assert [r["nombre"] for r in resultados] == ["MOL0", "MOL1", "MOL2", "MOL3"]
-    assert [r["score"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
+    assert [r["propiedades"]["MW"] for r in resultados] == [100.0, 101.0, 102.0, 103.0]
 
 
 def test_una_salida_que_no_es_json_no_se_trocea(trozo):
@@ -570,4 +573,145 @@ def test_un_bloque_cancelado_no_extrae_ni_prueba_otro_camino(monkeypatch):
 
     monkeypatch.setattr(ejecutor, "_procesar_en_trozo", trozo_cancelado_a_medias)
 
-    assert ejecutor.procesar_bloque([0, 1], debe_parar=lambda: bool(cancelado)) == []
+    bloque = ejecutor.procesar_bloque([0, 1], debe_parar=lambda: bool(cancelado))
+    assert bloque == {"resultados": [], "fragmento": None}
+
+
+# ---------------------------------------------------------------------------
+# Que devuelve el cribado: moleculas cuando el algoritmo transforma o filtra
+# ---------------------------------------------------------------------------
+
+def _como_bloque(ejecutor, monkeypatch):
+    """Lo minimo para llamar a procesar_bloque sobre la biblioteca del fixture."""
+    monkeypatch.setattr(ejecutor, "localizar_base_de_datos",
+                        lambda: ("biblio.sdf", os.path.join("uploads", "biblio.sdf")))
+    monkeypatch.setattr(ejecutor, "_encontrar_nodo_bd", lambda: {"id": "nodo_bd"})
+
+
+def test_un_filtro_devuelve_solo_las_que_cumplen_anotadas(trozo, monkeypatch):
+    """
+    Antes un cribado con Lipinski devolvia un "ranking" por peso molecular y
+    ninguna molecula. Lo que se espera de un filtro es la biblioteca filtrada.
+    """
+    from rdkit import Chem
+
+    ejecutor, indices, algoritmo = trozo()
+    algoritmo["fallan"] = {1, 3}
+    _como_bloque(ejecutor, monkeypatch)
+
+    bloque = ejecutor.procesar_bloque(indices)
+
+    assert [r["filtro"] for r in bloque["resultados"]] == ["PASS", "FAIL", "PASS", "FAIL"]
+    assert all(r["modo"] == "transformacion" for r in bloque["resultados"])
+    fragmento = os.path.join("uploads", bloque["fragmento"])
+    moleculas = list(Chem.SDMolSupplier(fragmento))
+    # Los registros originales, con su nombre real, no la etiqueta del trozo.
+    assert [m.GetProp("_Name") for m in moleculas] == ["MOL0", "MOL2"]
+    assert [m.GetDoubleProp("MW") for m in moleculas] == [100.0, 102.0]
+
+
+def test_consolidar_un_filtro_da_un_sdf_y_una_tabla_sin_ranking(trozo, monkeypatch):
+    ejecutor, indices, algoritmo = trozo()
+    algoritmo["fallan"] = {1}
+    _como_bloque(ejecutor, monkeypatch)
+    bloque = ejecutor.procesar_bloque(indices)
+
+    salida = ejecutor.consolidar(bloque["resultados"], "biblio.sdf", 4, 1.0,
+                                 fragmentos=[bloque["fragmento"]])
+
+    assert salida["modo_resultado"] == "transformacion"
+    assert salida["ranking"] == [] and "csv_ranking" not in salida
+    assert salida["total_en_fichero"] == 3
+    assert salida["no_cumplen"] == 1
+    assert not os.path.exists(os.path.join("uploads", bloque["fragmento"])), \
+        "el fragmento se borra al unirlo"
+    assert _titulos_del_sdf(os.path.join("uploads", salida["moleculas_resultado"])) == \
+        ["MOL0", "MOL2", "MOL3"]
+
+    with open(os.path.join("uploads", salida["csv_propiedades"]), encoding="utf-8") as f:
+        filas = [linea.strip().split(",") for linea in f if linea.strip()]
+    assert filas[0][:3] == ["Nombre molécula", "Estado", "MW"]
+    assert [(fila[0], fila[1]) for fila in filas[1:]] == [
+        ("MOL0", "PASS"), ("MOL1", "FAIL"), ("MOL2", "PASS"), ("MOL3", "PASS")]
+
+
+class GrafoQueTransforma:
+    """
+    Doble de un grafo que calcula propiedades y despues prepara la molecula:
+    la salida final es un SDF por molecula, con un titulo que no es el suyo.
+    """
+
+    def __init__(self, mol_info):
+        self._mol = mol_info
+        self._salida = os.path.join("uploads", "prep_m{}.sdf".format(mol_info["indice"]))
+        self.archivos_generados = []
+
+    def ejecutar(self):
+        with open(self._mol["ruta"], "rb") as f:
+            _, _, resto = f.read().partition(b"\n")
+        with open(self._salida, "wb") as f:
+            f.write(b"preparada\n" + resto)
+        self.archivos_generados.append(os.path.basename(self._salida))
+        return {"exito": True, "errores": [], "resultados": {
+            "lip":  {"tipo": "preprocesado", "archivo_salida": "uploads/lip.json",
+                     "resultado_json": {"moleculas": [{"MW": 100.0 + self._mol["indice"],
+                                                       "estado": "FAIL"}]}},
+            "prep": {"tipo": "preprocesado", "archivo_salida": self._salida,
+                     "resultado_json": {}},
+        }}
+
+
+def test_un_algoritmo_que_devuelve_moleculas_da_un_solo_fichero(trozo, monkeypatch):
+    """
+    Preparar, alinear o generar 3D dejaba un fichero por molecula: diez mil
+    para una biblioteca de diez mil. Ahora van todas a uno, con su nombre real
+    y las propiedades que se calcularon por el camino. Decide el ULTIMO
+    algoritmo: aqui un Lipinski intermedio dice FAIL, pero el resultado son
+    las moleculas preparadas, todas.
+    """
+    from rdkit import Chem
+
+    ejecutor, indices, _ = trozo()
+    _como_bloque(ejecutor, monkeypatch)
+    monkeypatch.setattr(ejecutor, "_preparar_molecula",
+                        lambda mol, _nodo: GrafoQueTransforma(mol))
+    monkeypatch.setattr(ejecutor, "_procesar_en_trozo", lambda *a, **k: None)
+    monkeypatch.setattr(ejecutor, "_procesar_en_array", lambda *a, **k: None)
+
+    bloque = ejecutor.procesar_bloque(indices)
+
+    moleculas = list(Chem.SDMolSupplier(os.path.join("uploads", bloque["fragmento"])))
+    assert [m.GetProp("_Name") for m in moleculas] == ["MOL0", "MOL1", "MOL2", "MOL3"]
+    assert [m.GetDoubleProp("MW") for m in moleculas] == [100.0, 101.0, 102.0, 103.0]
+    assert not [n for n in os.listdir("uploads") if n.startswith("prep_m")], \
+        "no deben quedar ficheros por molecula"
+    assert all(r["archivos"] == [] for r in bloque["resultados"])
+
+
+def test_el_docking_da_ranking_y_un_sdf_con_la_mejor_pose(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "uploads").mkdir()
+    resultados = []
+    for i, afinidad in enumerate([-6.0, -9.5, -7.2]):
+        poses = "poses_m{}.sdf".format(i)
+        (tmp_path / "uploads" / poses).write_text(
+            _MOLBLOCK.format(titulo="mejor") + "$$$$\n"
+            + _MOLBLOCK.format(titulo="peor") + "$$$$\n", encoding="utf-8")
+        resultados.append({
+            "nombre": "LIG{}".format(i), "score": afinidad, "tipo_score": "docking",
+            "exito": True, "errores_nodo": [], "archivos": [poses], "indice": i,
+            "modo": "docking", "molecula_salida": poses,
+            "propiedades": {"mejor_afinidad": afinidad},
+        })
+    ejecutor = BatchWorkflowExecutor({"nodes": []}, usuario_id=1, ejecucion_id=5)
+
+    salida = ejecutor.consolidar(resultados, "ligandos.sdf", 3, 1.0)
+
+    assert salida["csv_ranking"] and salida["modo_resultado"] == "docking"
+    ruta = tmp_path / "uploads" / salida["sdf_poses"]
+    texto = ruta.read_text(encoding="utf-8")
+    # Una pose por ligando, la mejor, en orden de afinidad.
+    assert _titulos_del_sdf(ruta) == ["LIG1", "LIG2", "LIG0"]
+    assert texto.count("$$$$") == 3
+    assert "> <posicion>\n1\n" in texto
+    assert not list((tmp_path / "uploads").glob("poses_m*.sdf"))

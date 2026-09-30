@@ -8,10 +8,12 @@ import csv
 import json
 import os
 import re
+import shutil
 from typing import Dict, List, Any, Tuple
 from datetime import datetime
 from app.ejecutor import (ejecutar_algoritmo, ejecutar_algoritmos_en_lote,
                           desviar_invocaciones, vigilar_cancelacion)
+from app.formatos import EXTENSIONES_MOLECULA
 from app.logging_config import logger
 
 
@@ -753,8 +755,6 @@ class BatchWorkflowExecutor:
             return "rmsd"
         if "afinidad" in c:
             return "docking"
-        if c in ("mw", "peso_molecular"):
-            return "lipinski"
         return tipo_nodo or "score"
 
     @staticmethod
@@ -790,6 +790,13 @@ class BatchWorkflowExecutor:
             if not isinstance(nodo_res, dict):
                 continue
             tipo = nodo_res.get("tipo")
+            # Solo puntuan la comparacion y el docking. Un preprocesado no
+            # tiene puntuacion: antes se tomaba el peso molecular de Lipinski
+            # como score, y el cribado devolvia un "ranking" de la molecula
+            # mas ligera a la mas pesada, que no significa nada. Lo que da un
+            # preprocesado son moleculas y propiedades (ver _describir_salida).
+            if tipo not in ("comparacion", "docking"):
+                continue
             # "or {}" y no get(..., {}): si la clave existe con valor None
             # (nodo que falló antes de escribir su JSON), el "in" de abajo
             # reventaría con TypeError.
@@ -832,23 +839,6 @@ class BatchWorkflowExecutor:
                     if score is not None:
                         return score, "docking"
 
-            elif tipo == "preprocesado":
-                if not isinstance(rj, dict):
-                    continue
-                # filtroLipinski.py soporta bibliotecas multi-molécula, así que
-                # anida las propiedades bajo "moleculas": [{...}] y en la raíz
-                # solo deja el recuento (total/pass/fail). Buscar "MW" en la
-                # raíz no encontraba nada nunca. En batch cada fichero temporal
-                # tiene exactamente una molécula, así que el score es su MW.
-                moleculas = rj.get("moleculas")
-                if isinstance(moleculas, list) and moleculas and isinstance(moleculas[0], dict):
-                    score = self._como_score(moleculas[0].get("MW"))
-                    if score is not None:
-                        return score, "lipinski"
-                score = self._como_score(rj.get("MW"))
-                if score is not None:
-                    return score, "lipinski"
-
         return None, None
 
     def _generar_csv(self, ranking: List[Dict], nombre_bd: str, tipo_score: str) -> str:
@@ -856,7 +846,6 @@ class BatchWorkflowExecutor:
             "similitud": "Tanimoto (0-1, mayor mejor)",
             "rmsd":      "RMSD (Å, menor mejor)",
             "docking":   "Afinidad (kcal/mol, menor mejor)",
-            "lipinski":  "Peso molecular (Da)",
         }.get(tipo_score or "", "Score")
 
         sufijo_ejecucion = f"_e{self.ejecucion_id}" if self.ejecucion_id else ""
@@ -921,6 +910,7 @@ class BatchWorkflowExecutor:
 
     def _resultado_molecula(self, mol_info: Dict, executor, resultado: Dict) -> Dict:
         score, tipo_score = self._extraer_score(resultado)
+        detalle = self._detalle_por_nodo(resultado)
         return {
             "nombre":       mol_info["nombre"],
             "score":        score,
@@ -932,7 +922,104 @@ class BatchWorkflowExecutor:
             # el MW/LogP/HBD de un Lipinski o el Tanimoto de una comparacion
             # existian UNICAMENTE dentro del JSON por molecula: de ahi venia
             # tener un fichero por molecula para poder consultarlos.
-            "detalle":      self._detalle_por_nodo(resultado),
+            "detalle":      detalle,
+            **self._describir_salida(resultado, detalle, mol_info["indice"]),
+        }
+
+    # ------------------------------------------------------------------
+    # Que devuelve el cribado: ranking, poses o moleculas
+    # ------------------------------------------------------------------
+
+    TIPOS_ALGORITMO = ("alineacion", "comparacion", "preprocesado", "docking")
+
+    # Claves del JSON de un algoritmo que no son propiedades de la molecula:
+    # recuentos del fichero, el propio nombre o rutas del servidor.
+    _CLAVES_NO_PROPIEDAD = {"nombre", "exito", "error", "estado", "total", "pass", "fail"}
+
+    @classmethod
+    def _nodo_terminal(cls, resultado: Dict):
+        """
+        El ultimo nodo de algoritmo que se ejecuto: el que decide que devuelve
+        el cribado. Los resultados del grafo se guardan en orden de ejecucion.
+        """
+        terminal = None
+        for nodo_res in (resultado.get("resultados") or {}).values():
+            if isinstance(nodo_res, dict) and nodo_res.get("tipo") in cls.TIPOS_ALGORITMO:
+                terminal = nodo_res
+        return terminal
+
+    @classmethod
+    def _describir_salida(cls, resultado: Dict, detalle: Dict, indice) -> Dict:
+        """
+        Lo que el cribado necesita saber de una molecula para montar su
+        resultado final, segun lo que haya hecho el ultimo algoritmo:
+
+          · ranking         una comparacion que puntua (Tanimoto, RMSD): se
+                            ordenan las moleculas por su puntuacion;
+          · docking         poses con afinidad: ranking, y ademas la mejor pose
+                            de cada una en un SDF;
+          · transformacion  todo lo demas --preparar, alinear, filtrar,
+                            calcular propiedades--: el resultado son las
+                            moleculas, anotadas con lo calculado.
+
+        Lo decide lo que DEVUELVE el algoritmo y no el tipo de nodo:
+        alinear3D es un nodo de comparacion y devuelve la molecula alineada.
+        Asi vale igual para los algoritmos que suban los usuarios.
+        """
+        terminal = cls._nodo_terminal(resultado)
+        if terminal is None:
+            return {"indice": indice, "modo": None, "propiedades": {},
+                    "filtro": None, "molecula_salida": None}
+
+        salida = terminal.get("archivo_poses") or terminal.get("archivo_salida") or ""
+        es_molecula = os.path.splitext(salida)[1].lower() in EXTENSIONES_MOLECULA
+        if terminal["tipo"] == "docking":
+            modo = "docking"
+        elif terminal["tipo"] == "comparacion" and not es_molecula:
+            modo = "ranking"
+        else:
+            modo = "transformacion"
+
+        propiedades = {}
+        for nodo in detalle.values():
+            propiedades.update(cls._propiedades_de(nodo.get("datos")))
+
+        entrada = cls._entrada_de_la_molecula(terminal.get("resultado_json"))
+        estado = str(entrada.get("estado", "")).upper()
+
+        return {
+            "indice":          indice,
+            "modo":            modo,
+            "propiedades":     propiedades,
+            # Un algoritmo que marca cada molecula como PASS/FAIL es un filtro:
+            # al SDF final solo van las que lo cumplen.
+            "filtro":          estado if estado in ("PASS", "FAIL") else None,
+            "molecula_salida": os.path.basename(salida) if es_molecula else None,
+        }
+
+    @staticmethod
+    def _entrada_de_la_molecula(datos) -> Dict:
+        """
+        La parte del JSON de un algoritmo que habla de ESTA molecula. Los que
+        aceptan bibliotecas --filtroLipinski-- la envuelven en
+        {"moleculas": [{...}]}, y en el cribado cada una llega sola.
+        """
+        if not isinstance(datos, dict):
+            return {}
+        lista = datos.get("moleculas")
+        if isinstance(lista, list) and lista and isinstance(lista[0], dict):
+            return lista[0]
+        return datos
+
+    @classmethod
+    def _propiedades_de(cls, datos) -> Dict:
+        """Los valores de una sola cifra o palabra: lo que cabe en un campo SDF o en una celda."""
+        return {
+            clave: valor
+            for clave, valor in cls._entrada_de_la_molecula(datos).items()
+            if clave not in cls._CLAVES_NO_PROPIEDAD
+            and not str(clave).startswith("archivo")
+            and isinstance(valor, (bool, int, float, str))
         }
 
     @staticmethod
@@ -1001,6 +1088,7 @@ class BatchWorkflowExecutor:
                     "exito":        False,
                     "errores_nodo": [str(e)],
                     "archivos":     [],
+                    "indice":       mol_info["indice"],
                 })
             finally:
                 if os.path.exists(mol_info["ruta"]):
@@ -1193,6 +1281,7 @@ class BatchWorkflowExecutor:
                 return self._trozo_descartado(
                     "el JSON del trozo no se puede repartir entre sus moleculas")
 
+            modo = self._describir_salida(resultado, {}, None)["modo"]
             resultados = []
             for mol in moleculas:
                 entrada = asignadas.get(mol["indice"])
@@ -1202,7 +1291,7 @@ class BatchWorkflowExecutor:
                     resultados.append({
                         "nombre": mol["nombre"], "score": None, "tipo_score": None,
                         "exito": False, "errores_nodo": [str(error)], "archivos": [],
-                        "detalle": {},
+                        "detalle": {}, "indice": mol["indice"], "modo": modo,
                     })
                     continue
 
@@ -1213,10 +1302,12 @@ class BatchWorkflowExecutor:
                 propio["resultados"][nodo_id] = dict(
                     nodo, resultado_json=self._parte_de_una_molecula(datos_trozo, entrada))
                 score, tipo_score = self._extraer_score(propio)
+                detalle = self._detalle_por_nodo(propio)
                 resultados.append({
                     "nombre": mol["nombre"], "score": score, "tipo_score": tipo_score,
                     "exito": True, "errores_nodo": [], "archivos": [],
-                    "detalle": self._detalle_por_nodo(propio),
+                    "detalle": detalle,
+                    **self._describir_salida(propio, detalle, mol["indice"]),
                 })
 
         except Exception as e:  # noqa: BLE001
@@ -1273,10 +1364,14 @@ class BatchWorkflowExecutor:
         return self._segunda_pasada(moleculas, nodo_bd_id, calculado, on_molecula)
 
     def procesar_bloque(self, indices: List[int], on_molecula=None,
-                        debe_parar=None) -> List[Dict]:
+                        debe_parar=None) -> Dict[str, Any]:
         """
-        Ejecuta el workflow sobre las moleculas de `indices` y devuelve una
-        lista de resultados por molecula.
+        Ejecuta el workflow sobre las moleculas de `indices` y devuelve
+        {"resultados": [uno por molecula], "fragmento": fichero o None}.
+
+        El fragmento es la parte de este bloque del fichero de moleculas final
+        (ver _escribir_fragmento); solo lo hay cuando el cribado devuelve
+        moleculas y no un ranking.
 
         Es la unidad de trabajo que ejecuta cada subtarea Celery. Se procesan
         de una en una dentro del bloque, pero los bloques corren en paralelo.
@@ -1287,11 +1382,14 @@ class BatchWorkflowExecutor:
         devuelve lo que tenga en cuanto se entera, sin esperar a terminar.
         """
         debe_parar = debe_parar or (lambda: False)
+        _, ruta_sdf = self.localizar_base_de_datos()
         with vigilar_cancelacion(debe_parar):
-            return self._procesar_bloque(indices, on_molecula, debe_parar)
+            resultados = self._procesar_bloque(ruta_sdf, indices, on_molecula, debe_parar)
+        return {"resultados": resultados,
+                "fragmento": self._escribir_fragmento(ruta_sdf, resultados)}
 
-    def _procesar_bloque(self, indices: List[int], on_molecula, debe_parar) -> List[Dict]:
-        nombre_bd, ruta_sdf = self.localizar_base_de_datos()
+    def _procesar_bloque(self, ruta_sdf: str, indices: List[int], on_molecula,
+                         debe_parar) -> List[Dict]:
         nodo_bd_id = self._encontrar_nodo_bd()["id"]
 
         # Tres caminos, del mas barato al mas caro, y cada uno devuelve None
@@ -1353,6 +1451,7 @@ class BatchWorkflowExecutor:
                     "exito":        False,
                     "errores_nodo": [str(e)],
                     "archivos":     [],
+                    "indice":       mol_info["indice"],
                 })
             finally:
                 if os.path.exists(mol_info["ruta"]):
@@ -1362,6 +1461,94 @@ class BatchWorkflowExecutor:
 
         return resultados
 
+
+    # Formatos en los que varias moleculas caben en un fichero con solo
+    # concatenarlas. De ellos, solo el SDF tiene campos de datos para anotar.
+    FORMATOS_CONCATENABLES = (".sdf", ".mol2", ".smi")
+
+    def _escribir_fragmento(self, ruta_sdf: str, resultados: List[Dict]):
+        """
+        Las moleculas de este bloque en un solo fichero, en el orden de la
+        biblioteca, o None si el cribado no devuelve moleculas.
+
+        Antes un cribado que preparaba, alineaba o filtraba moleculas dejaba
+        un fichero por molecula en uploads/ --diez mil para una biblioteca de
+        diez mil--, y uno de propiedades como Lipinski no devolvia ninguna
+        molecula, solo un "ranking" por peso. Ahora cada bloque escribe su
+        parte, en paralelo con los demas, y la consolidacion solo tiene que
+        unirlas:
+
+          · si el algoritmo devuelve moleculas, las suyas, con su nombre real
+            y anotadas con las propiedades calculadas en el grafo;
+          · si devuelve un JSON, el registro ORIGINAL de la biblioteca,
+            copiado tal cual con el indice y anotado. Si el JSON dice FAIL
+            --un filtro--, la molecula no entra.
+
+        Las que fallan no entran en el fichero: quedan en el CSV como ERROR.
+        """
+        from app import indice_sdf
+
+        if not any(r.get("modo") == "transformacion" for r in resultados):
+            return None
+
+        validas = sorted((r for r in resultados
+                          if r.get("exito") and r.get("filtro") != "FAIL"),
+                         key=lambda r: r["indice"])
+        formatos = {os.path.splitext(r["molecula_salida"])[1].lower()
+                    for r in validas if r.get("molecula_salida")}
+        if len(formatos) > 1 or not formatos <= set(self.FORMATOS_CONCATENABLES):
+            # pdbqt, pdb o xyz no admiten varias moleculas por concatenacion:
+            # se quedan los ficheros por molecula, como antes.
+            logger.warning("fragmento_no_concatenable", extra={
+                "ejecucion_id": self.ejecucion_id, "formatos": sorted(formatos)})
+            return None
+        formato = formatos.pop() if formatos else ".sdf"
+
+        partes = []
+        limites = None
+        with open(ruta_sdf, "rb") as biblioteca:
+            for r in validas:
+                if r.get("molecula_salida"):
+                    ruta = os.path.join("uploads", r["molecula_salida"])
+                    if not os.path.exists(ruta):
+                        continue
+                    with open(ruta, "rb") as f:
+                        contenido = f.read()
+                    if formato == ".sdf":
+                        partes += [indice_sdf.con_propiedades(
+                                       indice_sdf.con_titulo(registro, r["nombre"]),
+                                       r.get("propiedades") or {})
+                                   for registro in indice_sdf.registros(contenido)]
+                    elif contenido.strip():
+                        partes.append(contenido if contenido.endswith(b"\n")
+                                      else contenido + b"\n")
+                else:
+                    if limites is None:
+                        limites = indice_sdf.obtener(ruta_sdf)
+                    registro = indice_sdf.leer_registro(biblioteca, limites, r["indice"])
+                    partes.append(indice_sdf.con_propiedades(
+                        registro, r.get("propiedades") or {}))
+
+        # Las moleculas ya estan en el fragmento: los ficheros por molecula,
+        # tambien los intermedios de un grafo encadenado, sobran.
+        for r in resultados:
+            conservados = []
+            for nombre in r.get("archivos") or []:
+                if os.path.splitext(nombre)[1].lower() in EXTENSIONES_MOLECULA:
+                    ruta = os.path.join("uploads", nombre)
+                    if os.path.exists(ruta):
+                        os.remove(ruta)
+                else:
+                    conservados.append(nombre)
+            r["archivos"] = conservados
+
+        if not partes:
+            return None
+        sufijo = "e{}_".format(self.ejecucion_id) if self.ejecucion_id else ""
+        nombre = "_bfrag_{}{}{}".format(sufijo, validas[0]["indice"], formato)
+        with open(os.path.join("uploads", nombre), "wb") as f:
+            f.writelines(partes)
+        return nombre
 
     @staticmethod
     def _detalle_por_nodo(resultado: Dict) -> Dict:
@@ -1426,13 +1613,31 @@ class BatchWorkflowExecutor:
                       ensure_ascii=False, indent=2)
         return nombre
 
+    def _nombre_resultado(self, prefijo: str, nombre_bd: str, extension: str) -> str:
+        """Nombre de un fichero de resultado: con el id de la ejecucion, para
+        que dos ejecuciones concurrentes no escriban en el mismo."""
+        sufijo = "_e{}".format(self.ejecucion_id) if self.ejecucion_id else ""
+        return "{}_{}{}_{}{}".format(
+            prefijo, os.path.splitext(nombre_bd)[0], sufijo,
+            datetime.utcnow().strftime("%Y%m%d_%H%M%S"), extension)
+
     def consolidar(self, resultados: List[Dict], nombre_bd: str,
-                   total_moleculas: int, duracion: float) -> Dict[str, Any]:
+                   total_moleculas: int, duracion: float,
+                   fragmentos=()) -> Dict[str, Any]:
         """
-        Ordena los resultados de todos los bloques, genera el CSV y arma el
-        resumen. Es el callback del chord: se ejecuta una sola vez, cuando
+        Junta los resultados de todos los bloques y genera los ficheros del
+        cribado. Es el callback del chord: se ejecuta una sola vez, cuando
         todas las subtareas han terminado.
+
+        Lo que se genera depende de lo que haga el ultimo algoritmo del grafo
+        (ver _describir_salida): un ranking si puntua, las moleculas si las
+        transforma o las filtra, y las dos cosas en un docking.
         """
+        modo = next((r["modo"] for r in resultados if r.get("modo")), "ranking")
+        if modo == "transformacion":
+            return self._consolidar_moleculas(
+                resultados, nombre_bd, total_moleculas, duracion, fragmentos)
+
         tipo_score_global = next(
             (r["tipo_score"] for r in resultados if r.get("tipo_score")), None)
 
@@ -1450,6 +1655,7 @@ class BatchWorkflowExecutor:
 
         ranking  = validos + invalidos
         ruta_csv = self._generar_csv(ranking, nombre_bd, tipo_score_global)
+        sdf_poses = self._sdf_de_poses(validos, nombre_bd) if modo == "docking" else None
 
         # El resultado del cribado es UN fichero, no uno por molecula: los de
         # datos se borran una vez su contenido esta en el JSON consolidado.
@@ -1459,6 +1665,7 @@ class BatchWorkflowExecutor:
 
         resumen = {
             "modo":             "batch",
+            "modo_resultado":   modo,
             "estado":           "completado" if validos else "error",
             "exito":            len(validos) > 0,
             "total_moleculas":  total_moleculas,
@@ -1473,7 +1680,145 @@ class BatchWorkflowExecutor:
         return dict(resumen,
                     ranking=ranking,
                     csv_ranking=ruta_csv,
+                    sdf_poses=sdf_poses,
                     json_resultados=nombre_json)
+
+    def _sdf_de_poses(self, ranking: List[Dict], nombre_bd: str):
+        """
+        La mejor pose de cada molecula en un solo SDF, en el orden del ranking
+        y anotada con su posicion y su afinidad. smina escribe las poses de
+        mejor a peor, asi que la mejor es la primera de su fichero.
+
+        Antes cada docking dejaba su fichero de poses: una biblioteca de diez
+        mil eran diez mil ficheros que habia que abrir uno a uno. Los de cada
+        molecula se borran al pasar al SDF comun.
+        """
+        from app import indice_sdf
+
+        partes = []
+        for r in ranking:
+            nombre = r.get("molecula_salida")
+            ruta = os.path.join("uploads", nombre) if nombre else None
+            if not ruta or not os.path.exists(ruta):
+                continue
+            with open(ruta, "rb") as f:
+                poses = indice_sdf.registros(f.read())
+            if poses:
+                partes.append(indice_sdf.con_propiedades(
+                    indice_sdf.con_titulo(poses[0], r["nombre"]),
+                    {"posicion": r["posicion"], **(r.get("propiedades") or {})}))
+            os.remove(ruta)
+            r["archivos"] = [a for a in r.get("archivos") or [] if a != nombre]
+
+        if not partes:
+            return None
+        nombre_sdf = self._nombre_resultado("poses", nombre_bd, ".sdf")
+        with open(os.path.join("uploads", nombre_sdf), "wb") as f:
+            f.writelines(partes)
+        return nombre_sdf
+
+    def _consolidar_moleculas(self, resultados: List[Dict], nombre_bd: str,
+                              total_moleculas: int, duracion: float,
+                              fragmentos) -> Dict[str, Any]:
+        """
+        El cribado de un algoritmo que transforma o filtra: sus moleculas en un
+        solo fichero, una tabla de propiedades y el JSON completo. Sin ranking,
+        que aqui no tendria sentido: ordenar por peso molecular un filtro de
+        Lipinski no dice nada de ninguna molecula.
+        """
+        moleculas = sorted(resultados, key=lambda r: (r.get("indice") is None,
+                                                      r.get("indice") or 0))
+        con_exito = [r for r in moleculas if r.get("exito")]
+        hay_filtro = any(r.get("filtro") for r in con_exito)
+
+        nombre_fichero, en_fichero = self._unir_fragmentos(fragmentos, nombre_bd)
+        nombre_csv = self._generar_csv_propiedades(moleculas, nombre_bd)
+
+        for molecula in moleculas:
+            molecula["archivos"] = self._recoger_ficheros_por_molecula(
+                molecula.get("archivos") or [])
+
+        resumen = {
+            "modo":             "batch",
+            "modo_resultado":   "transformacion",
+            "estado":           "completado" if con_exito else "error",
+            "exito":            len(con_exito) > 0,
+            "total_moleculas":  total_moleculas,
+            "total_exito":      len(con_exito),
+            "total_error":      len(moleculas) - len(con_exito),
+            "total_en_fichero": en_fichero,
+            "no_cumplen":       (sum(1 for r in con_exito if r.get("filtro") == "FAIL")
+                                 if hay_filtro else None),
+            "tipo_score":       None,
+            "base_de_datos":    nombre_bd,
+            "duracion_segundos": duracion,
+        }
+        nombre_json = self._generar_json_resultados(resumen, moleculas, nombre_bd)
+
+        return dict(resumen,
+                    ranking=[],
+                    moleculas_resultado=nombre_fichero,
+                    csv_propiedades=nombre_csv,
+                    json_resultados=nombre_json)
+
+    def _unir_fragmentos(self, fragmentos, nombre_bd: str):
+        """
+        (nombre del fichero final, moleculas que contiene) a partir de los
+        fragmentos de los bloques, que llegan en el orden de la biblioteca.
+        Se copian a trozos, sin cargarlos en memoria, y despues se borran.
+        """
+        fragmentos = [f for f in fragmentos
+                      if f and os.path.exists(os.path.join("uploads", f))]
+        if not fragmentos:
+            return None, 0
+
+        extension = os.path.splitext(fragmentos[0])[1].lower()
+        nombre = self._nombre_resultado("moleculas", nombre_bd, extension)
+        with open(os.path.join("uploads", nombre), "wb") as destino:
+            for fragmento in fragmentos:
+                ruta = os.path.join("uploads", fragmento)
+                with open(ruta, "rb") as origen:
+                    shutil.copyfileobj(origen, destino)
+                os.remove(ruta)
+        return nombre, self._contar_moleculas(os.path.join("uploads", nombre), extension)
+
+    @staticmethod
+    def _contar_moleculas(ruta: str, extension: str) -> int:
+        """
+        Cuantas moleculas hay en el fichero final. No tienen por que ser las
+        que tuvieron exito: un filtro de Open Babel puede no devolver ninguna,
+        y un generador de conformeros puede devolver varias.
+        """
+        marca = {".sdf": b"$$$$", ".mol2": b"@<TRIPOS>MOLECULE"}.get(extension)
+        with open(ruta, "rb") as f:
+            if marca is None:          # .smi: una por linea
+                return sum(1 for linea in f if linea.strip())
+            return sum(1 for linea in f if linea.strip() == marca)
+
+    def _generar_csv_propiedades(self, moleculas: List[Dict], nombre_bd: str) -> str:
+        """
+        Una fila por molecula con lo que se ha calculado de ella y si cumple:
+        PASS/FAIL en un filtro, OK si se transformo, ERROR si fallo. Las
+        columnas son la union de las propiedades, en el orden en que aparecen.
+        """
+        columnas = []
+        for r in moleculas:
+            for clave in r.get("propiedades") or {}:
+                if clave not in columnas:
+                    columnas.append(clave)
+
+        nombre_csv = self._nombre_resultado("propiedades", nombre_bd, ".csv")
+        with open(os.path.join("uploads", nombre_csv), "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Nombre molécula", "Estado", *columnas, "Error"])
+            for r in moleculas:
+                estado = (r.get("filtro") or "OK") if r.get("exito") else "ERROR"
+                propiedades = r.get("propiedades") or {}
+                errores = r.get("errores_nodo") or []
+                writer.writerow([r["nombre"], estado,
+                                 *[propiedades.get(c, "") for c in columnas],
+                                 errores[0] if estado == "ERROR" and errores else ""])
+        return nombre_csv
 
     def ejecutar_batch(self, on_progreso=None) -> Dict[str, Any]:
         inicio = datetime.utcnow()

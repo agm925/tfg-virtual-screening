@@ -153,6 +153,54 @@ def con_titulo(registro: bytes, nuevo: str) -> bytes:
     return nuevo.encode("utf-8") + fin + b"\n" + resto
 
 
+def registros(contenido: bytes) -> list:
+    """
+    Los registros de un SDF en memoria, cada uno con su "$$$$". Un algoritmo
+    puede dejar varios en su salida --conformeros, un filtro que no descarta--,
+    y el ultimo puede venir sin separador.
+    """
+    partes, actual = [], []
+    for linea in contenido.splitlines(keepends=True):
+        actual.append(linea)
+        if linea.strip() == SEPARADOR:
+            partes.append(b"".join(actual))
+            actual = []
+    resto = b"".join(actual)
+    if resto.strip():
+        partes.append(terminado(resto))
+    return partes
+
+
+def _nombre_de_campo(clave) -> str:
+    return "".join(c for c in str(clave) if c not in "<>\r\n").strip() or "campo"
+
+
+def con_propiedades(registro: bytes, propiedades: dict) -> bytes:
+    """
+    El registro con cada propiedad como campo de datos del SDF (> <MW>), justo
+    antes del "$$$$". Es donde las leen RDKit (GetProp), KNIME o PyMOL, asi que
+    el SDF de un cribado se abre con los valores calculados dentro, sin
+    tener que cruzarlo con un CSV.
+
+    Solo se escriben escalares: una lista o un diccionario no tienen una
+    representacion de una linea que los lectores entiendan.
+    """
+    campos = b""
+    for clave, valor in propiedades.items():
+        if valor is None or not isinstance(valor, (bool, int, float, str)):
+            continue
+        texto = " ".join(str(valor).split())
+        campos += ("> <{}>\n{}\n\n".format(_nombre_de_campo(clave), texto)).encode("utf-8")
+    if not campos:
+        return terminado(registro)
+
+    registro = terminado(registro)
+    cuerpo = registro[:registro.rstrip().rfind(SEPARADOR)]
+    if not cuerpo.endswith(b"\n"):
+        cuerpo += b"\n"
+    return cuerpo + campos + SEPARADOR + b"\n"
+
+
 def terminado(registro: bytes) -> bytes:
     """
     El registro con su "$$$$" al final. El ultimo de un fichero puede no

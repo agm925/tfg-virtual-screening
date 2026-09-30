@@ -161,3 +161,66 @@ def test_el_inventario_numera_por_separadores(tmp_path, monkeypatch):
 
     assert total == 3
     assert indices == [0, 2]
+
+
+# ---------------------------------------------------------------------------
+# Anotar registros con propiedades (el SDF que devuelve un cribado)
+# ---------------------------------------------------------------------------
+
+MOLBLOCK_CARBONO = (
+    "{}\n  RDKit          3D\n\n"
+    "  1  0  0  0  0  0  0  0  0  0999 V2000\n"
+    "    1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+    "M  END\n"
+)
+
+
+def test_las_propiedades_se_leen_como_campos_del_sdf(tmp_path):
+    """Que el SDF de un cribado se abra con los valores dentro, en RDKit o KNIME."""
+    from rdkit import Chem
+
+    registro = MOLBLOCK_CARBONO.format("aspirina").encode() + b"$$$$\n"
+    anotado = indice_sdf.con_propiedades(
+        registro, {"MW": 180.16, "violaciones": 0, "estado_raro": "PASS",
+                   "detalle": {"MW_ok": True}, "vacio": None})
+
+    ruta = tmp_path / "anotado.sdf"
+    ruta.write_bytes(anotado)
+    mol = next(iter(Chem.SDMolSupplier(str(ruta))))
+
+    assert mol.GetProp("_Name") == "aspirina"
+    assert mol.GetDoubleProp("MW") == 180.16
+    assert mol.GetProp("violaciones") == "0"
+    # Lo que no es una sola cifra o palabra no tiene como escribirse.
+    assert not mol.HasProp("detalle") and not mol.HasProp("vacio")
+    # Las coordenadas no se tocan.
+    assert mol.GetConformer().GetAtomPosition(0).x == pytest.approx(1.5)
+
+
+def test_se_anota_aunque_falte_el_separador_final():
+    registro = MOLBLOCK_CARBONO.format("sin_separador").encode()
+
+    anotado = indice_sdf.con_propiedades(registro, {"LogP": 1.2})
+
+    assert anotado.endswith(b"> <LogP>\n1.2\n\n$$$$\n")
+    assert anotado.count(b"$$$$") == 1
+
+
+def test_un_nombre_de_campo_no_rompe_el_formato():
+    anotado = indice_sdf.con_propiedades(
+        MOLBLOCK_CARBONO.format("m").encode(), {"a<b>\nc": 1})
+
+    assert b"> <abc>\n1\n" in anotado
+
+
+def test_registros_separa_la_salida_de_un_algoritmo():
+    """gen3D o un filtro pueden dejar varias moleculas en su salida, y la
+    ultima sin separador."""
+    contenido = (MOLBLOCK_CARBONO.format("c1") + "$$$$\n"
+                 + MOLBLOCK_CARBONO.format("c2")).encode()
+
+    partes = indice_sdf.registros(contenido)
+
+    assert [indice_sdf.titulo(p) for p in partes] == ["c1", "c2"]
+    assert all(p.rstrip().endswith(b"$$$$") for p in partes)
+    assert indice_sdf.registros(b"") == []

@@ -333,8 +333,8 @@ def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
     """
     Subtarea: ejecuta el workflow sobre un bloque de moleculas.
 
-    Devuelve la lista de resultados del bloque, que el callback del chord
-    recibira junto a la de los demas. No lanza excepciones hacia arriba: un
+    Devuelve {"resultados": [...], "fragmento": ...} (ver procesar_bloque),
+    que el callback del chord recibira junto a los demas. No lanza excepciones hacia arriba: un
     bloque que falla entero impediria que el chord llegara a consolidar, asi
     que los errores se devuelven como resultados marcados.
     """
@@ -384,11 +384,16 @@ def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
         return executor.procesar_bloque(indices, on_molecula=al_terminar_molecula,
                                         debe_parar=debe_parar)
     except Exception as exc:  # noqa: BLE001
-        return [{
+        return {"resultados": [{
             "nombre": f"bloque_{indices[0] if indices else '?'}",
             "score": None, "tipo_score": None, "exito": False,
             "errores_nodo": [str(exc)], "archivos": [],
-        }]
+        }], "fragmento": None}
+
+
+# Los ficheros que genera la consolidacion de un cribado, segun su modo.
+_FICHEROS_DEL_CRIBADO = ("csv_ranking", "sdf_poses", "moleculas_resultado",
+                         "csv_propiedades", "json_resultados")
 
 
 @celery_app.task(bind=True, max_retries=0)
@@ -398,8 +403,9 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
                      descartadas: int = 0) -> dict:
     """
     Callback del chord: se ejecuta una sola vez, cuando todos los bloques han
-    terminado. Aplana los resultados, ordena el ranking, genera el CSV,
-    persiste el resumen y notifica por correo.
+    terminado. Aplana los resultados, genera los ficheros del cribado
+    --ranking, poses o moleculas, segun el algoritmo--, persiste el resumen y
+    notifica por correo.
     """
     db = SessionLocal()
     try:
@@ -412,8 +418,13 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
         if ejecucion is None or workflow is None:
             return {"exito": False, "error": "Workflow o ejecución no encontrados"}
 
-        # Aplanar: cada subtarea devolvio la lista de su bloque.
-        planos = [r for bloque in (resultados_por_bloque or []) for r in (bloque or [])]
+        # Aplanar: cada subtarea devolvio los resultados de su bloque y, si el
+        # cribado devuelve moleculas, su parte del fichero final. El chord
+        # entrega los bloques en el orden en que se lanzaron, que es el de la
+        # biblioteca, asi que los fragmentos ya vienen ordenados.
+        bloques = [b for b in (resultados_por_bloque or []) if b]
+        planos = [r for b in bloques for r in (b.get("resultados") or [])]
+        fragmentos = [b.get("fragmento") for b in bloques]
 
         cliente = _redis()
         cancelado = cliente is not None and cliente.exists(_clave_cancelacion(ejecucion_id))
@@ -421,7 +432,8 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
         executor = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
                                          ejecucion_id=ejecucion_id)
         resultado = executor.consolidar(
-            planos, nombre_bd, total_moleculas, time.time() - inicio_ts)
+            planos, nombre_bd, total_moleculas, time.time() - inicio_ts,
+            fragmentos=fragmentos)
 
         if cancelado:
             resultado["estado"] = "cancelado"
@@ -429,10 +441,7 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
 
         # Los ficheros producidos son privados de su propietario.
         generados = [a for r in planos for a in (r.get("archivos") or [])]
-        if resultado.get("csv_ranking"):
-            generados.append(resultado["csv_ranking"])
-        if resultado.get("json_resultados"):
-            generados.append(resultado["json_resultados"])
+        generados += [resultado[clave] for clave in _FICHEROS_DEL_CRIBADO if resultado.get(clave)]
         _registrar_resultados(db, generados, usuario_id, ejecucion_id=ejecucion_id)
 
         estado_final = resultado.get("estado", "completado")
@@ -445,7 +454,15 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
             "total_exito":      resultado.get("total_exito", 0),
             "total_error":      resultado.get("total_error", 0),
             "tipo_score":       resultado.get("tipo_score"),
+            # ranking | docking | transformacion: que ficheros hay y como
+            # ensenarlos (ver BatchWorkflowExecutor._describir_salida).
+            "modo_resultado":   resultado.get("modo_resultado"),
             "csv_ranking":      resultado.get("csv_ranking"),
+            "sdf_poses":        resultado.get("sdf_poses"),
+            "moleculas_resultado": resultado.get("moleculas_resultado"),
+            "csv_propiedades":  resultado.get("csv_propiedades"),
+            "total_en_fichero": resultado.get("total_en_fichero"),
+            "no_cumplen":       resultado.get("no_cumplen"),
             # El cribado completo: todas las moleculas con sus numeros. En la
             # base de datos solo caben las 25 primeras (abajo), asi que este
             # fichero es el unico sitio donde esta el resultado entero.

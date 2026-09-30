@@ -415,12 +415,55 @@ const VisualBuilder = ({ usuario }) => {
                     <span className="batch-stat bd">📂 {resultsPanel.base_de_datos}</span>
                   </div>
 
+                  {/* Un cribado que transforma o filtra moléculas no tiene
+                      ranking: su resultado son las moléculas. Ordenar por peso
+                      molecular un filtro de Lipinski no dice nada. */}
+                  {resultsPanel.modo_resultado === 'transformacion' && (
+                    <div className="batch-summary">
+                      <span className="batch-stat ok">
+                        🧪 {resultsPanel.total_en_fichero ?? 0} moléculas en el fichero
+                      </span>
+                      {resultsPanel.no_cumplen > 0 && (
+                        <span className="batch-stat err">🚫 {resultsPanel.no_cumplen} no cumplen el filtro</span>
+                      )}
+                    </div>
+                  )}
+
+                  {resultsPanel.moleculas_resultado && (
+                    <button
+                      onClick={() => descargarResultado(resultsPanel.moleculas_resultado)}
+                      className="btn-csv-download"
+                      title="Las moléculas resultantes, con las propiedades calculadas como campos del SDF"
+                    >
+                      📥 Descargar moléculas ({resultsPanel.moleculas_resultado.split('.').pop().toUpperCase()})
+                    </button>
+                  )}
+
+                  {resultsPanel.csv_propiedades && (
+                    <button
+                      onClick={() => descargarResultado(resultsPanel.csv_propiedades)}
+                      className="btn-csv-download"
+                    >
+                      📥 Descargar propiedades CSV
+                    </button>
+                  )}
+
                   {resultsPanel.csv_ranking && (
                     <button
                       onClick={() => descargarResultado(resultsPanel.csv_ranking)}
                       className="btn-csv-download"
                     >
                       📥 Descargar ranking CSV
+                    </button>
+                  )}
+
+                  {resultsPanel.sdf_poses && (
+                    <button
+                      onClick={() => descargarResultado(resultsPanel.sdf_poses)}
+                      className="btn-csv-download"
+                      title="La mejor pose de cada molécula, en el orden del ranking"
+                    >
+                      📥 Descargar poses SDF
                     </button>
                   )}
 

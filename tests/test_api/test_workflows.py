@@ -470,3 +470,48 @@ def test_un_workflow_cancelado_en_la_cola_no_llega_a_empezar(
     resultado = tasks.ejecutar_workflow_async(workflow.id, usuario_id, ejecucion.id)
 
     assert resultado["estado"] == "cancelado"
+
+
+# ---------------------------------------------------------------------------
+# Consolidacion de un cribado que devuelve moleculas
+# ---------------------------------------------------------------------------
+
+def test_consolidar_un_cribado_de_moleculas_registra_sus_ficheros_como_privados(
+    db_session, usuario_autenticado, monkeypatch
+):
+    """
+    Cada bloque devuelve {"resultados", "fragmento"}. La consolidacion junta
+    los fragmentos en un solo fichero y lo da de alta, con el CSV de
+    propiedades y el JSON, como resultado privado de quien lanzo el cribado:
+    lo que no consta en `archivos` lo puede descargar cualquiera.
+    """
+    import os
+    import time
+
+    from app import tasks
+
+    usuario_id = usuario_autenticado["usuario"]["id"]
+    workflow, ejecucion = _workflow_con_ejecucion(db_session, usuario_id)
+    fragmento = "_bfrag_e{}_0.sdf".format(ejecucion.id)
+    with open(os.path.join("uploads", fragmento), "w", encoding="utf-8") as f:
+        f.write("MOL0\n  RDKit\n\n  0  0  0  0  0  0  0  0  0  0999 V2000\nM  END\n$$$$\n")
+    resultados = [{
+        "nombre": "MOL0", "score": None, "tipo_score": None, "exito": True,
+        "errores_nodo": [], "archivos": [], "indice": 0, "modo": "transformacion",
+        "propiedades": {"MW": 100.0}, "filtro": "PASS", "molecula_salida": None,
+    }]
+    monkeypatch.setattr(tasks, "_redis", lambda: None)
+
+    tasks.consolidar_batch([{"resultados": resultados, "fragmento": fragmento}],
+                           workflow.id, usuario_id, ejecucion.id, "biblio.sdf", 1, time.time())
+
+    db_session.refresh(ejecucion)
+    resumen = ejecucion.resultados_json
+    assert resumen["modo_resultado"] == "transformacion"
+    assert resumen["total_en_fichero"] == 1
+    for clave in ("moleculas_resultado", "csv_propiedades", "json_resultados"):
+        archivo = db_session.query(models.Archivo).filter(
+            models.Archivo.nombre == resumen[clave]).first()
+        assert archivo is not None, clave
+        assert archivo.propietario_id == usuario_id
+        assert archivo.visibilidad == models.VisibilidadArchivo.resultado
