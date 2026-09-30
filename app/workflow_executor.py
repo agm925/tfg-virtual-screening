@@ -35,7 +35,20 @@ def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
     fila asociada --los que vienen con el repositorio, y los que crean los
     tests-- se sigue aceptando como hasta ahora: aqui se aplica una retirada o
     una privacidad explicitas, no se exige estar registrado.
+
+    Por eso el nombre tiene que ser un nombre y nada mas. Con
+    "../algoritmos/<privado>" la ruta seguia llevando al mismo .py, pero la
+    consulta buscaba una fila con ese texto, no la encontraba, y el script se
+    aceptaba como uno del catalogo sin registrar: la privacidad y la
+    desactivacion se saltaban anteponiendo "../". El frontend manda siempre el
+    nombre suelto (ruta_archivo), asi que cualquier separador es un grafo
+    manipulado y se rechaza en vez de limpiarse. Los dos puntos, porque en
+    Windows "C:x" es una ruta relativa a otra unidad.
     """
+    if (not nombre_base or any(c in nombre_base for c in "/\\:\0")
+            or nombre_base in (".", "..")):
+        raise ValueError(f"Nombre de algoritmo no valido: {nombre_base!r}")
+
     ruta_algoritmo = os.path.join("algoritmos", f"{nombre_base}.py")
     if not os.path.exists(ruta_algoritmo):
         raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")

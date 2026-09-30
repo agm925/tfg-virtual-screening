@@ -7,6 +7,10 @@ cubren la capa que corre DENTRO del worker, que es la que de verdad abre el
 fichero y la que los tests de endpoint no ejecutan, porque mock_celery
 sustituye el .delay().
 """
+import os
+
+import pytest
+
 from app import models, permisos
 from app.tasks import _grafo_usa_archivo_ajeno
 
@@ -217,3 +221,53 @@ def test_el_motor_sigue_aceptando_un_script_sin_fila_en_la_base(db_session, usua
 
     assert resolver_algoritmo("test_dummy_wf_sin_registro",
                               usuario_autenticado["usuario"]["id"]).endswith(".py")
+
+
+# Anteponiendo una ruta al nombre, la consulta a la base no encontraba la fila
+# del algoritmo y el script se aceptaba como uno del catalogo sin registrar,
+# saltandose la privacidad y la desactivacion. Todas estas llevan al mismo .py.
+_RUTAS_AL_MISMO_SCRIPT = [
+    "../algoritmos/{}",
+    "../algoritmos/../algoritmos/{}",
+    "./{}",
+    # Solo lleva al script en Windows; en Linux es un nombre de fichero raro.
+    r"..\algoritmos\{}",
+    "{}.py/../{}",
+]
+
+
+@pytest.mark.parametrize("plantilla", _RUTAS_AL_MISMO_SCRIPT)
+def test_una_ruta_no_salta_la_privacidad_de_un_algoritmo(
+    plantilla, db_session, usuario_autenticado, otro_usuario_autenticado
+):
+    from app.workflow_executor import resolver_algoritmo
+
+    _registrar_algoritmo(db_session, "test_dummy_wf_ruta_privado.py",
+                         autor_id=otro_usuario_autenticado["usuario"]["id"], es_publico=False)
+
+    with pytest.raises(ValueError):
+        resolver_algoritmo(plantilla.format("test_dummy_wf_ruta_privado", "test_dummy_wf_ruta_privado"),
+                           usuario_autenticado["usuario"]["id"])
+
+
+@pytest.mark.parametrize("plantilla", _RUTAS_AL_MISMO_SCRIPT)
+def test_una_ruta_no_salta_la_desactivacion_de_un_algoritmo(
+    plantilla, db_session, usuario_autenticado
+):
+    from app.workflow_executor import resolver_algoritmo
+
+    _registrar_algoritmo(db_session, "test_dummy_wf_ruta_inactivo.py",
+                         autor_id=usuario_autenticado["usuario"]["id"], es_publico=True,
+                         activo=False)
+
+    with pytest.raises(ValueError):
+        resolver_algoritmo(plantilla.format("test_dummy_wf_ruta_inactivo", "test_dummy_wf_ruta_inactivo"),
+                           usuario_autenticado["usuario"]["id"])
+
+
+def test_una_ruta_absoluta_se_rechaza_aunque_exista(usuario_autenticado):
+    from app.workflow_executor import resolver_algoritmo
+
+    absoluta = os.path.abspath(os.path.join("algoritmos", "centerMol"))
+    with pytest.raises(ValueError, match="no valido"):
+        resolver_algoritmo(absoluta, usuario_autenticado["usuario"]["id"])
