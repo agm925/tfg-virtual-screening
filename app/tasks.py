@@ -4,7 +4,7 @@ from app.celery_app import celery_app
 from app.database import SessionLocal
 from app import models, permisos
 from app.auth import es_admin
-from app.ejecutor import ejecutar_algoritmo
+from app.ejecutor import ejecutar_algoritmo, vigilar_cancelacion
 from app.email_utils import (
     correo_completado, correo_error,
     correo_workflow_completado, correo_workflow_error,
@@ -185,6 +185,11 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
             })
             return {"exito": False, "error": motivo}
 
+        # Cancelada mientras esperaba en la cola: no se empieza.
+        debe_parar = _vigia_cancelacion(ejecucion.id)
+        if debe_parar():
+            return {"exito": False, "estado": "cancelado"}
+
         # 1. Marcar como procesando
         ejecucion.estado = "procesando"
         workflow.estado  = "procesando"
@@ -193,10 +198,16 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         # 2. Ejecutar
         executor = WorkflowExecutor(workflow.grafo_json, usuario_id,
                                     ejecucion_id=ejecucion.id)
-        resultado = executor.ejecutar()
+        with vigilar_cancelacion(debe_parar):
+            resultado = executor.ejecutar()
 
         # 3. Persistir resultados — versión slim (sin logs, sin binarios)
-        estado_final = resultado.get("estado", "completado")
+        #
+        # El endpoint de cancelar ya dejo la ejecucion en "cancelado". Antes el
+        # final de la tarea lo sobrescribia con "completado" o "error", y el
+        # usuario recibia un correo de un trabajo que habia cancelado.
+        cancelado = debe_parar()
+        estado_final = "cancelado" if cancelado else resultado.get("estado", "completado")
 
         _registrar_resultados(db, executor.archivos_generados, usuario_id,
                               ejecucion_id=ejecucion.id)
@@ -223,7 +234,7 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         db.commit()
 
         # 4. Correo de notificación
-        if usuario:
+        if usuario and not cancelado:
             duracion = resultado.get("duracion_segundos", 0)
             if resultado.get("exito"):
                 correo_workflow_completado(usuario.nombre, usuario.email, workflow.nombre, duracion)
@@ -283,6 +294,24 @@ def _redis():
         return None
 
 
+def _vigia_cancelacion(ejecucion_id: int):
+    """Predicado que dice si el usuario ha cancelado esta ejecucion."""
+    cliente = _redis()
+    clave = _clave_cancelacion(ejecucion_id)
+
+    def debe_parar() -> bool:
+        if cliente is None:
+            return False
+        try:
+            return bool(cliente.exists(clave))
+        except Exception:  # noqa: BLE001
+            # Si Redis deja de contestar se pierde la posibilidad de cancelar,
+            # no la ejecucion que ya esta en marcha.
+            return False
+
+    return debe_parar
+
+
 def marcar_cancelacion(ejecucion_id: int) -> None:
     """
     Senala que una ejecucion en lote debe abortarse.
@@ -310,9 +339,7 @@ def procesar_bloque_batch(self, workflow_json: dict, usuario_id: int,
     que los errores se devuelven como resultados marcados.
     """
     cliente = _redis()
-
-    def debe_parar():
-        return cliente is not None and cliente.exists(_clave_cancelacion(ejecucion_id))
+    debe_parar = _vigia_cancelacion(ejecucion_id)
 
     # El progreso se escribe a la base de datos COMO MUCHO cada
     # INTERVALO_PROGRESO_S segundos, no en cada molecula.

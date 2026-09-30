@@ -20,6 +20,7 @@ import uuid
 import posixpath
 import paramiko
 
+from app.ejecutor import EjecucionCancelada, cancelacion_pedida
 from app.config import (
     SLURM_HOST, SLURM_PORT, SLURM_USER, SLURM_SSH_KEY_PATH, SLURM_PASSWORD,
     SLURM_REMOTE_DIR, SLURM_PARTITION, SLURM_TIME_LIMIT, SLURM_CPUS_PER_TASK,
@@ -48,6 +49,20 @@ _ESPERA_INICIAL = 1.0
 # entre ellos (ver _conectar).
 _INTENTOS_CONEXION = 4
 _ESPERA_REINTENTO = 1.0
+
+# Cuanto tarda en darse por perdido un intento de conexion. Un sshd sano
+# contesta en milisegundos; con los 30 s de antes, un cluster inaccesible
+# costaba mas de dos minutos por conexion entre los cuatro intentos.
+_TIMEOUT_CONEXION = 10
+
+# Tras agotar los intentos contra un cluster que no contesta (sin VPN, nodo de
+# acceso caido), durante este tiempo no se vuelve a intentar: se falla al
+# momento. Sin esto, cada camino de reserva del cribado --trozo, job array,
+# molecula a molecula-- repetia los cuatro intentos, y un bloque tardaba siete
+# minutos en descubrir lo que ya sabia desde el primero, con el worker ocupado
+# y el resto de peticiones en cola detras.
+_MEMORIA_CAIDA_S = 60.0
+_caido_hasta = 0.0
 
 # Tareas maximas por array. SLURM lo limita con MaxArraySize (1001 en el
 # bullx, `scontrol show config`), asi que un lote mayor se parte en varios.
@@ -88,12 +103,20 @@ class SlurmExecutor:
     # ------------------------------------------------------------------
 
     def _conectar(self) -> paramiko.SSHClient:
+        global _caido_hasta
+
         if not self.user:
             raise ValueError("SLURM_USER no está configurado (ver app/config.py / .env)")
         if not self.key_path and not self.password:
             raise ValueError("Configura SLURM_SSH_KEY_PATH o SLURM_PASSWORD para conectar al clúster")
+        if time.monotonic() < _caido_hasta:
+            raise ConnectionError(
+                f"{self.host}:{self.port} no respondía hace menos de "
+                f"{_MEMORIA_CAIDA_S:.0f} s; no se reintenta todavía. "
+                f"Comprueba la conexión con el clúster (¿VPN de la UAL?).")
 
-        kwargs = {"hostname": self.host, "port": self.port, "username": self.user, "timeout": 30}
+        kwargs = {"hostname": self.host, "port": self.port, "username": self.user,
+                  "timeout": _TIMEOUT_CONEXION}
         if self.key_path:
             kwargs["key_filename"] = self.key_path
         else:
@@ -143,8 +166,15 @@ class SlurmExecutor:
                 cliente.close()
                 if intento == _INTENTOS_CONEXION - 1:
                     break
+                if cancelacion_pedida():
+                    raise EjecucionCancelada() from e
                 time.sleep(_ESPERA_REINTENTO * (2 ** intento) + random.uniform(0, 0.5))
 
+        # Solo se recuerda un fallo de RED (no hay respuesta en el puerto). Un
+        # saludo rechazado por MaxStartups es SSHException: el cluster esta
+        # vivo y la siguiente molecula puede entrar, asi que no se castiga.
+        if isinstance(ultimo_error, OSError):
+            _caido_hasta = time.monotonic() + _MEMORIA_CAIDA_S
         raise ConnectionError(
             f"No se pudo conectar a {self.host}:{self.port} tras "
             f"{_INTENTOS_CONEXION} intentos: {ultimo_error}") from ultimo_error
@@ -461,6 +491,7 @@ class SlurmExecutor:
         espera = min(_ESPERA_INICIAL, self.poll_interval)
         transcurrido = 0.0
         while transcurrido < self.job_timeout:
+            self._cancelar_si_se_pidio(cliente, job_id)
             salida, error, codigo = self._ejecutar_tolerante(
                 cliente, f"squeue -h -j {shlex.quote(job_id)} -o %T")
 
@@ -615,6 +646,20 @@ class SlurmExecutor:
                 return token
         raise RuntimeError(f"No se pudo extraer el job id de sbatch: {salida_sbatch!r}")
 
+    def _cancelar_si_se_pidio(self, cliente: paramiko.SSHClient, job_id: str) -> None:
+        """
+        Si el usuario ha cancelado, retira el job del cluster y deja de esperar.
+
+        Sin el scancel, cancelar solo dejaba de esperar el resultado: el job
+        seguia en el bullx, gastando la cuota de la cuenta y un hueco de la
+        cola, para producir algo que ya nadie iba a recoger. Con un array, el
+        id es el del array entero, asi que se retiran todas sus tareas.
+        """
+        if not cancelacion_pedida():
+            return
+        self._ejecutar_tolerante(cliente, f"scancel {shlex.quote(job_id)}")
+        raise EjecucionCancelada(f"Ejecución cancelada; job SLURM {job_id} retirado del clúster.")
+
     def _esperar_finalizacion(self, cliente: paramiko.SSHClient, job_id: str,
                               remote_dir: str) -> str:
         # La espera entre sondeos empieza corta y va creciendo hasta
@@ -631,6 +676,7 @@ class SlurmExecutor:
         espera = min(_ESPERA_INICIAL, self.poll_interval)
         transcurrido = 0.0
         while transcurrido < self.job_timeout:
+            self._cancelar_si_se_pidio(cliente, job_id)
             estado = self._consultar_estado(cliente, job_id, remote_dir)
 
             if estado in _ESTADOS_OK or estado in _ESTADOS_FALLO:

@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import tempfile
+import time
 from contextlib import contextmanager
 from app.config import ALGORITMO_TIMEOUT, EXECUTION_MODE
 
@@ -116,44 +117,51 @@ def _texto(salida) -> str:
     return salida or ""
 
 
+# Cada cuánto se mira, mientras corre el algoritmo, si se ha cancelado.
+_SONDEO_CANCELACION_S = 1.0
+
+
 def _ejecutar_local(ruta_algoritmo: str, *archivos, flags=()) -> dict:
-    try:
-        resultado = subprocess.run(
-            [sys.executable, ruta_algoritmo, *archivos, *flags],
-            capture_output=True,
-            text=True,
-            check=True,
-            encoding="utf-8",
-            errors="replace",
-            env=_ENTORNO_HIJO,
-            **_credenciales_hijo(),
-            # Sin timeout, un algoritmo que se cuelga bloquea el worker de
-            # Celery para siempre (ver ALGORITMO_TIMEOUT en app/config.py).
-            timeout=ALGORITMO_TIMEOUT,
-        )
-        return {
-            "exito": True,
-            "log":   resultado.stdout,
-            "error": None,
-        }
-    except subprocess.TimeoutExpired as e:
-        # subprocess.run ya ha matado el proceso hijo antes de propagar esta
-        # excepcion, asi que el worker queda libre para la siguiente tarea.
-        return {
-            "exito": False,
-            "log":   _texto(e.stdout),
-            "error": (
-                f"El algoritmo superó el límite de {ALGORITMO_TIMEOUT}s "
-                f"y se abortó. Ajusta ALGORITMO_TIMEOUT si el cálculo "
-                f"legítimamente necesita más tiempo."
-            ),
-        }
-    except subprocess.CalledProcessError as e:
-        return {
-            "exito": False,
-            "log":   e.stdout,
-            "error": e.stderr,
-        }
+    # Popen con esperas cortas en vez de subprocess.run: run() no vuelve hasta
+    # que el hijo termina, y una cancelacion tenia que esperar a que acabara el
+    # algoritmo --hasta ALGORITMO_TIMEOUT, media hora-- con el worker ocupado y
+    # las demas peticiones en cola detras. Reintentar communicate() tras su
+    # TimeoutExpired es la forma documentada de esperar sin perder salida.
+    proceso = subprocess.Popen(
+        [sys.executable, ruta_algoritmo, *archivos, *flags],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=_ENTORNO_HIJO,
+        **_credenciales_hijo(),
+    )
+    # Sin limite, un algoritmo que se cuelga bloquea el worker de Celery para
+    # siempre (ver ALGORITMO_TIMEOUT en app/config.py).
+    limite = time.monotonic() + ALGORITMO_TIMEOUT
+    motivo = None
+    while True:
+        try:
+            stdout, stderr = proceso.communicate(timeout=_SONDEO_CANCELACION_S)
+            break
+        except subprocess.TimeoutExpired:
+            if cancelacion_pedida():
+                motivo = "Ejecución cancelada."
+            elif time.monotonic() >= limite:
+                motivo = (
+                    f"El algoritmo superó el límite de {ALGORITMO_TIMEOUT}s "
+                    f"y se abortó. Ajusta ALGORITMO_TIMEOUT si el cálculo "
+                    f"legítimamente necesita más tiempo."
+                )
+            if motivo:
+                proceso.kill()
+                stdout, _ = proceso.communicate()
+                return {"exito": False, "log": _texto(stdout), "error": motivo}
+
+    if proceso.returncode != 0:
+        return {"exito": False, "log": stdout, "error": stderr}
+    return {"exito": True, "log": stdout, "error": None}
 
 
 def _ejecutar_en_slurm(ruta_algoritmo: str, *archivos, flags=()) -> dict:
@@ -210,5 +218,49 @@ def ejecutar_algoritmos_en_lote(invocaciones) -> list:
         from app.slurm_executor import SlurmExecutor
         return SlurmExecutor().ejecutar_lote(invocaciones)
 
-    return [_ejecutar_local(ruta, *archivos, flags=flags)
-            for ruta, archivos, flags in invocaciones]
+    resultados = []
+    for ruta, archivos, flags in invocaciones:
+        if cancelacion_pedida():
+            resultados.append({"exito": False, "log": "", "error": "Ejecución cancelada."})
+            continue
+        resultados.append(_ejecutar_local(ruta, *archivos, flags=flags))
+    return resultados
+
+
+# ---------------------------------------------------------------------------
+# Cancelacion
+# ---------------------------------------------------------------------------
+
+_cancelacion = contextvars.ContextVar("cancelacion", default=None)
+
+
+class EjecucionCancelada(Exception):
+    """El usuario ha cancelado la ejecucion mientras se esperaba al algoritmo."""
+
+    def __init__(self, mensaje: str = "Ejecución cancelada."):
+        super().__init__(mensaje)
+
+
+@contextmanager
+def vigilar_cancelacion(debe_parar):
+    """
+    Mientras dure el bloque, las esperas largas consultan `debe_parar()`.
+
+    La bandera de cancelacion se miraba solo entre moleculas, y lo que de
+    verdad tarda es otra cosa: esperar a que termine el algoritmo en local, o
+    a que termine el job en el cluster --hasta SLURM_JOB_TIMEOUT, una hora--.
+    Un cribado cancelado seguia ocupando sus workers todo ese tiempo, y la
+    peticion siguiente se quedaba en cola detras. Va por un contextvar, igual
+    que desviar_invocaciones, para no pasar el predicado por cada nodo del
+    grafo hasta llegar a quien espera.
+    """
+    testigo = _cancelacion.set(debe_parar)
+    try:
+        yield
+    finally:
+        _cancelacion.reset(testigo)
+
+
+def cancelacion_pedida() -> bool:
+    debe_parar = _cancelacion.get()
+    return debe_parar is not None and bool(debe_parar())

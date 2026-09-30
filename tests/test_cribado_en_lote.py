@@ -541,3 +541,33 @@ def test_el_avance_se_anuncia_una_vez_por_molecula(trozo):
     _procesar(ejecutor, indices, on_molecula=avisadas.append)
 
     assert avisadas == ["MOL0", "MOL1", "MOL2", "MOL3"]
+
+
+# ---------------------------------------------------------------------------
+# Cancelacion de un bloque
+# ---------------------------------------------------------------------------
+
+def test_un_bloque_cancelado_no_extrae_ni_prueba_otro_camino(monkeypatch):
+    """
+    Un camino cancelado a medias devuelve None, igual que uno que no se
+    presta. Sin volver a mirar la bandera, el bloque seguia con el siguiente:
+    escribir 1000 moleculas a disco (unos 40 s) y otra conexion al cluster.
+    Y mientras se espera, la cancelacion tiene que llegar hasta el ejecutor.
+    """
+    from app import ejecutor as modulo_ejecutor
+
+    ejecutor = BatchWorkflowExecutor({"nodes": []}, usuario_id=1)
+    monkeypatch.setattr(ejecutor, "localizar_base_de_datos", lambda: ("bd", "bd.sdf"))
+    monkeypatch.setattr(ejecutor, "_encontrar_nodo_bd", lambda: {"id": "bd"})
+    monkeypatch.setattr(ejecutor, "extraer_moleculas",
+                        lambda *a: pytest.fail("no deberia extraer las moleculas"))
+    cancelado = []
+
+    def trozo_cancelado_a_medias(*_a, **_kw):
+        cancelado.append(True)
+        assert modulo_ejecutor.cancelacion_pedida(), "el ejecutor debe enterarse"
+        return None
+
+    monkeypatch.setattr(ejecutor, "_procesar_en_trozo", trozo_cancelado_a_medias)
+
+    assert ejecutor.procesar_bloque([0, 1], debe_parar=lambda: bool(cancelado)) == []

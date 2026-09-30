@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 
 import pytest
 
@@ -101,3 +102,65 @@ def test_algoritmo_con_open_babel(carpeta, aspirina_mol2):
 
     assert resultado["exito"], resultado["error"]
     assert os.path.getsize(salida) > 0
+
+
+# ---------------------------------------------------------------------------
+# Cancelacion: el worker se libera sin esperar a que acabe el algoritmo
+# ---------------------------------------------------------------------------
+
+def _script_lento(carpeta):
+    ruta = os.path.join(carpeta, "lento.py")
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write("import time\ntime.sleep(60)\n")
+    return ruta
+
+
+def test_cancelar_mata_el_algoritmo_sin_esperar_a_que_acabe(carpeta):
+    """
+    Antes subprocess.run no volvia hasta que el algoritmo terminaba: un
+    cribado cancelado seguia ocupando el worker, y la peticion siguiente se
+    quedaba en cola detras.
+    """
+    inicio = time.monotonic()
+    cancelar_en = inicio + 1.0
+
+    with ejecutor.vigilar_cancelacion(lambda: time.monotonic() >= cancelar_en):
+        resultado = ejecutor._ejecutar_local(
+            _script_lento(carpeta), os.path.join(carpeta, "salida.json"))
+
+    assert not resultado["exito"]
+    assert "cancelada" in resultado["error"]
+    assert time.monotonic() - inicio < 10
+
+
+def test_el_limite_de_tiempo_se_sigue_aplicando(carpeta, monkeypatch):
+    monkeypatch.setattr(ejecutor, "ALGORITMO_TIMEOUT", 1)
+
+    resultado = ejecutor._ejecutar_local(
+        _script_lento(carpeta), os.path.join(carpeta, "salida.json"))
+
+    assert not resultado["exito"]
+    assert "límite de 1s" in resultado["error"]
+
+
+def test_un_algoritmo_que_falla_devuelve_su_stderr(carpeta):
+    ruta = os.path.join(carpeta, "roto.py")
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write("import sys\nsys.exit('fallo a proposito')\n")
+
+    resultado = ejecutor._ejecutar_local(ruta, os.path.join(carpeta, "salida.json"))
+
+    assert not resultado["exito"]
+    assert "fallo a proposito" in resultado["error"]
+
+
+def test_un_lote_cancelado_no_lanza_lo_que_queda(monkeypatch):
+    monkeypatch.setattr(ejecutor, "EXECUTION_MODE", "local")
+    monkeypatch.setattr(ejecutor, "_ejecutar_local",
+                        lambda *a, **k: pytest.fail("no deberia ejecutarse nada"))
+
+    with ejecutor.vigilar_cancelacion(lambda: True):
+        resultados = ejecutor.ejecutar_algoritmos_en_lote(
+            [("algo.py", ["a.sdf", "a.json"], []), ("algo.py", ["b.sdf", "b.json"], [])])
+
+    assert [r["exito"] for r in resultados] == [False, False]

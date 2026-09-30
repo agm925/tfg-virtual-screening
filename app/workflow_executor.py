@@ -11,7 +11,8 @@ import re
 from typing import Dict, List, Any, Tuple
 from datetime import datetime
 from app.ejecutor import (ejecutar_algoritmo, ejecutar_algoritmos_en_lote,
-                          desviar_invocaciones)
+                          desviar_invocaciones, vigilar_cancelacion)
+from app.logging_config import logger
 
 
 def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
@@ -1128,6 +1129,18 @@ class BatchWorkflowExecutor:
             individual["fail"] = 0 if paso else 1
         return individual
 
+    def _trozo_descartado(self, motivo: str, **detalle) -> None:
+        """
+        Deja constancia de por que un bloque no va por el camino del trozo.
+
+        Retirarse a un camino mas lento es correcto, pero antes se hacia en
+        silencio: si un dia un cribado tardaba el triple sin motivo aparente, no
+        habia forma de saber por que.
+        """
+        logger.info("trozo_descartado", extra={
+            "ejecucion_id": self.ejecucion_id, "motivo": motivo, **detalle})
+        return None
+
     def _procesar_en_trozo(self, ruta_sdf: str, indices: List[int], nodo_bd_id: str,
                            on_molecula=None):
         """
@@ -1155,7 +1168,8 @@ class BatchWorkflowExecutor:
 
             invocacion = self._invocacion_del_trozo(ruta_trozo, nodo_bd_id, sufijo)
             if invocacion is None:
-                return None
+                return self._trozo_descartado(
+                    "el grafo no se presta: no es un solo algoritmo con salida JSON")
             salida = invocacion[1][-1]
 
             executor = self._preparar_molecula({"ruta": ruta_trozo, "indice": sufijo},
@@ -1163,19 +1177,21 @@ class BatchWorkflowExecutor:
             resultado = executor.ejecutar()
             generados = list(executor.archivos_generados)
             if not resultado.get("exito"):
-                return None
+                return self._trozo_descartado(
+                    "el algoritmo fallo sobre el trozo", errores=resultado.get("errores"))
 
             nodo_id, nodo = next(
                 ((nid, n) for nid, n in (resultado.get("resultados") or {}).items()
                  if isinstance(n, dict) and n.get("archivo_salida") == salida),
                 (None, None))
             if nodo is None:
-                return None
+                return self._trozo_descartado("ningun nodo produjo la salida del trozo")
             datos_trozo = nodo.get("resultado_json")
 
             asignadas = self._emparejar_trozo(datos_trozo, moleculas)
             if asignadas is None:
-                return None
+                return self._trozo_descartado(
+                    "el JSON del trozo no se puede repartir entre sus moleculas")
 
             resultados = []
             for mol in moleculas:
@@ -1203,10 +1219,10 @@ class BatchWorkflowExecutor:
                     "detalle": self._detalle_por_nodo(propio),
                 })
 
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             # Cualquier cosa que falle aqui deja el bloque en el camino de una
             # tarea por molecula, que no depende de nada de esto.
-            return None
+            return self._trozo_descartado("excepcion", error=repr(e))
         finally:
             # El trozo, su salida y lo que haya generado el grafo con ellos son
             # de este bloque: los resultados ya van dentro de la respuesta.
@@ -1265,10 +1281,16 @@ class BatchWorkflowExecutor:
         Es la unidad de trabajo que ejecuta cada subtarea Celery. Se procesan
         de una en una dentro del bloque, pero los bloques corren en paralelo.
 
-        `debe_parar` es un predicado que se consulta antes de cada molecula:
-        permite abortar una ejecucion cancelada sin esperar a que termine el
-        bloque entero.
+        `debe_parar` es un predicado que se consulta entre un camino y otro,
+        antes de cada molecula y --a traves de vigilar_cancelacion-- mientras
+        se espera a un algoritmo o a un job del cluster. Un bloque cancelado
+        devuelve lo que tenga en cuanto se entera, sin esperar a terminar.
         """
+        debe_parar = debe_parar or (lambda: False)
+        with vigilar_cancelacion(debe_parar):
+            return self._procesar_bloque(indices, on_molecula, debe_parar)
+
+    def _procesar_bloque(self, indices: List[int], on_molecula, debe_parar) -> List[Dict]:
         nombre_bd, ruta_sdf = self.localizar_base_de_datos()
         nodo_bd_id = self._encontrar_nodo_bd()["id"]
 
@@ -1282,24 +1304,37 @@ class BatchWorkflowExecutor:
         #   2. Un job array, una tarea por molecula. Una conexion y una
         #      espera, pero N transferencias.
         #   3. Molecula a molecula, que es como estaba.
-        if debe_parar is None or not debe_parar():
-            en_trozo = self._procesar_en_trozo(
-                ruta_sdf, indices, nodo_bd_id, on_molecula=on_molecula)
-            if en_trozo is not None:
-                return en_trozo
+        #
+        # Entre un camino y el siguiente se vuelve a mirar la cancelacion: un
+        # camino cancelado a medias devuelve None como uno que no se presta, y
+        # sin esta comprobacion se probaria el siguiente. Antes de extraer, en
+        # particular, porque escribir las moleculas de un bloque de 1000 son
+        # unos 40 s de ficheros que se iban a tirar.
+        if debe_parar():
+            return []
+        en_trozo = self._procesar_en_trozo(
+            ruta_sdf, indices, nodo_bd_id, on_molecula=on_molecula)
+        if en_trozo is not None:
+            return en_trozo
 
+        if debe_parar():
+            return []
         moleculas = self.extraer_moleculas(ruta_sdf, indices)
+        if debe_parar():
+            for mol_info in moleculas:
+                if os.path.exists(mol_info["ruta"]):
+                    os.remove(mol_info["ruta"])
+            return []
 
-        if debe_parar is None or not debe_parar():
-            en_array = self._procesar_en_array(
-                moleculas, nodo_bd_id, on_molecula=on_molecula)
-            if en_array is not None:
-                return en_array
+        en_array = self._procesar_en_array(
+            moleculas, nodo_bd_id, on_molecula=on_molecula)
+        if en_array is not None:
+            return en_array
 
         resultados = []
 
         for mol_info in moleculas:
-            if debe_parar is not None and debe_parar():
+            if debe_parar():
                 # Limpiar los temporales que ya no se van a procesar.
                 for pendiente in moleculas[len(resultados):]:
                     if os.path.exists(pendiente["ruta"]):

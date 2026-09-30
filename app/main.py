@@ -1257,18 +1257,22 @@ def cancelar_ejecucion(
     if ejecucion.estado not in ("pendiente", "procesando"):
         raise HTTPException(status_code=400, detail=f"No se puede cancelar una ejecución en estado '{ejecucion.estado}'")
 
-    # Revocar la tarea Celery (terminate=True para matar si ya está corriendo)
-    if ejecucion.celery_task_id:
-        from app.celery_app import celery_app as _celery
-        _celery.control.revoke(ejecucion.celery_task_id, terminate=True, signal="SIGTERM")
-
-    # Un cribado en lote ya no es una única tarea, sino un grupo de subtareas
-    # repartidas entre los workers: revocar el coordinador --que además suele
-    # haber terminado ya-- no detendría ninguna. La bandera de cancelación la
-    # consulta cada subtarea antes de cada molécula, así que la cancelación
-    # sigue surtiendo efecto y además no corta un bloque de forma abrupta.
+    # La bandera va PRIMERO: es lo que para una ejecución que ya está en
+    # marcha. La consultan tanto el workflow normal como cada subtarea de un
+    # cribado en lote --revocar el coordinador de un lote no detendría ninguna,
+    # porque suele haber terminado ya--, y no solo entre moléculas, sino
+    # también mientras se espera al algoritmo o al job del clúster (ver
+    # vigilar_cancelacion en app/ejecutor.py), que es donde se va el tiempo.
     from app.tasks import marcar_cancelacion
     marcar_cancelacion(ejecucion_id)
+
+    # Revocar descarta la tarea si todavía está en la cola. Ya NO se usa
+    # terminate=True: matar el proceso a mitad dejaba el job corriendo en el
+    # bullx, porque nadie llegaba a hacer su scancel. La tarea en marcha se
+    # retira sola, cancelando su job, en el siguiente sondeo de la bandera.
+    if ejecucion.celery_task_id:
+        from app.celery_app import celery_app as _celery
+        _celery.control.revoke(ejecucion.celery_task_id)
 
     ejecucion.estado = "cancelado"
     db.commit()

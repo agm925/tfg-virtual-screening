@@ -33,6 +33,7 @@ import paramiko
 import pytest
 
 from app import slurm_executor
+from app.ejecutor import vigilar_cancelacion
 from app.slurm_executor import SlurmExecutor
 
 MODO_FICHERO_REGULAR = stat.S_IFREG | 0o644
@@ -469,6 +470,8 @@ def _paramiko_falso(monkeypatch, errores):
 
     monkeypatch.setattr(slurm_executor.paramiko, "SSHClient", ClienteFalso)
     monkeypatch.setattr(slurm_executor.time, "sleep", lambda _s: None)
+    # La memoria de "cluster caido" es de modulo: cada test empieza sin ella.
+    monkeypatch.setattr(slurm_executor, "_caido_hasta", 0.0)
     return intentos
 
 
@@ -536,6 +539,36 @@ def test_si_no_hay_manera_el_error_dice_cuantos_intentos_se_hicieron(monkeypatch
 
     assert len(intentos) == slurm_executor._INTENTOS_CONEXION
     assert "4 intentos" in str(error.value)
+
+
+def test_un_cluster_que_no_contesta_no_se_reintenta_en_cada_conexion(monkeypatch):
+    """
+    Sin VPN, cada conexion agotaba cuatro intentos, y cada camino de reserva
+    del cribado abria la suya: siete minutos por bloque para descubrir lo que
+    se sabia desde el primer intento, con el worker ocupado y el resto de
+    peticiones en cola detras.
+    """
+    intentos = _paramiko_falso(monkeypatch, [
+        paramiko.ssh_exception.NoValidConnectionsError({("192.168.118.249", 22): OSError()})] * 10)
+
+    with pytest.raises(ConnectionError):
+        _ejecutor_configurado()._conectar()
+    with pytest.raises(ConnectionError, match="no se reintenta"):
+        _ejecutor_configurado()._conectar()
+
+    assert len(intentos) == slurm_executor._INTENTOS_CONEXION,         "la segunda conexion debe fallar sin volver a intentarlo"
+
+
+def test_un_saludo_rechazado_no_se_recuerda_como_caida(monkeypatch):
+    """MaxStartups: el cluster esta vivo, la siguiente molecula puede entrar."""
+    intentos = _paramiko_falso(monkeypatch, [
+        paramiko.SSHException("Error reading SSH protocol banner")] * 4)
+
+    with pytest.raises(ConnectionError):
+        _ejecutor_configurado()._conectar()
+    _ejecutor_configurado()._conectar()
+
+    assert len(intentos) == slurm_executor._INTENTOS_CONEXION + 1
 
 
 # ---------------------------------------------------------------------------
@@ -729,3 +762,37 @@ def test_un_lote_vacio_no_toca_el_cluster(ejecutor_lote, tmp_path):
 
     assert ejec.ejecutar_lote([]) == []
     assert conexiones == []
+
+
+# ---------------------------------------------------------------------------
+# 9. Cancelacion: el job se retira del cluster
+# ---------------------------------------------------------------------------
+
+
+def test_cancelar_un_job_suelto_hace_scancel(ejecutor, tmp_path):
+    """
+    Sin scancel, cancelar solo dejaba de esperar: el job seguia en el bullx
+    gastando cuota para producir algo que nadie iba a recoger.
+    """
+    ejec, ssh, _ = ejecutor()
+    ssh.respuestas_squeue = [("RUNNING", "", 0)]
+    entrada = tmp_path / "mol.sdf"
+    entrada.write_bytes(b"molecula")
+
+    with vigilar_cancelacion(lambda: True):
+        resultado = ejec.ejecutar_algoritmo(
+            str(tmp_path / "algo.py"), str(entrada), str(tmp_path / "salida.json"))
+
+    assert not resultado["exito"]
+    assert "cancelada" in resultado["error"]
+    assert "scancel 12345" in ssh.comandos
+
+
+def test_cancelar_un_lote_retira_el_array_entero(ejecutor_lote, tmp_path):
+    ejec, ssh, _, _ = ejecutor_lote(["0", "0", "0"])
+
+    with vigilar_cancelacion(lambda: True):
+        resultados = ejec.ejecutar_lote([_invocacion(tmp_path, "m%d" % i) for i in range(3)])
+
+    assert [r["exito"] for r in resultados] == [False, False, False]
+    assert "scancel " + FakeSSHArray.JOB_ID in ssh.comandos

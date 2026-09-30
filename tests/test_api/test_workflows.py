@@ -1,4 +1,7 @@
 """Tests de integracion: /workflows* (app/main.py), con JWT y Celery simulado."""
+import pytest
+
+from app import models
 
 
 def _crear_workflow(client, headers) -> int:
@@ -399,3 +402,71 @@ def test_el_inventario_del_sdf_cuenta_los_registros_ilegibles(tmp_path):
     assert total == 5, f"el fichero tiene 5 registros, se contaron {total}"
     assert len(indices) < total, "los registros corruptos no deben contar como validos"
     assert total - len(indices) > 0, "tiene que quedar constancia de los descartados"
+
+
+# ---------------------------------------------------------------------------
+# Cancelacion de un workflow normal, dentro de la tarea
+# ---------------------------------------------------------------------------
+
+def _workflow_con_ejecucion(db_session, usuario_id):
+    workflow = models.Workflow(nombre="wf cancelable", descripcion="",
+                               grafo_json={"nodes": [], "edges": []}, usuario_id=usuario_id)
+    db_session.add(workflow)
+    db_session.commit()
+    ejecucion = models.WorkflowExecution(workflow_id=workflow.id, usuario_id=usuario_id,
+                                         estado="pendiente")
+    db_session.add(ejecucion)
+    db_session.commit()
+    return workflow, ejecucion
+
+
+def test_un_workflow_cancelado_a_mitad_acaba_cancelado_y_sin_correo(
+    db_session, usuario_autenticado, correos_enviados, monkeypatch
+):
+    """
+    El endpoint deja la ejecucion en "cancelado", pero el final de la tarea lo
+    sobrescribia con "completado" y mandaba el correo de un trabajo que el
+    usuario habia cancelado.
+    """
+    from app import tasks
+
+    usuario_id = usuario_autenticado["usuario"]["id"]
+    workflow, ejecucion = _workflow_con_ejecucion(db_session, usuario_id)
+    cancelado = []
+
+    class ExecutorFalso:
+        archivos_generados = []
+
+        def __init__(self, *_a, **_kw):
+            pass
+
+        def ejecutar(self):
+            cancelado.append(True)      # el usuario cancela mientras corre
+            return {"estado": "completado", "exito": True, "errores": [],
+                    "resultados": {}, "duracion_segundos": 1}
+
+    monkeypatch.setattr(tasks, "WorkflowExecutor", ExecutorFalso)
+    monkeypatch.setattr(tasks, "_vigia_cancelacion", lambda _id: lambda: bool(cancelado))
+
+    tasks.ejecutar_workflow_async(workflow.id, usuario_id, ejecucion.id)
+
+    db_session.refresh(ejecucion)
+    assert ejecucion.estado == "cancelado"
+    # El unico correo es el de verificacion del registro del usuario de test.
+    assert not [c for c in correos_enviados if "orkflow" in c["asunto"]]
+
+
+def test_un_workflow_cancelado_en_la_cola_no_llega_a_empezar(
+    db_session, usuario_autenticado, monkeypatch
+):
+    from app import tasks
+
+    usuario_id = usuario_autenticado["usuario"]["id"]
+    workflow, ejecucion = _workflow_con_ejecucion(db_session, usuario_id)
+    monkeypatch.setattr(tasks, "WorkflowExecutor",
+                        lambda *a, **k: pytest.fail("no deberia ejecutarse"))
+    monkeypatch.setattr(tasks, "_vigia_cancelacion", lambda _id: lambda: True)
+
+    resultado = tasks.ejecutar_workflow_async(workflow.id, usuario_id, ejecucion.id)
+
+    assert resultado["estado"] == "cancelado"
