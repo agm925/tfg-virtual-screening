@@ -1,0 +1,49 @@
+/*
+ * Identidad visual de la plataforma, tomada de la web de la Universidad de
+ * Almeria (www.ual.es, medida el 01/10/2026). Todos los colores de la
+ * aplicacion salen de aqui: antes habia unos 170 sueltos repartidos en ocho
+ * hojas de estilo, y cambiar uno era buscarlo a mano en todas.
+ */
+:root {
+  /* --- Colores de la UAL --- */
+  --ual-azul:   #0A4382;   /* cabecera y enlaces de ual.es */
+  --ual-azul-h: #08356A;   /* el mismo, al pasar por encima */
+  --ual-noche:  #0D2531;   /* franja superior de ual.es */
+  --ual-texto:  #323232;   /* texto, titulos y pie */
+  --ual-gris:   #ECEDEF;   /* paneles grises */
+  --ual-cian:   #02BEFF;   /* detalles: barra bajo los titulos, pagina activa */
+  --ual-rojo:   #CA143F;   /* botones de accion de la cabecera de ual.es */
+
+  --superficie: #FFFFFF;
+  --texto-2:    #5B6770;   /* texto secundario: 5.6:1 sobre blanco */
+  --linea:      #D5D9DE;
+
+  /* --- Estados (insignias y mensajes) --- */
+  --ok:           #1F7A55;
+  --ok-fondo:     #E3F2EA;
+  --aviso:        #8A5A0F;
+  --aviso-fondo:  #FBF0DC;
+  --error:        var(--ual-rojo);
+  --error-fondo:  #FBE6EB;
+  --proceso:      var(--ual-azul);
+  --proceso-fondo:#E3ECF6;
+  --cancelado:    #5B6770;
+  --cancelado-fondo: #ECEDEF;
+
+  /* --- Tipografia ---
+   * La UAL usa Segoe UI. Es de Microsoft y no se puede redistribuir, asi que
+   * se pide la del sistema: en los equipos Windows de la universidad es la
+   * misma, y en el resto cae en la equivalente de cada sistema. */
+  --fuente:      "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --fuente-mono: "Cascadia Mono", Consolas, ui-monospace, "SFMono-Regular", monospace;
+
+  --t-xs: 13px;
+  --t-s:  15px;
+  --t-m:  17px;
+  --t-l:  21px;
+  --t-xl: 28px;
+
+  /* --- Forma: esquinas casi rectas, como ual.es --- */
+  --radio: 2px;
+  --sombra-menu: 0 6px 18px rgba(13, 37, 49, 0.18);
+}

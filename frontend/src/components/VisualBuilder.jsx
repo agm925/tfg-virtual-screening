@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactFlow, {
   addEdge,
   useNodesState,
@@ -37,7 +37,7 @@ const nodeTypes = {
   selectMol:    SelectMolNodoNode,
 };
 
-const VisualBuilder = ({ usuario }) => {
+const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [workflows, setWorkflows] = useState([]);
@@ -145,6 +145,19 @@ const VisualBuilder = ({ usuario }) => {
       alert("Error creando workflow: " + err.message);
     }
   };
+
+  // Llegada desde "Nuevo workflow" (cabecera o Inicio): se crea uno al abrir,
+  // y se avisa para que la proxima visita al constructor no lo repita. La
+  // referencia evita pedir el nombre dos veces cuando React ejecuta el efecto
+  // por duplicado (StrictMode, en desarrollo).
+  const creadoAlAbrir = useRef(false);
+  useEffect(() => {
+    if (!crearAlAbrir || creadoAlAbrir.current) return;
+    creadoAlAbrir.current = true;
+    alCrearAlAbrir?.();
+    crearNuevo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crearAlAbrir]);
 
   // Guardar workflow actual
   const guardarWorkflow = async () => {

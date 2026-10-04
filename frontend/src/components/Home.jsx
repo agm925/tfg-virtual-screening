@@ -1,40 +1,108 @@
-export default function Home({ usuario, setPaginaActual }) {
+import { useEffect, useState } from 'react'
+import { apiFetch, descargarConToken } from '../api/client'
+import { claseEstado, textoEstado, etiquetaFichero, formatFecha } from '../utils/ficheros'
+
+// Cuántas ejecuciones recientes se enseñan aquí; el resto está en Resultados.
+const RECIENTES = 5;
+
+// Inicio es el banco de trabajo: lo que el usuario puede hacer ahora y lo
+// último que ha lanzado, con sus ficheros a mano. Antes eran cuatro tarjetas
+// de presentación iguales para todos, y los resultados de un cribado no
+// aparecían en ninguna parte fuera del editor.
+export default function Home({ usuario, setPaginaActual, nuevoWorkflow }) {
+  const [ejecuciones, setEjecuciones] = useState(null);   // null = cargando
+
+  useEffect(() => {
+    let vigente = true;
+    apiFetch(`/ejecuciones/usuario/${usuario.id}?limit=${RECIENTES}`)
+      .then(r => (r.ok ? r.json() : []))
+      .catch(() => [])
+      .then(datos => { if (vigente) setEjecuciones(datos); });
+    return () => { vigente = false; };
+  }, [usuario.id]);
+
   return (
-    <div className="home-wrapper">
-      <h1 className="home-bienvenida">
-        Bienvenido, <span className="nombre-usuario">{usuario.nombre}</span> 👋
-      </h1>
-      <p className="home-subtitulo">¿Qué quieres hacer hoy?</p>
+    <div className="seccion-wrapper">
+      <h2>Hola, {usuario.nombre}</h2>
 
-      <div className="home-tarjetas">
-        <div className="tarjeta" onClick={() => setPaginaActual('algoritmos')}>
-          <div className="tarjeta-icono">⚙️</div>
-          <h2>Sube tu propio algoritmo</h2>
-          <p>Registra un script Python de análisis molecular en la plataforma para usarlo en tus pipelines y peticiones.</p>
-          <button className="tarjeta-btn azul">Ir a Algoritmos →</button>
-        </div>
-
-        <div className="tarjeta" onClick={() => setPaginaActual('peticiones')}>
-          <div className="tarjeta-icono">🔬</div>
-          <h2>Prueba los algoritmos disponibles</h2>
-          <p>Sube una molécula y ejecuta cualquier algoritmo registrado. Los resultados se procesan en cola y recibirás un aviso al terminar.</p>
-          <button className="tarjeta-btn verde">Realizar Petición →</button>
-        </div>
-
-        <div className="tarjeta" onClick={() => setPaginaActual('visual')}>
-          <div className="tarjeta-icono">🔧</div>
-          <h2>Constructor de flujo de trabajo</h2>
-          <p>Diseña y ejecuta pipelines de cribado virtual completos de forma visual, conectando nodos de preprocesado, alineación, comparación y docking.</p>
-          <button className="tarjeta-btn" style={{ background: '#8e44ad' }}>Abrir Constructor Visual →</button>
-        </div>
-
-        <div className="tarjeta" onClick={() => setPaginaActual('tutorial')}>
-          <div className="tarjeta-icono">📖</div>
-          <h2>Aprende a usar la plataforma</h2>
-          <p>Guía paso a paso sobre todas las secciones: cómo subir moléculas, registrar algoritmos, construir workflows y entender los resultados.</p>
-          <button className="tarjeta-btn" style={{ background: '#e67e22' }}>Ver Tutorial →</button>
-        </div>
+      <div className="inicio-acciones">
+        <button className="btn-primary" onClick={nuevoWorkflow}>Nuevo workflow</button>
+        <button className="btn-secundario" onClick={() => setPaginaActual('moleculas')}>
+          Subir moléculas
+        </button>
+        <button className="btn-secundario" onClick={() => setPaginaActual('algoritmos')}>
+          Subir algoritmo
+        </button>
+        <span className="inicio-tutorial">
+          ¿Primera vez?{' '}
+          <button className="btn-enlace" onClick={() => setPaginaActual('tutorial')}>Ver el tutorial</button>
+        </span>
       </div>
+
+      <div className="subtitulo-tabla">
+        <h3>Tus últimas ejecuciones</h3>
+        {ejecuciones?.length > 0 && (
+          <button className="btn-enlace" onClick={() => setPaginaActual('peticiones')}>
+            Ver todos los resultados
+          </button>
+        )}
+      </div>
+
+      {ejecuciones === null && <p className="texto-secundario">Cargando…</p>}
+
+      {ejecuciones?.length === 0 && (
+        <div className="panel inicio-vacio">
+          <p>
+            Todavía no has lanzado ningún cribado. Empieza por subir una biblioteca de
+            moléculas y después crea un workflow que la use.
+          </p>
+          <button className="btn-primary" onClick={() => setPaginaActual('moleculas')}>
+            Subir moléculas
+          </button>
+        </div>
+      )}
+
+      {ejecuciones?.length > 0 && (
+        <div className="tabla-contenedor">
+          <table className="tabla-peticiones">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Fecha</th>
+                <th>Workflow</th>
+                <th>Estado</th>
+                <th>Ficheros</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ejecuciones.map(e => (
+                <tr key={e.id}>
+                  <td className="col-id">#{e.id}</td>
+                  <td className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
+                  <td>{e.workflow_nombre}</td>
+                  <td>
+                    <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
+                  </td>
+                  <td>
+                    {e.archivos?.length
+                      ? e.archivos.map(f => (
+                          <button
+                            key={f}
+                            className="btn-descarga"
+                            title={f}
+                            onClick={() => descargarConToken(`/uploads/${f}`, f).catch(err => alert(err.message))}
+                          >
+                            {etiquetaFichero(f)}
+                          </button>
+                        ))
+                      : <span className="col-cifra">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

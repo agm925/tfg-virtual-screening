@@ -1,113 +1,379 @@
-/* ===== GLOBAL ===== */
-body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
-
-/* Red de seguridad: un <button> sin color propio no hereda el del body,
-   usa el color de sistema `buttontext`. Y como index.css declara
-   `color-scheme: light dark`, ese color pasa a ser BLANCO cuando el sistema
-   operativo esta en modo oscuro -- botones con fondo claro y letras blancas,
-   invisibles. Ya pasaba en Administracion.jsx y en el selector de tipo de
-   Algoritmos.jsx (los dos con estilos en linea sin `color`, ya corregidos);
-   esta regla cubre cualquier boton nuevo que se escriba igual y se olvide de
-   ponerlo. Un boton que SÍ fija su color (las clases .btn-*, .nav-btn, etc.)
-   no se ve afectado: la cascada CSS usa el mas especifico, esto solo actua
-   donde nadie dijo nada. */
-button { color: #2c3e50; }
-
-html, body, #root {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-}
+/*
+ * Componentes comunes de la plataforma, con la identidad de la UAL (los
+ * valores estan en styles/tokens.css). Se conservan los nombres de clase que
+ * ya usaban las pantallas --.btn-primary, .badge, .tabla-peticiones...-- para
+ * cambiar su aspecto sin tocar el JSX que las usa.
+ */
 
 .app-wrapper {
-  width: 100%;
   min-height: 100vh;
-  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* El constructor ocupa exactamente la ventana: cabecera arriba y el lienzo en
+   lo que queda, sin que la página entera se desplace. */
+.app-wrapper.pantalla-completa { height: 100vh; }
+.app-wrapper.pantalla-completa .contenido-principal { min-height: 0; }
+.app-wrapper.pantalla-completa .navbar { position: static; }
+
+/* ===== CABECERA: franja superior + barra azul, como ual.es ===== */
+.franja-ual {
+  background: var(--ual-noche);
+  color: #fff;
+  font-size: var(--t-xs);
+}
+.franja-ual-contenido {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 32px;
+}
+.franja-ual a { color: #fff; text-decoration: none; }
+.franja-ual a:hover { text-decoration: underline; color: #fff; }
+.franja-usuario { display: flex; align-items: center; gap: 14px; }
+.franja-usuario button {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  color: #fff;
+  padding: 2px 10px;
+  border-radius: var(--radio);
+  font-size: var(--t-xs);
+}
+.franja-usuario button:hover { background: #fff; color: var(--ual-noche); }
+
+.navbar {
+  background: var(--ual-azul);
+  color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+/* El foco general es azul UAL: sobre la cabecera azul seria invisible. */
+.navbar :focus-visible, .franja-ual :focus-visible { outline-color: #fff; }
+.navbar-contenido {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 14px 32px;
+}
+.navbar-marca {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #fff;
+  background: none;
+  border: none;
   padding: 0;
+  text-align: left;
+}
+/* Escudo + nombre de la universidad (LogoUAL.jsx). */
+.logo-ual { display: inline-flex; align-items: center; gap: 12px; }
+.logo-ual-escudo { display: block; width: auto; }
+.navbar-logo .logo-ual-escudo { height: 48px; }
+.navbar-logo-texto {
+  font-weight: 700;
+  font-size: var(--t-s);
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.navbar-separador { width: 1px; align-self: stretch; background: rgba(255, 255, 255, 0.35); }
+.navbar-app { font-size: var(--t-l); font-weight: 700; white-space: nowrap; }
+
+.navbar-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-left: auto;
+}
+.nav-btn {
+  background: none;
+  border: none;
+  color: #fff;
+  padding: 8px 10px;
+  font-size: var(--t-s);
+  border-bottom: 3px solid transparent;
+}
+.nav-btn:hover { border-bottom-color: rgba(255, 255, 255, 0.5); }
+.nav-btn.activo { border-bottom-color: var(--ual-cian); font-weight: 600; }
+
+/* El boton destacado de la cabecera: blanco con texto azul, como el
+   "Campus online" de ual.es. */
+.nav-destacado {
+  background: #fff;
+  color: var(--ual-azul);
+  border: none;
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+.nav-destacado:hover { background: var(--ual-gris); color: var(--ual-azul-h); }
+
+.nav-menu-boton {
+  display: none;
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: var(--radio);
 }
 
-/* ===== NAVBAR ===== */
-.navbar {
-  display: flex; align-items: center; justify-content: space-between;
-  background: #1a1a2e; padding: 0 30px; height: 60px; position: sticky; top: 0; z-index: 100;
+@media (max-width: 900px) {
+  .franja-ual-contenido, .navbar-contenido { padding-left: 16px; padding-right: 16px; }
+  .franja-ual-tfg { display: none; }
+  .navbar-contenido { flex-wrap: wrap; gap: 12px; }
+  .navbar-separador, .navbar-app { display: none; }
+  .nav-menu-boton { display: block; }
+  .navbar-links { display: none; width: 100%; flex-direction: column; align-items: stretch; }
+  .navbar-links.abierto { display: flex; }
+  .nav-btn { text-align: left; border-bottom: none; border-left: 3px solid transparent; }
+  .nav-btn.activo { border-left-color: var(--ual-cian); }
+  .nav-destacado { margin: 8px 0 4px; align-self: flex-start; }
 }
-.navbar-logo { color: white; font-size: 1.2rem; font-weight: bold; letter-spacing: 1px; }
-.navbar-links { display: flex; gap: 8px; align-items: center; }
-.nav-btn {
-  background: none; border: none; color: #ccc; padding: 8px 16px;
-  cursor: pointer; border-radius: 6px; font-size: 0.95rem; transition: all 0.2s;
-}
-.nav-btn:hover { background: rgba(255,255,255,0.1); color: white; }
-.nav-btn.activo { background: #646cff; color: white; }
-.nav-btn.cerrar-sesion { color: #ff6b6b; border: 1px solid #ff6b6b; margin-left: 10px; }
-.nav-btn.cerrar-sesion:hover { background: #ff6b6b; color: white; }
 
 /* ===== CONTENIDO ===== */
-.contenido-principal { 
-  width: 100%; 
-  margin: 0; 
-  padding: 0;
+.contenido-principal {
+  flex: 1;
+  width: 100%;
   display: flex;
 }
 
-/* ===== LOGIN ===== */
-.login-wrapper { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-.login-card {
-  background: white; padding: 40px; border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center;
+/* ===== PIE ===== */
+.pie-ual {
+  background: var(--ual-texto);
+  color: #fff;
+  font-size: var(--t-xs);
+  padding: 18px 32px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
 }
-.login-icono { font-size: 3rem; margin-bottom: 10px; }
-.login-card h2 { margin-bottom: 20px; color: #666; }
-.login-form { display: flex; flex-direction: column; gap: 12px; }
-.login-form input { padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
-.btn-toggle { margin-top: 15px; background: none; border: none; color: #646cff; cursor: pointer; text-decoration: underline; }
+.pie-ual a { color: #fff; }
 
-/* ===== HOME ===== */
-.home-wrapper { text-align: center; padding: 40px 20px; width: 100%; }
-.home-bienvenida { font-size: 2rem; margin-bottom: 10px; color: #646cff; }
-.nombre-usuario { color: #646cff; }
-.home-subtitulo { color: #666; margin-bottom: 40px; font-size: 1.1rem; }
-.home-tarjetas { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; width: 100%; padding: 0 20px; }
-.tarjeta {
-  background: white; border-radius: 16px; padding: 30px; width: 280px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.08); cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s; text-align: left;
+/* ===== TITULOS DE PAGINA: negrita con una barra corta en cian debajo ===== */
+.titulo-pagina {
+  font-size: var(--t-xl);
+  margin-bottom: 18px;
 }
-.tarjeta:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.12); }
-.tarjeta-icono { font-size: 2.5rem; margin-bottom: 15px; }
-.tarjeta h2 { font-size: 1.1rem; margin-bottom: 10px; color: #666;}
-.tarjeta p { color: #666; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px; }
-.tarjeta-btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; color: white; }
-.tarjeta-btn.azul { background: #646cff; }
-.tarjeta-btn.verde { background: #4caf50; }
+.titulo-pagina::after {
+  content: "";
+  display: block;
+  width: 56px;
+  height: 4px;
+  margin-top: 10px;
+  background: var(--ual-cian);
+}
 
 /* ===== SECCIONES ===== */
-.seccion-wrapper { background: white; border-radius: 0; padding: 30px; box-shadow: none; width: 100%; height: 100%; }
-.seccion-wrapper h2 { margin-bottom: 8px; color: #666;}
-.seccion-subtitulo { color: #666; margin-bottom: 24px; }
-.formulario { display: flex; flex-direction: column; gap: 10px; max-width: 450px; }
-.formulario label { font-size: 0.9rem; font-weight: 600; color: #444; }
-.formulario input, .formulario select { padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
+.seccion-wrapper {
+  width: 100%;
+  padding: 32px;
+  background: var(--ual-gris);
+}
+.seccion-wrapper > h2:first-child { font-size: var(--t-xl); margin-bottom: 18px; }
+.seccion-wrapper > h2:first-child::after {
+  content: "";
+  display: block;
+  width: 56px;
+  height: 4px;
+  margin-top: 10px;
+  background: var(--ual-cian);
+}
+.seccion-subtitulo, .texto-secundario { color: var(--texto-2); margin-bottom: 24px; max-width: 70ch; }
+
+.panel {
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  padding: 24px;
+  margin-bottom: 32px;
+}
+.panel > h3:first-child { margin-bottom: 16px; }
+
+.subtitulo-tabla {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.subtitulo-tabla .aviso-vivo { font-size: var(--t-xs); font-weight: 400; color: var(--texto-2); }
+.subtitulo-tabla h3 { margin: 0; }
+.subtitulo-tabla .btn-enlace { margin-left: auto; font-size: var(--t-s); }
+
+/* ===== FORMULARIOS ===== */
+.formulario { display: flex; flex-direction: column; gap: 8px; max-width: 460px; }
+.formulario label { font-size: var(--t-xs); font-weight: 600; color: var(--ual-texto); margin-top: 6px; }
+.formulario input, .formulario select, .formulario textarea,
+.login-form input {
+  padding: 9px 11px;
+  border: 1px solid #B9C0C7;
+  border-radius: var(--radio);
+  background: var(--superficie);
+  font-size: var(--t-s);
+}
+.formulario input:focus, .formulario select:focus, .login-form input:focus {
+  border-color: var(--ual-azul);
+  outline: 2px solid rgba(10, 67, 130, 0.25);
+  outline-offset: 0;
+}
 
 /* ===== BOTONES ===== */
-.btn-primary { padding: 10px 20px; border: none; border-radius: 8px; background: #646cff; color: white; font-size: 1rem; cursor: pointer; margin-top: 8px; }
-.btn-primary.verde { background: #4caf50; }
-.btn-ejecutar { padding: 5px 10px; border: none; border-radius: 6px; background: #646cff; color: white; cursor: pointer; font-size: 0.85rem; }
-.btn-borrar { padding: 5px 10px; border: none; border-radius: 6px; background: #e53935; color: white; cursor: pointer; font-size: 0.85rem; margin-left: 6px; }
+.btn-primary, .btn-secundario {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border-radius: var(--radio);
+  font-size: var(--t-s);
+  font-weight: 600;
+  border: 1px solid var(--ual-azul);
+}
+.btn-primary { background: var(--ual-azul); color: #fff; margin-top: 8px; }
+.btn-primary:hover:not(:disabled) { background: var(--ual-azul-h); border-color: var(--ual-azul-h); }
+/* .verde se mantenia por compatibilidad: con la identidad de la UAL hay un
+   unico color de accion. */
+.btn-primary.verde { background: var(--ual-azul); }
+.btn-secundario { background: var(--superficie); color: var(--ual-azul); }
+.btn-secundario:hover:not(:disabled) { background: var(--proceso-fondo); }
+.btn-primary:disabled, .btn-secundario:disabled { opacity: 0.55; }
 
-/* ===== TABLA ===== */
-.tabla-peticiones { width: 100%; border-collapse: collapse; margin-top: 16px; }
-.tabla-peticiones th { background: #f0f4f8; padding: 12px; text-align: left; font-size: 0.9rem; border-bottom: 2px solid #ddd; }
-.tabla-peticiones td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+.btn-ejecutar, .btn-borrar, .btn-descarga {
+  padding: 5px 10px;
+  border-radius: var(--radio);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.btn-ejecutar { background: var(--ual-azul); color: #fff; }
+.btn-ejecutar:hover { background: var(--ual-azul-h); }
+.btn-descarga {
+  background: var(--superficie);
+  color: var(--ual-azul);
+  border-color: var(--ual-azul);
+  margin: 0 6px 4px 0;
+}
+.btn-descarga:hover { background: var(--proceso-fondo); }
+.btn-borrar { background: var(--superficie); color: var(--ual-rojo); border-color: var(--ual-rojo); }
+.btn-borrar:hover { background: var(--ual-rojo); color: #fff; }
+
+.btn-enlace {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ual-azul);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.btn-enlace:hover { color: var(--ual-azul-h); }
+
+/* ===== TABLAS ===== */
+.tabla-contenedor {
+  width: 100%;
+  overflow-x: auto;
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  margin-bottom: 36px;
+}
+/* Ancho mínimo: en un móvil la tabla se desplaza dentro de su marco en vez
+   de apretar las columnas hasta que cada fila mide media pantalla. */
+.tabla-peticiones { width: 100%; min-width: 720px; border-collapse: collapse; }
+.tabla-peticiones th {
+  background: var(--ual-gris);
+  color: var(--ual-texto);
+  text-align: left;
+  font-size: var(--t-xs);
+  font-weight: 700;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--linea);
+  white-space: nowrap;
+}
+.tabla-peticiones td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--linea);
+  font-size: var(--t-xs);
+  vertical-align: middle;
+}
+.tabla-peticiones tr:last-child td { border-bottom: none; }
+.tabla-peticiones .col-id, .tabla-peticiones .col-fichero {
+  font-family: var(--fuente-mono);
+  font-variant-numeric: tabular-nums;
+}
+.tabla-peticiones .col-fecha, .tabla-peticiones .col-cifra { white-space: nowrap; color: var(--texto-2); }
 .acciones-celda { white-space: nowrap; }
-.tabla-vacia { text-align: center; color: #999; padding: 20px !important; }
-.badge { padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; }
-.badge.pendiente { background: #fff3e0; color: #e65100; }
-.badge.completado { background: #e8f5e9; color: #2e7d32; }
-.badge.error { background: #ffebee; color: #c62828; }
-.badge.cancelado { background: #f3e5f5; color: #7b1fa2; }
-.badge.procesando { background: #e3f2fd; color: #1565c0; }
+.tabla-vacia { text-align: center; color: var(--texto-2); padding: 24px !important; }
+
+/* ===== INSIGNIAS DE ESTADO ===== */
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radio);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge.pendiente  { background: var(--aviso-fondo);     color: var(--aviso); }
+.badge.procesando { background: var(--proceso-fondo);   color: var(--proceso); }
+.badge.completado { background: var(--ok-fondo);        color: var(--ok); }
+.badge.error      { background: var(--error-fondo);     color: var(--error); }
+.badge.cancelado  { background: var(--cancelado-fondo); color: var(--cancelado); }
 
 /* ===== MENSAJES ===== */
-.exito-msg { color: #2e7d32; margin-top: 12px; font-size: 0.95rem; }
-.error-msg { color: #c62828; margin-top: 12px; font-size: 0.95rem; }
+.exito-msg, .error-msg {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-left: 4px solid;
+  font-size: var(--t-s);
+}
+.exito-msg { color: var(--ok); background: var(--ok-fondo); border-color: var(--ok); }
+.error-msg { color: var(--error); background: var(--error-fondo); border-color: var(--error); }
+
+/* ===== ACCESO ===== */
+.login-pagina { min-height: 100vh; display: flex; flex-direction: column; background: var(--ual-gris); }
+.login-franja { height: 8px; background: var(--ual-azul); }
+.login-wrapper { flex: 1; display: flex; justify-content: center; align-items: center; padding: 32px 16px; }
+.login-card {
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-top: 4px solid var(--ual-azul);
+  border-radius: var(--radio);
+  padding: 36px 36px 28px;
+  width: 100%;
+  max-width: 420px;
+}
+.login-logo { margin-bottom: 24px; }
+.login-logo .logo-ual-escudo { height: 60px; }
+.login-logo-texto {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ual-azul);
+  line-height: 1.15;
+}
+.login-card h1 { font-size: var(--t-l); margin-bottom: 4px; }
+.login-card .texto-secundario { margin-bottom: 20px; }
+.login-form { display: flex; flex-direction: column; gap: 6px; }
+.login-form label { font-size: var(--t-xs); font-weight: 600; margin-top: 6px; }
+.login-form .btn-primary { margin-top: 16px; }
+.login-alterno { margin-top: 20px; font-size: var(--t-s); color: var(--texto-2); }
+.login-pie { text-align: center; color: var(--texto-2); font-size: var(--t-xs); padding: 16px; }
+
+/* ===== INICIO ===== */
+.inicio-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 36px; }
+.inicio-acciones .btn-primary, .inicio-acciones .btn-secundario { margin-top: 0; }
+.inicio-tutorial { margin-left: auto; color: var(--texto-2); }
+.inicio-vacio { padding: 28px; text-align: left; }
+.inicio-vacio p { margin-bottom: 14px; color: var(--texto-2); }
+
+@media (max-width: 900px) {
+  .seccion-wrapper { padding: 24px 16px; }
+  .pie-ual { padding: 16px; }
+  .inicio-tutorial { margin-left: 0; width: 100%; }
+}

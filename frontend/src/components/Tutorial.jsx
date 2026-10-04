@@ -102,9 +102,10 @@ export default function Tutorial() {
                     La ejecución va a una cola para no bloquear a otros usuarios.</p>
                 </div>
                 <div className="tutorial-info-card">
-                  <h3>📬 Realizar Petición</h3>
-                  <p>Envía una molécula directamente a un algoritmo concreto sin construir
-                    un pipeline completo.</p>
+                  <h3>📬 Resultados</h3>
+                  <p>Encuentra los ficheros de tus workflows y cribados para descargarlos. Desde
+                    aquí también puedes enviar una molécula directamente a un algoritmo concreto,
+                    sin construir un pipeline completo.</p>
                 </div>
               </div>
 

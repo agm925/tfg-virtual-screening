@@ -15,6 +15,15 @@ import './App.css'
 function App() {
   const [usuario, setUsuario] = useState(null);
   const [paginaActual, setPaginaActual] = useState('home');
+  // "Nuevo workflow" (cabecera e Inicio) abre el constructor Y crea uno. Se
+  // pasa como aviso que el constructor consume una sola vez: si se quedara
+  // puesto, cada visita posterior al constructor volveria a pedir un nombre.
+  const [nuevoWorkflowPedido, setNuevoWorkflowPedido] = useState(false);
+
+  const nuevoWorkflow = () => {
+    setNuevoWorkflowPedido(true);
+    setPaginaActual('visual');
+  };
 
   const cerrarSesion = () => {
     clearToken();
@@ -48,23 +57,39 @@ function App() {
   if (!usuario) return <Login alLoguear={alLoguear} />;
 
   return (
-    <div className="app-wrapper">
+    <div className={`app-wrapper ${paginaActual === 'visual' ? 'pantalla-completa' : ''}`}>
       <Navbar
         usuario={usuario}
         paginaActual={paginaActual}
         setPaginaActual={setPaginaActual}
+        nuevoWorkflow={nuevoWorkflow}
         cerrarSesion={cerrarSesion}
       />
       <main className="contenido-principal">
-        {paginaActual === 'home'      && <Home usuario={usuario} setPaginaActual={setPaginaActual} />}
+        {paginaActual === 'home'      && <Home usuario={usuario} setPaginaActual={setPaginaActual} nuevoWorkflow={nuevoWorkflow} />}
         {paginaActual === 'algoritmos' && <Algoritmos />}
         {paginaActual === 'moleculas'  && <Moleculas />}
         {paginaActual === 'peticiones' && <RealizarPeticion key={usuario.id} usuario={usuario} />}
-        {paginaActual === 'visual'    && <VisualBuilder key={usuario.id} usuario={usuario} />}
+        {paginaActual === 'visual'    && (
+          <VisualBuilder
+            key={usuario.id}
+            usuario={usuario}
+            crearAlAbrir={nuevoWorkflowPedido}
+            alCrearAlAbrir={() => setNuevoWorkflowPedido(false)}
+          />
+        )}
         {paginaActual === 'tutorial'  && <Tutorial />}
         {paginaActual === 'sistema'   && usuario.rol === 'admin' && <Sistema />}
         {paginaActual === 'administracion' && usuario.rol === 'admin' && <Administracion usuario={usuario} />}
       </main>
+      {/* El constructor ocupa toda la altura de la ventana: el pie solo va
+          en las demás pantallas. */}
+      {paginaActual !== 'visual' && (
+        <footer className="pie-ual">
+          <span>Plataforma de cribado virtual — Trabajo Fin de Grado, Universidad de Almería</span>
+          <a href="https://www.ual.es" target="_blank" rel="noopener noreferrer">www.ual.es</a>
+        </footer>
+      )}
     </div>
   );
 }

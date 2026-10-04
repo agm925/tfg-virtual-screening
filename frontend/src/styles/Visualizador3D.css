@@ -10,9 +10,9 @@
 
 .visualizador-3d-header {
   padding: 12px 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--ual-azul);
   color: white;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--ual-gris);
 }
 
 .visualizador-3d-header h3 {
@@ -30,7 +30,7 @@
 
 .visualizador-3d-canvas {
   flex: 1;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  background: var(--ual-gris);
   overflow: hidden;
 }
 

@@ -1,39 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { apiFetch, descargarConToken } from '../api/client'
+import {
+  claseEstado, textoEstado, estaActivo, etiquetaFichero, formatFecha,
+} from '../utils/ficheros'
 
 const POLL_MS = 4000;
-
-// ── Utilidades ───────────────────────────────────────────────────────────────
-
-const BADGE_CLASE  = { PENDIENTE:'pendiente', PROCESANDO:'procesando', COMPLETADO:'completado', ERROR:'error', cancelado:'cancelado',
-                       pendiente:'pendiente',  procesando:'procesando',  completado:'completado', error:'error' };
-const BADGE_LABEL  = { PENDIENTE:'⏳ En cola', PROCESANDO:'⚙️ Procesando', COMPLETADO:'✅ Completado', ERROR:'❌ Error', cancelado:'🚫 Cancelado',
-                       pendiente:'⏳ En cola',  procesando:'⚙️ Procesando',  completado:'✅ Completado', error:'❌ Error' };
-
-const CANCELABLE = ['pendiente', 'procesando', 'PENDIENTE', 'PROCESANDO'];
-
-// Los ficheros de un cribado llevan en el nombre la base de datos, la ejecución
-// y la fecha, para que dos ejecuciones no se pisen. Como texto de un botón es
-// ilegible: se enseña qué es, y el nombre completo queda en el tooltip.
-const ETIQUETA_FICHERO = {
-  moleculas_:   'Moléculas',
-  propiedades_: 'Propiedades',
-  ranking_:     'Ranking',
-  poses_:       'Poses',
-  resultados_:  'Resultados completos',
-};
-
-function etiquetaFichero(nombre) {
-  const prefijo = Object.keys(ETIQUETA_FICHERO).find(p => nombre.startsWith(p));
-  return prefijo ? `${ETIQUETA_FICHERO[prefijo]} (${nombre.split('.').pop().toUpperCase()})` : nombre;
-}
-
-function formatFecha(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' })
-    + ' ' + d.toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' });
-}
 
 // ── Componente principal ─────────────────────────────────────────────────────
 
@@ -43,7 +14,7 @@ export default function RealizarPeticion({ usuario }) {
   const [algoritmos,   setAlgoritmos]   = useState([]);
   const [archivo,      setArchivo]      = useState(null);
   const [algoritmoSel, setAlgoritmoSel] = useState('');
-  const [mensaje,      setMensaje]      = useState('');
+  const [mensaje,      setMensaje]      = useState(null); // { tipo: 'exito'|'error', texto }
   const [cargando,     setCargando]     = useState(false);
   const [posiciones,   setPosiciones]   = useState({});
   const intervalRef = useRef(null);
@@ -94,7 +65,7 @@ export default function RealizarPeticion({ usuario }) {
   useEffect(() => { cargarDatos(); }, []);
 
   useEffect(() => {
-    const hayActivas = peticiones.some(p => ['PENDIENTE','PROCESANDO'].includes(p.estado));
+    const hayActivas = peticiones.some(p => estaActivo(p.estado));
     if (hayActivas) {
       if (!intervalRef.current)
         intervalRef.current = setInterval(() => pollEstados(peticiones), POLL_MS);
@@ -108,8 +79,11 @@ export default function RealizarPeticion({ usuario }) {
   // ── Crear petición ───────────────────────────────────────────────────────
   const subirMolecula = async (e) => {
     e.preventDefault();
-    if (!archivo) { setMensaje('Selecciona un archivo de molécula (.mol2, .sdf o .mol)'); return; }
-    setCargando(true); setMensaje('');
+    if (!archivo) {
+      setMensaje({ tipo: 'error', texto: 'Elige una molécula en formato .mol2, .sdf o .mol.' });
+      return;
+    }
+    setCargando(true); setMensaje(null);
     const fd = new FormData();
     fd.append('algoritmo_id', algoritmoSel);
     fd.append('archivo_mol',  archivo);
@@ -117,30 +91,30 @@ export default function RealizarPeticion({ usuario }) {
     const resp = await apiFetch('/peticiones', { method: 'POST', body: fd });
     setCargando(false);
     if (resp.ok) {
-      setMensaje('✅ Petición enviada — recibirás un correo al terminar.');
+      setMensaje({ tipo: 'exito', texto: 'Petición enviada. Te avisaremos por correo cuando termine.' });
       setArchivo(null);
       e.target.reset();
       cargarDatos();
     } else {
       const err = await resp.json();
-      setMensaje(`❌ Error: ${err.detail || 'No se pudo crear la petición'}`);
+      setMensaje({ tipo: 'error', texto: `No se pudo enviar la petición: ${err.detail || 'error desconocido'}.` });
     }
   };
 
   // ── Cancelar ejecución de workflow ───────────────────────────────────────
   const cancelarEjecucion = async (id) => {
-    if (!confirm('¿Cancelar esta ejecución? El proceso se detendrá.')) return;
+    if (!confirm('¿Cancelar esta ejecución? Se detendrá y no generará resultados.')) return;
     const resp = await apiFetch(`/workflows/ejecuciones/${id}/cancelar`, { method: 'POST' });
     if (resp.ok) cargarDatos();
     else {
       const err = await resp.json();
-      alert(err.detail || 'No se pudo cancelar');
+      alert(`No se pudo cancelar: ${err.detail || 'error desconocido'}.`);
     }
   };
 
   // ── Borrar petición ──────────────────────────────────────────────────────
   const borrarPeticion = async (id) => {
-    if (!confirm('¿Eliminar esta petición?')) return;
+    if (!confirm('¿Borrar esta petición y su resultado?')) return;
     const resp = await apiFetch(`/peticiones/${id}`, { method: 'DELETE' });
     if (resp.ok) cargarDatos();
   };
@@ -155,21 +129,23 @@ export default function RealizarPeticion({ usuario }) {
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
+  const hayActivas = peticiones.some(p => estaActivo(p.estado));
+
   return (
     <div className="seccion-wrapper">
-      <h2>Peticiones</h2>
-      <p style={{ color:'#666', marginBottom:'24px', fontSize:'14px' }}>
-        Aquí aparecen tanto las peticiones directas de algoritmos como las ejecuciones
-        de tus workflows del Constructor Visual, todas privadas y solo visibles para ti.
+      <h2>Resultados</h2>
+      <p className="seccion-subtitulo">
+        Tus peticiones de algoritmo y las ejecuciones de tus workflows, con los
+        ficheros que generan. Solo los ves tú.
       </p>
 
       {/* ══════════ FORMULARIO NUEVA PETICIÓN ══════════ */}
-      <div style={{ background:'white', borderRadius:'12px', padding:'24px',
-                    boxShadow:'0 2px 10px rgba(0,0,0,0.07)', marginBottom:'36px' }}>
-        <h3 style={{ margin:'0 0 16px', color:'#2c3e50' }}>📤 Nueva petición de algoritmo</h3>
+      <section className="panel">
+        <h3>Ejecutar un algoritmo sobre una molécula</h3>
         <form onSubmit={subirMolecula} className="formulario">
-          <label>Algoritmo a ejecutar</label>
-          <select value={algoritmoSel} onChange={e => setAlgoritmoSel(e.target.value)} required>
+          <label htmlFor="peticion-algoritmo">Algoritmo</label>
+          <select id="peticion-algoritmo" value={algoritmoSel}
+                  onChange={e => setAlgoritmoSel(e.target.value)} required>
             {algoritmos.length === 0
               ? <option value="">No hay algoritmos disponibles</option>
               : algoritmos.map(a => (
@@ -181,144 +157,138 @@ export default function RealizarPeticion({ usuario }) {
               solo se admitía .mol2, lo que obligaba a convertir cualquier
               SDF descargado de ChEMBL o PubChem -- y esa conversión degrada
               la química de muchos heterociclos aromáticos. */}
-          <label>Molécula (.mol2, .sdf o .mol)</label>
-          <input type="file" accept=".mol2,.sdf,.mol" onChange={e => setArchivo(e.target.files[0])} required />
-          <button type="submit" className="btn-primary verde" disabled={cargando}>
-            {cargando ? '⏳ Enviando...' : '📤 Enviar a la cola'}
+          <label htmlFor="peticion-molecula">Molécula (.mol2, .sdf o .mol)</label>
+          <input id="peticion-molecula" type="file" accept=".mol2,.sdf,.mol"
+                 onChange={e => setArchivo(e.target.files[0])} required />
+          <button type="submit" className="btn-primary" disabled={cargando}>
+            {cargando ? 'Enviando…' : 'Enviar a la cola'}
           </button>
         </form>
         {mensaje && (
-          <p className={mensaje.startsWith('✅') ? 'exito-msg' : 'error-msg'}>{mensaje}</p>
+          <p className={mensaje.tipo === 'exito' ? 'exito-msg' : 'error-msg'} role="status">
+            {mensaje.texto}
+          </p>
         )}
-      </div>
+      </section>
 
       {/* ══════════ TABLA PETICIONES DE ALGORITMO ══════════ */}
-      <h3 style={{ color:'#2c3e50', marginBottom:'12px' }}>
-        🔬 Peticiones de algoritmo
-        {peticiones.some(p => ['PENDIENTE','PROCESANDO'].includes(p.estado)) && (
-          <span style={{ fontSize:'13px', color:'#888', fontWeight:'normal', marginLeft:'10px' }}>
-            🔄 actualizando…
-          </span>
-        )}
+      <h3 className="subtitulo-tabla">
+        Peticiones de algoritmo
+        {hayActivas && <span className="aviso-vivo">Actualizando…</span>}
       </h3>
 
-      <table className="tabla-peticiones" style={{ marginBottom:'40px' }}>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Fecha</th>
-            <th>Algoritmo</th>
-            <th>Archivo entrada</th>
-            <th>Estado</th>
-            <th>Cola</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          {peticiones.length === 0 && (
-            <tr><td colSpan="7" className="tabla-vacia">No hay peticiones todavía</td></tr>
-          )}
-          {peticiones.map(p => (
-            <tr key={p.id}>
-              <td>#{p.id}</td>
-              <td style={{ fontSize:'12px', whiteSpace:'nowrap' }}>{formatFecha(p.fecha_creacion)}</td>
-              <td style={{ fontSize:'12px' }}>{p.algoritmo_nombre}</td>
-              <td style={{ fontSize:'12px' }}>{p.ruta_mol_original}</td>
-              <td>
-                <span className={`badge ${BADGE_CLASE[p.estado] || 'pendiente'}`}>
-                  {BADGE_LABEL[p.estado] || p.estado}
-                </span>
-              </td>
-              <td style={{ fontSize:'12px', color:'#888' }}>
-                {p.estado === 'PENDIENTE' && posiciones[p.id]
-                  ? `Posición ${posiciones[p.id]}`
-                  : p.estado === 'PROCESANDO' ? '⚙️ ejecutando' : '—'}
-              </td>
-              <td className="acciones-celda">
-                {p.estado === 'COMPLETADO' && (
-                  /* El nombre sugerido es el del RESULTADO, no el de la entrada.
-                     descargarConToken hace a.download = nombreSugerido, que pisa
-                     el nombre que manda el servidor: con el de la entrada, un
-                     resultado JSON --un filtro, una comparacion, un RMSD-- se
-                     descargaba llamandose .sdf. El backend renombra esos
-                     ficheros a proposito (corregir_extension en app/tasks.py)
-                     para que no se hagan pasar por moleculas, y esto lo
-                     deshacia en el ultimo paso. */
-                  <button
-                    onClick={() => descargarPeticion(p.id, p.ruta_mol_resultado || p.ruta_mol_original)}
-                    className="btn-ejecutar"
-                  >
-                    📥 Descargar
-                  </button>
-                )}
-                <button onClick={() => borrarPeticion(p.id)} className="btn-borrar">Borrar</button>
-              </td>
+      <div className="tabla-contenedor">
+        <table className="tabla-peticiones">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Fecha</th>
+              <th>Algoritmo</th>
+              <th>Molécula</th>
+              <th>Estado</th>
+              <th>Cola</th>
+              <th>Acciones</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {peticiones.length === 0 && (
+              <tr><td colSpan="7" className="tabla-vacia">
+                Aún no has enviado ninguna petición. Usa el formulario de arriba.
+              </td></tr>
+            )}
+            {peticiones.map(p => (
+              <tr key={p.id}>
+                <td className="col-id">#{p.id}</td>
+                <td className="col-fecha">{formatFecha(p.fecha_creacion)}</td>
+                <td>{p.algoritmo_nombre}</td>
+                <td className="col-fichero">{p.ruta_mol_original}</td>
+                <td>
+                  <span className={`badge ${claseEstado(p.estado)}`}>{textoEstado(p.estado)}</span>
+                </td>
+                <td className="col-cifra">
+                  {p.estado === 'PENDIENTE' && posiciones[p.id]
+                    ? `Posición ${posiciones[p.id]}`
+                    : p.estado === 'PROCESANDO' ? 'Ejecutando' : '—'}
+                </td>
+                <td className="acciones-celda">
+                  {p.estado === 'COMPLETADO' && (
+                    /* El nombre sugerido es el del RESULTADO, no el de la entrada.
+                       descargarConToken hace a.download = nombreSugerido, que pisa
+                       el nombre que manda el servidor: con el de la entrada, un
+                       resultado JSON --un filtro, una comparacion, un RMSD-- se
+                       descargaba llamandose .sdf. El backend renombra esos
+                       ficheros a proposito (corregir_extension en app/tasks.py)
+                       para que no se hagan pasar por moleculas, y esto lo
+                       deshacia en el ultimo paso. */
+                    <button
+                      onClick={() => descargarPeticion(p.id, p.ruta_mol_resultado || p.ruta_mol_original)}
+                      className="btn-descarga"
+                    >
+                      Descargar resultado
+                    </button>
+                  )}
+                  <button onClick={() => borrarPeticion(p.id)} className="btn-borrar">Borrar</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/* ══════════ TABLA EJECUCIONES DE WORKFLOW ══════════ */}
-      <h3 style={{ color:'#2c3e50', marginBottom:'12px' }}>🔧 Ejecuciones de workflows</h3>
-      <table className="tabla-peticiones">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Fecha</th>
-            <th>Workflow</th>
-            <th>Estado</th>
-            <th>Duración</th>
-            <th>Archivos generados</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ejecuciones.length === 0 && (
-            <tr><td colSpan="6" className="tabla-vacia">No hay ejecuciones de workflow todavía</td></tr>
-          )}
-          {ejecuciones.map(e => (
-            <tr key={e.id}>
-              <td>#{e.id}</td>
-              <td style={{ fontSize:'12px', whiteSpace:'nowrap' }}>{formatFecha(e.fecha_ejecucion)}</td>
-              <td style={{ fontSize:'12px' }}>{e.workflow_nombre}</td>
-              <td>
-                <span className={`badge ${BADGE_CLASE[e.estado] || 'pendiente'}`}>
-                  {BADGE_LABEL[e.estado] || e.estado}
-                </span>
-              </td>
-              <td style={{ fontSize:'12px', color:'#888' }}>
-                {e.duracion_segundos != null ? `${e.duracion_segundos}s` : '—'}
-              </td>
-              <td>
-                {e.archivos && e.archivos.length > 0
-                  ? e.archivos.map(f => (
-                      <button
-                        key={f}
-                        onClick={() => descargarConToken(`/uploads/${f}`, f).catch(err => alert(err.message))}
-                        className="btn-ejecutar"
-                        title={f}
-                        style={{ display:'inline-block',
-                                 marginRight:'6px', marginBottom:'4px', fontSize:'11px' }}
-                      >
-                        📥 {etiquetaFichero(f)}
-                      </button>
-                    ))
-                  : <span style={{ fontSize:'12px', color:'#aaa' }}>—</span>
-                }
-                {CANCELABLE.includes(e.estado) && (
-                  <button
-                    onClick={() => cancelarEjecucion(e.id)}
-                    style={{ fontSize:'11px', padding:'3px 8px', marginLeft:'4px',
-                             background:'#e74c3c', color:'white', border:'none',
-                             borderRadius:'4px', cursor:'pointer' }}
-                  >
-                    🚫 Cancelar
-                  </button>
-                )}
-              </td>
+      <h3 className="subtitulo-tabla">Ejecuciones de workflows</h3>
+      <div className="tabla-contenedor">
+        <table className="tabla-peticiones">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Fecha</th>
+              <th>Workflow</th>
+              <th>Estado</th>
+              <th>Duración</th>
+              <th>Ficheros</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {ejecuciones.length === 0 && (
+              <tr><td colSpan="6" className="tabla-vacia">
+                Aún no has ejecutado ningún workflow. Créalo en el Constructor.
+              </td></tr>
+            )}
+            {ejecuciones.map(e => (
+              <tr key={e.id}>
+                <td className="col-id">#{e.id}</td>
+                <td className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
+                <td>{e.workflow_nombre}</td>
+                <td>
+                  <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
+                </td>
+                <td className="col-cifra">
+                  {e.duracion_segundos != null ? `${e.duracion_segundos} s` : '—'}
+                </td>
+                <td>
+                  {e.archivos && e.archivos.length > 0 && e.archivos.map(f => (
+                    <button
+                      key={f}
+                      onClick={() => descargarConToken(`/uploads/${f}`, f).catch(err => alert(err.message))}
+                      className="btn-descarga"
+                      title={f}
+                    >
+                      {etiquetaFichero(f)}
+                    </button>
+                  ))}
+                  {estaActivo(e.estado) && (
+                    <button onClick={() => cancelarEjecucion(e.id)} className="btn-borrar">
+                      Cancelar ejecución
+                    </button>
+                  )}
+                  {!e.archivos?.length && !estaActivo(e.estado) && <span className="col-cifra">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
