@@ -1,27 +1,15 @@
 import React from 'react';
-import { Handle, Position, useReactFlow } from 'reactflow';
-import '../../styles/Nodos.css';
+import { Handle, Position } from 'reactflow';
+import MarcoNodo from './MarcoNodo';
 
-const DescargarNodoNode = ({ data, id }) => {
-  const { setNodes, setEdges } = useReactFlow();
-
-  const eliminar = (e) => {
-    e.stopPropagation();
-    setNodes(nds => nds.filter(n => n.id !== id));
-    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-  };
-
+const DescargarNodoNode = ({ id }) => {
   return (
-    <div className="nodo descargar-nodo">
-      <div className="nodo-header">
-        📥 Descargar
-        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
-      </div>
+    <MarcoNodo id={id} tipo="descargar">
       <div className="nodo-body">
         <p>Archivo listo para descargar</p>
       </div>
       <Handle type="target" position={Position.Left} id="input" />
-    </div>
+    </MarcoNodo>
   );
 };
 

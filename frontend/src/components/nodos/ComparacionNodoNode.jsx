@@ -1,18 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Handle, Position, useReactFlow } from 'reactflow';
+import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
-import '../../styles/Nodos.css';
+import MarcoNodo from './MarcoNodo';
 
 const ComparacionNodoNode = ({ data, id }) => {
-  const { setNodes, setEdges } = useReactFlow();
   const [algoritmos, setAlgoritmos] = useState([]);
   const [seleccionado, setSeleccionado] = useState(String(data.algoritmo_id || ''));
-
-  const eliminar = (e) => {
-    e.stopPropagation();
-    setNodes(nds => nds.filter(n => n.id !== id));
-    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-  };
 
   useEffect(() => { cargarAlgoritmos(); }, []);
 
@@ -40,11 +33,7 @@ const ComparacionNodoNode = ({ data, id }) => {
   };
 
   return (
-    <div className="nodo comparacion-nodo">
-      <div className="nodo-header">
-        ⚖️ Comparar
-        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
-      </div>
+    <MarcoNodo id={id} tipo="comparacion">
       <div className="nodo-body">
         <select
           className="select-algo"
@@ -66,7 +55,7 @@ const ComparacionNodoNode = ({ data, id }) => {
       <Handle type="target" position={Position.Left}   id="input_mol1" style={{ top: '35%' }} />
       <Handle type="target" position={Position.Bottom} id="input_mol2" />
       <Handle type="source" position={Position.Right}  id="output" />
-    </div>
+    </MarcoNodo>
   );
 };
 

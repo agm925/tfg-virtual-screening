@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Handle, Position, useReactFlow } from 'reactflow';
+import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
-import '../../styles/Nodos.css';
+import MarcoNodo from './MarcoNodo';
 
 // `tipo` lo verifica el backend contra el contenido real del fichero al
 // subirlo (GET /moleculas), no es lo que declaró quien lo subió: antes el
@@ -11,17 +11,10 @@ import '../../styles/Nodos.css';
 const ICONO_TIPO = { molecula: '📁', base_de_datos: '🗄️', resultado: '📊' };
 
 const SelectMolNodoNode = ({ data, id }) => {
-  const { setNodes, setEdges } = useReactFlow();
   const [moleculas, setMoleculas] = useState([]);
   const [seleccionada, setSeleccionada] = useState(data.nombre_archivo || '');
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
-
-  const eliminar = (e) => {
-    e.stopPropagation();
-    setNodes(nds => nds.filter(n => n.id !== id));
-    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-  };
 
   useEffect(() => { cargarMoleculas(); }, []);
 
@@ -45,11 +38,7 @@ const SelectMolNodoNode = ({ data, id }) => {
   const handleCambio = (nombre) => { setSeleccionada(nombre); data.nombre_archivo = nombre; };
 
   return (
-    <div className="nodo selectmol-nodo">
-      <div className="nodo-header">
-        🧬 Seleccionar Molécula
-        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
-      </div>
+    <MarcoNodo id={id} tipo="selectMol">
       <div className="nodo-body">
         {cargando ? (
           <p style={{ fontSize: '11px', color: '#7f8c8d', margin: 0 }}>Cargando moléculas...</p>
@@ -78,7 +67,7 @@ const SelectMolNodoNode = ({ data, id }) => {
       </div>
       <Handle type="target" position={Position.Left}  id="input"  />
       <Handle type="source" position={Position.Right} id="output" />
-    </div>
+    </MarcoNodo>
   );
 };
 

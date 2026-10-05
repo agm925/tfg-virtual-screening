@@ -1,15 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Handle, Position, useReactFlow } from 'reactflow';
+import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
-import '../../styles/Nodos.css';
+import MarcoNodo from './MarcoNodo';
 
 const PreprocesadoNodoNode = ({ data, id }) => {
-  const { setNodes, setEdges } = useReactFlow();
-  const eliminar = (e) => {
-    e.stopPropagation();
-    setNodes(nds => nds.filter(n => n.id !== id));
-    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-  };
   const [algoritmos, setAlgoritmos] = useState([]);
   const [seleccionado, setSeleccionado] = useState(String(data.algoritmo_id || ''));
   const [nombreSeleccionado, setNombreSeleccionado] = useState(data.algoritmo_nombre || '');
@@ -78,12 +72,7 @@ const PreprocesadoNodoNode = ({ data, id }) => {
   };
 
   return (
-    <div className="nodo preprocesado-nodo">
-      <div className="nodo-header">
-        ⚗️ Preprocesar
-        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
-      </div>
-
+    <MarcoNodo id={id} tipo="preprocesado">
       <div className="nodo-body">
         <select
           className="select-algo"
@@ -144,7 +133,7 @@ const PreprocesadoNodoNode = ({ data, id }) => {
 
       <Handle type="target" position={Position.Left}  id="input_molecula" />
       <Handle type="source" position={Position.Right} id="output" />
-    </div>
+    </MarcoNodo>
   );
 };
 

@@ -30,6 +30,17 @@
   --cancelado:    #5B6770;
   --cancelado-fondo: #ECEDEF;
 
+  /* --- Familias de nodo del editor (spec 001, utils/tiposNodo.js) ---
+   * Planos y con texto blanco a mas de 4.5:1. Evitan el verde, el rojo y el
+   * ambar de los estados: un nodo de comparacion no debe parecer uno que ha
+   * fallado. */
+  --nodo-entrada:     var(--ual-azul);
+  --nodo-preparacion: #5B3A8E;
+  --nodo-alineacion:  #0077A8;
+  --nodo-comparacion: #8A2C6B;
+  --nodo-docking:     #00695C;
+  --nodo-control:     var(--ual-noche);
+
   /* --- Tipografia ---
    * La UAL usa Segoe UI. Es de Microsoft y no se puede redistribuir, asi que
    * se pide la del sistema: en los equipos Windows de la universidad es la

@@ -24,6 +24,8 @@ import SelectMolNodoNode from './nodos/SelectMolNodoNode';
 // Hook personalizado para llamadas API
 import useWorkflowAPI from '../hooks/useWorkflowAPI';
 import MolViewer3D from './MolViewer3D';
+import { TIPOS_NODO } from '../utils/tiposNodo';
+import '../styles/Nodos.css';
 
 const nodeTypes = {
   upload:       UploadNodoNode,
@@ -79,19 +81,6 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir }) => {
     [setEdges]
   );
 
-  // ===== PALETA DE NODOS =====
-  const tiposNodos = [
-    { tipo: 'upload',       label: '📤 Upload Molécula',    color: '#3498db' },
-    { tipo: 'selectDB',     label: '📂 Seleccionar BD',     color: '#9b59b6' },
-    { tipo: 'selectMol',    label: '🧬 Seleccionar Molécula', color: '#e74c3c' },
-    { tipo: 'preprocesado', label: '⚗️ Preprocesar',        color: '#e67e22' },
-    { tipo: 'alineacion',   label: '📐 Alinear',            color: '#2ecc71' },
-    { tipo: 'comparacion',  label: '⚖️ Comparar',           color: '#f39c12' },
-    { tipo: 'docking',      label: '🔬 Docking',            color: '#8e44ad' },
-    { tipo: 'ejecutar',     label: '▶️ Ejecutar',           color: '#1abc9c' },
-    { tipo: 'descargar',    label: '📥 Descargar',          color: '#34495e' },
-  ];
-
   // Drag-drop de nodos desde la paleta
   const onDragStart = (event, tipo) => {
     event.dataTransfer.effectAllowed = 'move';
@@ -117,7 +106,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir }) => {
       id: `${tipo}_${nodoId}`,
       type: tipo,
       position,
-      data: { label: tiposNodos.find(n => n.tipo === tipo)?.label || tipo },
+      // Sin `label`: el nombre visible sale de tiposNodo.js segun `type`, y
+      // nadie (ni los nodos ni el backend) leia el que se guardaba aqui.
+      data: {},
     };
 
     setNodes((nds) => [...nds, nuevoNodo]);
@@ -346,15 +337,14 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir }) => {
         <div className="visual-sidebar-left">
           <h3>Nodos Disponibles</h3>
           <div className="paleta-nodos">
-            {tiposNodos.map((nodo) => (
+            {TIPOS_NODO.map((nodo) => (
               <div
                 key={nodo.tipo}
                 draggable
                 onDragStart={(e) => onDragStart(e, nodo.tipo)}
-                className="nodo-paleta"
-                style={{ borderLeftColor: nodo.color }}
+                className={`nodo-paleta familia-${nodo.familia}`}
               >
-                {nodo.label}
+                {nodo.etiqueta}
               </div>
             ))}
           </div>

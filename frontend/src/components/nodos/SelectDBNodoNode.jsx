@@ -1,20 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Handle, Position, useReactFlow } from 'reactflow';
+import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
-import '../../styles/Nodos.css';
+import MarcoNodo from './MarcoNodo';
 
 const SelectDBNodoNode = ({ data, id }) => {
-  const { setNodes, setEdges } = useReactFlow();
   const [bases,       setBases]       = useState([]);
   const [seleccionada, setSeleccionada] = useState(data.nombre_archivo || '');
   const [cargando,    setCargando]    = useState(true);
   const [error,       setError]       = useState(null);
-
-  const eliminar = (e) => {
-    e.stopPropagation();
-    setNodes(nds => nds.filter(n => n.id !== id));
-    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-  };
 
   useEffect(() => { cargarBases(); }, []);
 
@@ -45,12 +38,7 @@ const SelectDBNodoNode = ({ data, id }) => {
   };
 
   return (
-    <div className="nodo selectdb-nodo">
-      <div className="nodo-header">
-        📂 Seleccionar BD
-        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
-      </div>
-
+    <MarcoNodo id={id} tipo="selectDB">
       <div className="nodo-body">
         {cargando ? (
           <p style={{ fontSize: '11px', color: '#7f8c8d', margin: 0 }}>Cargando bases de datos…</p>
@@ -92,7 +80,7 @@ const SelectDBNodoNode = ({ data, id }) => {
       </div>
 
       <Handle type="source" position={Position.Right} id="output" />
-    </div>
+    </MarcoNodo>
   );
 };
 

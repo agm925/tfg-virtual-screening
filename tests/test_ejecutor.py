@@ -69,6 +69,10 @@ def test_el_algoritmo_sigue_teniendo_lo_que_necesita(secretos):
     assert entorno.get("PATH")
     assert entorno["PYTHONIOENCODING"] == "utf-8"
     assert entorno["HOME"]
+    if os.name == "nt":
+        # Sin ella Windows crea una carpeta "%SystemDrive%" en el directorio
+        # de trabajo al escribir sus cachés.
+        assert entorno.get("SYSTEMDRIVE")
 
 
 @pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,

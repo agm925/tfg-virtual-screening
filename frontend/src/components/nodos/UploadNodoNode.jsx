@@ -1,19 +1,12 @@
 import React, { useState } from 'react';
-import { Handle, Position, useReactFlow } from 'reactflow';
+import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
-import '../../styles/Nodos.css';
+import MarcoNodo from './MarcoNodo';
 
 const UploadNodoNode = ({ data, id }) => {
-  const { setNodes, setEdges } = useReactFlow();
   const [archivo, setArchivo] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [nombreSubido, setNombreSubido] = useState(data.nombre_archivo || null);
-
-  const eliminar = (e) => {
-    e.stopPropagation();
-    setNodes(nds => nds.filter(n => n.id !== id));
-    setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-  };
 
   const EXTENSIONES = ['.mol2', '.sdf', '.mol', '.pdb', '.pdbqt', '.smi', '.xyz'];
 
@@ -67,11 +60,7 @@ const UploadNodoNode = ({ data, id }) => {
   };
 
   return (
-    <div className="nodo upload-nodo">
-      <div className="nodo-header">
-        📤 Upload Molécula
-        <button className="nodo-btn-borrar" onClick={eliminar} title="Eliminar nodo">×</button>
-      </div>
+    <MarcoNodo id={id} tipo="upload">
       <div className="nodo-body">
         <input type="file" accept=".mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz" onChange={handleFileChange} className="file-input" />
         {archivo && !nombreSubido && <p className="file-name">{archivo.name}</p>}
@@ -81,7 +70,7 @@ const UploadNodoNode = ({ data, id }) => {
         </button>
       </div>
       <Handle type="source" position={Position.Right} id="output" />
-    </div>
+    </MarcoNodo>
   );
 };
 

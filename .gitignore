@@ -44,5 +44,8 @@ algoritmos/test_sandbox_*.py
 # Documento de traspaso entre sesiones: local, y con datos de cuentas.
 CONTEXTO_SESION.md
 
-# Guia para Claude Code: local, no forma parte del proyecto.
+# Guia, memoria y configuracion local de Claude Code: no forman parte del proyecto.
 CLAUDE.md
+MEMORY.md
+.claude/
+docs/

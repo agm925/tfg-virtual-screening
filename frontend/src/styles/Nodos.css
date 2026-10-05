@@ -23,7 +23,7 @@
 
 /* Header del nodo */
 .nodo-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--color-familia);
   color: white;
   padding: 10px 12px;
   border-radius: 6px 6px 0 0;
@@ -153,46 +153,15 @@
   cursor: pointer;
 }
 
-/* Tipos específicos de nodos */
-.upload-nodo .nodo-header {
-  background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
-}
-
-.alineacion-nodo .nodo-header {
-  background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
-}
-
-.algoritmo-nodo .nodo-header {
-  background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
-}
-
-.comparacion-nodo .nodo-header {
-  background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
-}
-
-.ejecutar-nodo .nodo-header {
-  background: linear-gradient(135deg, #1abc9c 0%, #16a085 100%);
-}
-
-.descargar-nodo .nodo-header {
-  background: linear-gradient(135deg, #34495e 0%, #2c3e50 100%);
-}
-
-.selectdb-nodo .nodo-header {
-  background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
-}
-
-.selectmol-nodo .nodo-header {
-  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-}
-
-.preprocesado-nodo .nodo-header {
-  background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
-}
-
-.docking-nodo .nodo-header {
-  background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
-}
+/* Color de cada familia de nodo (utils/tiposNodo.js). La clase solo fija la
+ * variable; la usan la cabecera del nodo y su entrada en la paleta
+ * (visualBuilder.css), asi que las dos no pueden volver a divergir. */
+.familia-entrada     { --color-familia: var(--nodo-entrada); }
+.familia-preparacion { --color-familia: var(--nodo-preparacion); }
+.familia-alineacion  { --color-familia: var(--nodo-alineacion); }
+.familia-comparacion { --color-familia: var(--nodo-comparacion); }
+.familia-docking     { --color-familia: var(--nodo-docking); }
+.familia-control     { --color-familia: var(--nodo-control); }
 
 /* Handles (puertos de conexión) */
 .react-flow__handle {

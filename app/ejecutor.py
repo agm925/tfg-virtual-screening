@@ -22,6 +22,11 @@ _VARIABLES_HEREDABLES = (
     # Sin SYSTEMROOT, Python en Windows no puede ni inicializar su generador
     # de números aleatorios; TEMP/TMP es donde las bibliotecas crean temporales.
     "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT", "COMSPEC",
+    # Sin SYSTEMDRIVE, Windows no puede expandir "%SystemDrive%\ProgramData"
+    # al escribir sus cachés y crea una carpeta llamada literalmente
+    # "%SystemDrive%" en el directorio de trabajo: aparecía en la raíz del
+    # proyecto con cada algoritmo ejecutado en local.
+    "SYSTEMDRIVE", "PROGRAMDATA", "ALLUSERSPROFILE",
     # Dónde busca Open Babel sus tablas si no están en la ruta por defecto.
     "BABEL_DATADIR", "BABEL_LIBDIR", "LD_LIBRARY_PATH",
 )
