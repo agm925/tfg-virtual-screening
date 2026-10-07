@@ -3,7 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Que
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import engine, SessionLocal
-from app import models, permisos, schemas
+from app import models, paginas, permisos, schemas, visor
 from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
@@ -290,7 +290,10 @@ def registrar_usuario(usuario: schemas.UsuarioRegistro, db: Session = Depends(ge
     try:
         correo_verificacion(nuevo_usuario.nombre, nuevo_usuario.email, token)
     except Exception:
-        pass  # Si falla el correo el usuario puede pedir reenvío; no bloqueamos el registro
+        # No se bloquea el registro. Reenviar el correo no existe: si no le
+        # llega, un administrador verifica la cuenta a mano desde
+        # Administracion (spec 005).
+        pass
 
     logger.info("usuario_registrado", extra={"usuario_id": nuevo_usuario.id, "email": nuevo_usuario.email})
     return {"mensaje": "Registro completado. Revisa tu correo para confirmar tu cuenta."}
@@ -301,47 +304,13 @@ def verificar_email(token: str, db: Session = Depends(get_db)):
     """Activa la cuenta del usuario cuando hace clic en el enlace del correo."""
     usuario = db.query(models.Usuario).filter(models.Usuario.token_verificacion == token).first()
     if not usuario:
-        return HTMLResponse(content=_html_verificacion("error"), status_code=400)
+        return HTMLResponse(content=paginas.pagina_enlace_no_valido(), status_code=400)
 
     usuario.email_verificado   = True
     usuario.token_verificacion = None
     db.commit()
-    return HTMLResponse(content=_html_verificacion("ok"))
+    return HTMLResponse(content=paginas.pagina_cuenta_confirmada())
 
-
-def _html_verificacion(estado: str) -> str:
-    if estado == "ok":
-        return """
-        <html><body style="font-family:Arial,sans-serif;text-align:center;padding:60px;background:#f8f9fa">
-          <div style="max-width:480px;margin:auto;background:white;border-radius:16px;padding:40px;
-                      box-shadow:0 4px 20px rgba(0,0,0,0.08)">
-            <div style="font-size:3rem">✅</div>
-            <h2 style="color:#27ae60">¡Cuenta confirmada!</h2>
-            <p style="color:#555">Tu dirección de correo ha sido verificada correctamente.
-               Ya puedes iniciar sesión en la plataforma.</p>
-            <a href="http://localhost:5173"
-               style="display:inline-block;margin-top:20px;background:#667eea;color:white;
-                      padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">
-              Ir a la plataforma →
-            </a>
-          </div>
-        </body></html>
-        """
-    return """
-    <html><body style="font-family:Arial,sans-serif;text-align:center;padding:60px;background:#f8f9fa">
-      <div style="max-width:480px;margin:auto;background:white;border-radius:16px;padding:40px;
-                  box-shadow:0 4px 20px rgba(0,0,0,0.08)">
-        <div style="font-size:3rem">❌</div>
-        <h2 style="color:#e74c3c">Enlace inválido</h2>
-        <p style="color:#555">Este enlace de verificación no es válido o ya fue utilizado.</p>
-        <a href="http://localhost:5173"
-           style="display:inline-block;margin-top:20px;background:#667eea;color:white;
-                  padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">
-          Volver a la plataforma →
-        </a>
-      </div>
-    </body></html>
-    """
 
 @app.post("/algoritmos", response_model=schemas.AlgoritmoRespuesta)
 async def subir_algoritmo(
@@ -846,9 +815,10 @@ async def subir_molecula(
     num_moleculas = contar_moleculas_sdf(ruta) if ext == ".sdf" else None
 
     # El indice de posiciones de sus registros, para que el cribado salte
-    # a las moleculas de cada bloque en vez de recorrer el fichero entero
-    # (ver app/indice_sdf.py). Si fallara no se pierde nada: se construye
-    # la primera vez que se use la biblioteca.
+    # a las moleculas de cada bloque en vez de recorrer el fichero entero, y
+    # en la misma pasada sus titulos, con los que el visor 3D lista y busca
+    # sus moleculas (ver app/indice_sdf.py). Si fallara no se pierde nada:
+    # se construye la primera vez que se use la biblioteca.
     if ext == ".sdf":
         try:
             indice_sdf.obtener(ruta)
@@ -1048,7 +1018,7 @@ def borrar_peticion(
     }
 
 
-# --- ENDPOINTS DE WORKFLOWS (KNIME) ---
+# --- ENDPOINTS DE WORKFLOWS (Constructor) ---
 
 @app.post("/workflows", response_model=schemas.WorkflowRespuesta)
 def crear_workflow(
@@ -1305,6 +1275,120 @@ def servir_archivo_upload(
     if not os.path.exists(ruta):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     return FileResponse(path=ruta, filename=nombre_archivo)
+
+
+# ===========================================================================
+# VISOR 3D (spec 002, docs/specs/002-visor3D/)
+# ===========================================================================
+#
+# Toda la logica esta en app/visor.py (que contiene cada fichero) y en
+# app/permisos.py (quien ve que). Aqui solo se valida, se comprueba el acceso
+# y se traduce a HTTP.
+
+NO_DISPONIBLE_EN_VISOR = "Ese fichero no existe o no tienes acceso a él."
+
+
+def fichero_del_visor(nombre_archivo: str, db: Session, usuario: models.Usuario) -> str:
+    """
+    La ruta de un fichero que el visor puede abrir para este usuario.
+
+    Inexistente, sin acceso o resultado sin terminar dan EXACTAMENTE el mismo
+    404 (RF-2): con /uploads, un 403 frente a un 404 revela que el fichero
+    existe. Un nombre con ruta si se rechaza aparte (400), como en el resto de
+    endpoints: no dice nada de lo que hay en uploads/.
+    """
+    nombre_archivo = exigir_nombre_archivo_seguro(nombre_archivo)
+    ruta = os.path.join("uploads", nombre_archivo)
+    try:
+        permisos.comprobar_acceso_a_archivo(nombre_archivo, db, usuario.id,
+                                            usuario_es_admin=es_admin(usuario))
+    except permisos.AccesoDenegado:
+        raise HTTPException(status_code=404, detail=NO_DISPONIBLE_EN_VISOR)
+    archivo = permisos.archivo_registrado(nombre_archivo, db)
+    if not os.path.isfile(ruta) or (archivo is not None and not permisos.resultado_disponible(archivo, db)):
+        raise HTTPException(status_code=404, detail=NO_DISPONIBLE_EN_VISOR)
+    return ruta
+
+@app.get("/visor/ficheros", response_model=list[schemas.FicheroVisor])
+def visor_ficheros(
+    q: str = Query("", max_length=200, description="Texto a buscar en el nombre"),
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+):
+    """
+    Los ficheros de moleculas que el visor ofrece al usuario (RF-2, RF-3): lo
+    subido por cualquiera y sus resultados terminados, agrupados y con lo mas
+    reciente primero. Un administrador recibe la misma lista que un biologo.
+    """
+    return visor.ficheros_para_buscador(permisos.archivos_para_visor(db, usuario_actual.id), q)
+
+
+@app.get("/visor/ficheros/{nombre_archivo}/moleculas", response_model=schemas.PaginaMoleculas)
+def visor_moleculas(
+    nombre_archivo: str,
+    q: str = Query("", max_length=200, description="Nombre o posición a buscar"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+):
+    """
+    Una pagina de la lista de moleculas de un SDF (RF-6), sacada de su mapa
+    de titulos: nunca se lee el fichero entero (RNF-1).
+    """
+    ruta = fichero_del_visor(nombre_archivo, db, usuario_actual)
+    if visor.formato_de(nombre_archivo) != "sdf":
+        raise HTTPException(status_code=400,
+                            detail="Este fichero no es una biblioteca: se abre entero, sin lista.")
+    return visor.pagina_de_moleculas(ruta, q, offset, limit)
+
+
+@app.get("/visor/ficheros/{nombre_archivo}/molecula", response_model=schemas.MoleculaVisor)
+def visor_molecula(
+    nombre_archivo: str,
+    posicion: int | None = Query(None, description="Posición en el SDF, desde 1"),
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+):
+    """
+    Una molecula lista para dibujar y describir (RF-5, RF-9, RF-10, RF-12): el
+    registro `posicion` de un SDF, o el fichero entero si no se da posicion.
+    """
+    ruta = fichero_del_visor(nombre_archivo, db, usuario_actual)
+    try:
+        return visor.leer_molecula(ruta, posicion)
+    except visor.FaltaPosicion:
+        raise HTTPException(status_code=400,
+                            detail="Este fichero tiene varias moléculas: elige una de la lista.")
+    except visor.PosicionInexistente:
+        raise HTTPException(status_code=404, detail="Esa molécula no existe en el fichero.")
+
+
+@app.get("/visor/ficheros/{nombre_archivo}/descarga")
+def visor_descarga(
+    nombre_archivo: str,
+    posicion: int | None = Query(None, description="Posición en el SDF, desde 1"),
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+):
+    """
+    La molecula que se esta viendo, como fichero suelto (RF-11): el registro
+    de un SDF con sus campos, o el fichero original si es una sola molecula.
+    El nombre lo construye visor.nombre_descarga, que no deja salir de la
+    carpeta de descargas aunque el titulo del registro lo intente.
+    """
+    ruta = fichero_del_visor(nombre_archivo, db, usuario_actual)
+    try:
+        contenido, nombre = visor.preparar_descarga(ruta, posicion)
+    except visor.FaltaPosicion:
+        raise HTTPException(status_code=400,
+                            detail="Este fichero tiene varias moléculas: elige una de la lista.")
+    except visor.PosicionInexistente:
+        raise HTTPException(status_code=404, detail="Esa molécula no existe en el fichero.")
+    if contenido is None:
+        return FileResponse(path=ruta, filename=nombre)
+    return Response(content=contenido, media_type="chemical/x-mdl-sdfile",
+                    headers={"Content-Disposition": 'attachment; filename="{}"'.format(nombre)})
 
 
 @app.get("/workflows/{workflow_id}/ejecuciones")

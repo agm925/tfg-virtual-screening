@@ -141,8 +141,9 @@ def ejecutar_peticion_async(self, peticion_id: int) -> dict:
             db.commit()
             # 5b. Correo de error
             if usuario:
-                correo_error(usuario.nombre, usuario.email, peticion_id, algoritmo.nombre,
-                             resultado.get("error", "error desconocido"))
+                # Sin el mensaje del algoritmo: puede llevar trazas y rutas
+                # (spec 004, R7). El motivo se ve en la plataforma.
+                correo_error(usuario.nombre, usuario.email, peticion_id, algoritmo.nombre)
             return {"exito": False, "error": resultado.get("error")}
 
     except Exception as exc:
@@ -157,7 +158,7 @@ def ejecutar_peticion_async(self, peticion_id: int) -> dict:
 @celery_app.task(bind=True, max_retries=0)
 def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_id: int) -> dict:
     """
-    Tarea Celery: ejecuta un workflow KNIME completo y notifica al biólogo por correo.
+    Tarea Celery: ejecuta un workflow del Constructor completo y notifica al biólogo por correo.
 
     Flujo:
         1. Marca la ejecución como 'procesando'.
@@ -237,10 +238,12 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         if usuario and not cancelado:
             duracion = resultado.get("duracion_segundos", 0)
             if resultado.get("exito"):
-                correo_workflow_completado(usuario.nombre, usuario.email, workflow.nombre, duracion)
+                correo_workflow_completado(usuario.nombre, usuario.email, ejecucion.id,
+                                           workflow.nombre, duracion)
             else:
-                correo_workflow_error(usuario.nombre, usuario.email, workflow.nombre,
-                                      resultado.get("errores", []))
+                # Sin la lista de errores del motor: puede llevar trazas y
+                # rutas (spec 004, R7). Se ven en el panel de resultados.
+                correo_workflow_error(usuario.nombre, usuario.email, ejecucion.id, workflow.nombre)
 
         return resultado
 
@@ -489,13 +492,11 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
 
         if usuario and not cancelado:
             if resultado.get("exito"):
-                correo_workflow_completado(usuario.nombre, usuario.email,
+                correo_workflow_completado(usuario.nombre, usuario.email, ejecucion_id,
                                            workflow.nombre,
                                            resultado.get("duracion_segundos", 0))
             else:
-                correo_workflow_error(
-                    usuario.nombre, usuario.email, workflow.nombre,
-                    [f"0 moléculas procesadas con éxito de {total_moleculas}"])
+                correo_workflow_error(usuario.nombre, usuario.email, ejecucion_id, workflow.nombre)
 
         return resultado
     finally:

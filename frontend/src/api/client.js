@@ -1,3 +1,6 @@
+import { errorDeRespuesta } from '../utils/mensajes';
+import { CLAVE_TOKEN } from '../utils/almacenamiento';
+
 // Cliente API centralizado.
 //
 // Antes, cada componente hacía fetch(`http://localhost:8000/...`) por su
@@ -13,9 +16,14 @@
 // desde la IP de red de otro equipo, el login fallaba y los desplegables de
 // algoritmos salían vacíos. VITE_API_BASE permite apuntar a un backend en otro
 // origen si algún despliegue lo necesita.
-export const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
+//
+// Relativa a la base de la aplicación, no a la raíz del dominio (spec 004): en
+// el servidor RTX la plataforma cuelga de /molserver/, y un '/api' a secas
+// acabaría en la raíz de rt.hpca.ual.es, fuera de MolServer. BASE_URL la pone
+// Vite y termina en barra: '/' en desarrollo, '/molserver/' en producción.
+export const API_BASE = import.meta.env.VITE_API_BASE ?? `${import.meta.env.BASE_URL}api`;
 
-const TOKEN_KEY = 'access_token';
+const TOKEN_KEY = CLAVE_TOKEN;
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -23,10 +31,6 @@ export function getToken() {
 
 export function setToken(token) {
   localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
 }
 
 // Decodifica el payload del JWT (sin verificar la firma — eso solo puede
@@ -76,17 +80,25 @@ export async function apiFetch(ruta, opciones = {}) {
 // Para descargas: /descargar/{id} exige el token, y un <a href> normal no
 // puede mandar cabeceras. Se descarga el fichero como blob autenticado y se
 // dispara la descarga en el navegador mediante un enlace temporal.
+function nombreDeCabecera(resp) {
+  const disposicion = resp.headers.get('Content-Disposition') || '';
+  const encontrado = disposicion.match(/filename="?([^";]+)"?/);
+  return encontrado ? encontrado[1] : null;
+}
+
 export async function descargarConToken(ruta, nombreSugerido) {
   const resp = await apiFetch(ruta);
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.detail || 'No se pudo descargar el archivo');
-  }
+  // El motivo, si el servidor da uno enseñable; quien llama lo presenta con
+  // mensajeError('descargar el fichero', err).
+  if (!resp.ok) throw await errorDeRespuesta(resp);
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = nombreSugerido || 'descarga';
+  // Sin nombre sugerido, el que manda el servidor: lo construye él (p. ej.
+  // el visor 3D, con visor.nombre_descarga) y la descarga por blob lo
+  // perdería si no se lee de la cabecera.
+  a.download = nombreSugerido || nombreDeCabecera(resp) || 'descarga';
   document.body.appendChild(a);
   a.click();
   a.remove();

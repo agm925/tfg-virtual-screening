@@ -43,6 +43,23 @@ CORS_ORIGINS = [
     if origen.strip()
 ]
 
+# --- Direccion publica de la plataforma (spec 004) ---
+# La que escribe el usuario en el navegador: https://rt.hpca.ual.es/molserver
+# en el servidor RTX. Con ella se construyen los enlaces que el backend manda
+# fuera (el del correo de verificacion, el boton de la pagina de cuenta
+# confirmada). Antes eran http://localhost:8000 y http://localhost:5173 fijos,
+# y en un servidor nadie podia activar su cuenta.
+URL_PUBLICA_POR_DEFECTO = "http://localhost:5173"
+
+
+def normalizar_url_publica(valor):
+    """Sin espacios ni barra final: los enlaces le anaden la suya."""
+    valor = (valor or "").strip().rstrip("/")
+    return valor or URL_PUBLICA_POR_DEFECTO
+
+
+PUBLIC_URL = normalizar_url_publica(os.getenv("PUBLIC_URL"))
+
 # --- Cribado en lote ---
 # Moleculas por subtarea Celery. El lote se reparte en bloques que se procesan
 # EN PARALELO (ver ejecutar_workflow_batch_async): un bloque por subtarea, y un

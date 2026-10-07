@@ -1,0 +1,100 @@
+/* Página Algoritmos. Lo comun (panel, formulario, mensajes) sale de App.css;
+   el color de cada tipo, de la familia de su nodo (--color-familia, que fija
+   la clase familia-* de Nodos.css). */
+
+.panel-algoritmo {
+  max-width: 720px;
+}
+.panel-algoritmo .formulario {
+  max-width: none;
+}
+.panel-algoritmo .btn-primary {
+  align-self: flex-start;
+}
+
+/* Selector de tipo: radios con aspecto de tarjeta */
+.tipos-algoritmo {
+  border: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.tipos-algoritmo legend {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.formulario .tipo-algoritmo {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--linea);
+  border-left: 4px solid var(--color-familia);
+  border-radius: var(--radio);
+  background: var(--superficie);
+  font-size: var(--t-s);
+  font-weight: 400;
+  cursor: pointer;
+}
+.tipo-algoritmo .icono {
+  color: var(--color-familia);
+}
+.tipo-algoritmo input {
+  margin: 0 8px 0 0;
+  accent-color: var(--color-familia);
+}
+.tipo-algoritmo:has(input:checked) {
+  border-color: var(--color-familia);
+  box-shadow: inset 0 0 0 1px var(--color-familia);
+  font-weight: 600;
+}
+
+.tipo-resumen {
+  margin: 4px 0;
+  padding: 10px 12px;
+  background: var(--ual-gris);
+  border-left: 4px solid var(--color-familia);
+  font-size: var(--t-s);
+}
+
+.panel-algoritmo .exito-msg p,
+.panel-algoritmo .error-msg p {
+  margin: 8px 0 0;
+}
+
+.detalles-tecnicos {
+  margin-top: 12px;
+  color: var(--ual-texto);
+}
+.detalles-tecnicos summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--error);
+}
+.detalles-tecnicos pre {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  font-family: var(--fuente-mono);
+  font-size: var(--t-xs);
+}
+
+/* Centrado: el fondo gris sigue a todo el ancho, y el título, el subtítulo y el
+   panel se quedan en una columna de 720 px (la del panel) en el centro. En
+   pantallas estrechas, el margen de siempre de la página. */
+.seccion-wrapper.algoritmos-pagina {
+  padding-left: max(32px, calc((100% - 720px) / 2));
+  padding-right: max(32px, calc((100% - 720px) / 2));
+}
+@media (max-width: 900px) {
+  .seccion-wrapper.algoritmos-pagina { padding-left: 16px; padding-right: 16px; }
+}

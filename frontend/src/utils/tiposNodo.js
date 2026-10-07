@@ -30,4 +30,13 @@ export const TIPOS_NODO = [
 
 const POR_TIPO = Object.fromEntries(TIPOS_NODO.map(t => [t.tipo, t]));
 
+// Nombre del `tipo` de un algoritmo (Algoritmo.tipo en el backend). Coincide
+// con el tipo del nodo que lo usa, de ahi su icono y su color.
+export const ETIQUETA_ALGORITMO = {
+  preprocesado: 'Preparación',
+  alineacion:   'Alineación',
+  comparacion:  'Comparación',
+  docking:      'Docking',
+};
+
 export const tipoNodo = (tipo) => POR_TIPO[tipo];

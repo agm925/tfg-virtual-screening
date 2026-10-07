@@ -244,6 +244,8 @@
 .btn-primary:disabled, .btn-secundario:disabled { opacity: 0.55; }
 
 .btn-ejecutar, .btn-borrar, .btn-descarga {
+  display: inline-flex;
+  align-items: center;
   padding: 5px 10px;
   border-radius: var(--radio);
   font-size: var(--t-xs);
@@ -259,7 +261,10 @@
   margin: 0 6px 4px 0;
 }
 .btn-descarga:hover { background: var(--proceso-fondo); }
-.btn-borrar { background: var(--superficie); color: var(--ual-rojo); border-color: var(--ual-rojo); }
+/* Un fichero y su «Ver en 3D» (Inicio, Resultados): juntos aunque la celda
+   parta la línea, para que no se lea el botón como del fichero siguiente. */
+.fichero-acciones { display: inline-flex; flex-wrap: nowrap; }
+.btn-borrar { background: var(--superficie); color: var(--ual-rojo); border-color: var(--ual-rojo); margin: 0 6px 4px 0; }
 .btn-borrar:hover { background: var(--ual-rojo); color: #fff; }
 
 .btn-enlace {
@@ -309,6 +314,30 @@
 .tabla-peticiones .col-fecha, .tabla-peticiones .col-cifra { white-space: nowrap; color: var(--texto-2); }
 .acciones-celda { white-space: nowrap; }
 .tabla-vacia { text-align: center; color: var(--texto-2); padding: 24px !important; }
+/* Algo desactivado o retirado: sigue en la tabla, pero apagado. */
+.tabla-peticiones .fila-inactiva td { color: var(--texto-2); }
+.celda-tipo { white-space: nowrap; }
+
+/* ===== PESTAÑAS ===== */
+.pestanas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 20px;
+  border-bottom: 1px solid var(--linea);
+}
+.pestana {
+  padding: 9px 16px;
+  margin-bottom: -1px;
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: 3px solid transparent;
+  font-size: var(--t-s);
+  font-weight: 600;
+  color: var(--texto-2);
+}
+.pestana:hover { color: var(--ual-azul); }
+.pestana.activa { color: var(--ual-azul); border-bottom-color: var(--ual-cian); }
 
 /* ===== INSIGNIAS DE ESTADO ===== */
 .badge {

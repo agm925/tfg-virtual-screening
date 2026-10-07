@@ -33,10 +33,11 @@ const ComparacionNodoNode = ({ data, id }) => {
   };
 
   return (
-    <MarcoNodo id={id} tipo="comparacion">
+    <MarcoNodo id={id} tipo="comparacion" data={data}>
       <div className="nodo-body">
         <select
           className="select-algo"
+          aria-label="Algoritmo de comparación"
           value={seleccionado}
           onChange={e => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
@@ -47,13 +48,12 @@ const ComparacionNodoNode = ({ data, id }) => {
             ? algoritmos.map(a => <option key={a.id} value={String(a.id)}>{a.nombre}</option>)
             : <option value="">Sin algoritmos de comparación</option>}
         </select>
-        <p className="algo-desc">Selecciona un algoritmo de comparación</p>
-        <p style={{ fontSize: '0.7rem', color: '#95a5a6', marginTop: '0.25rem' }}>
-          Molécula 1 → entrada izq. · Molécula 2 → entrada inf.
+        <p className="nodo-nota">
+          Conecta una molécula al punto de la izquierda y la otra al de abajo.
         </p>
       </div>
-      <Handle type="target" position={Position.Left}   id="input_mol1" style={{ top: '35%' }} />
-      <Handle type="target" position={Position.Bottom} id="input_mol2" />
+      <Handle type="target" position={Position.Left}   id="input_mol1" title="Primera molécula" style={{ top: '35%' }} />
+      <Handle type="target" position={Position.Bottom} id="input_mol2" title="Segunda molécula" />
       <Handle type="source" position={Position.Right}  id="output" />
     </MarcoNodo>
   );

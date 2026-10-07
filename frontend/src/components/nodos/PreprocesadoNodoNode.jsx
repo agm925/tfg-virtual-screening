@@ -72,10 +72,11 @@ const PreprocesadoNodoNode = ({ data, id }) => {
   };
 
   return (
-    <MarcoNodo id={id} tipo="preprocesado">
+    <MarcoNodo id={id} tipo="preprocesado" data={data}>
       <div className="nodo-body">
         <select
           className="select-algo"
+          aria-label="Algoritmo de preparación"
           value={seleccionado}
           onChange={(e) => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
@@ -90,26 +91,33 @@ const PreprocesadoNodoNode = ({ data, id }) => {
         </select>
 
         {esFiltroObabel && (
-          <input
-            type="text"
-            className="select-input"
-            value={filtroExpresion}
-            placeholder='Expresión, ej: MW>200'
-            onChange={(e) => handleCambioFiltro(e.target.value)}
-          />
+          <label className="nodo-campo">
+            Condición que deben cumplir
+            <input
+              type="text"
+              className="select-input"
+              value={filtroExpresion}
+              placeholder="MW>200"
+              onChange={(e) => handleCambioFiltro(e.target.value)}
+            />
+            <span>Ejemplo: MW&gt;200 deja las de peso molecular mayor de 200.</span>
+          </label>
         )}
 
         {esPreparacionObabel && (
           <>
-            <select className="select-input" value={formatoSalida} onChange={(e) => handleCambioFormato(e.target.value)}>
-              <option value="mismo">Formato salida: igual que entrada</option>
-              <option value="sdf">Formato salida: SDF</option>
-              <option value="mol2">Formato salida: MOL2</option>
-              <option value="pdbqt">Formato salida: PDBQT</option>
-              <option value="pdb">Formato salida: PDB</option>
-              <option value="mol">Formato salida: MOL</option>
-              <option value="xyz">Formato salida: XYZ</option>
-            </select>
+            <label className="nodo-campo">
+              Formato de salida
+              <select className="select-input" value={formatoSalida} onChange={(e) => handleCambioFormato(e.target.value)}>
+                <option value="mismo">Igual que la entrada</option>
+                <option value="sdf">SDF</option>
+                <option value="mol2">MOL2</option>
+                <option value="pdbqt">PDBQT</option>
+                <option value="pdb">PDB</option>
+                <option value="mol">MOL</option>
+                <option value="xyz">XYZ</option>
+              </select>
+            </label>
 
             <div className="opciones-checkbox">
               <label>
@@ -127,11 +135,9 @@ const PreprocesadoNodoNode = ({ data, id }) => {
             </div>
           </>
         )}
-
-        <p className="algo-desc">Conversión, hidrógenos, 3D, filtro Lipinski</p>
       </div>
 
-      <Handle type="target" position={Position.Left}  id="input_molecula" />
+      <Handle type="target" position={Position.Left}  id="input_molecula" title="Molécula" />
       <Handle type="source" position={Position.Right} id="output" />
     </MarcoNodo>
   );

@@ -48,6 +48,15 @@ code, .mono {
 }
 code { font-size: 0.92em; background: var(--ual-gris); padding: 1px 5px; border-radius: var(--radio); }
 
+/* Iconos (components/Icono.jsx): alineados con la linea de texto y separados
+   del texto que los sigue, que es como se usan casi siempre. */
+.icono {
+  display: inline-block;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+  margin-inline-end: 0.35em;
+}
+
 /* El foco se ve siempre que se llega con teclado. */
 :focus-visible {
   outline: 2px solid var(--ual-azul);

@@ -1,5 +1,5 @@
 """
-Motor de ejecución de Workflows KNIME
+Motor de ejecución de los workflows del Constructor.
 Parsea la estructura de nodos y conexiones, ejecuta secuencialmente los algoritmos.
 """
 
@@ -54,7 +54,7 @@ def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
 
     ruta_algoritmo = os.path.join("algoritmos", f"{nombre_base}.py")
     if not os.path.exists(ruta_algoritmo):
-        raise ValueError(f"Algoritmo no encontrado: {ruta_algoritmo}")
+        raise ValueError(f"El algoritmo «{nombre_base}» ya no está en el catálogo.")
 
     # Import diferido y sesion propia: esto corre dentro de un worker de
     # Celery, no en una peticion HTTP, asi que no hay sesion que heredar.
@@ -195,11 +195,11 @@ class WorkflowExecutor:
             datos         = nodo.get("data", {})
             nombre_archivo = datos.get("nombre_archivo")
             if not nombre_archivo:
-                raise ValueError(f"Nodo {nodo_id}: falta nombre_archivo")
+                raise ValueError(f"Nodo {nodo_id}: no se ha subido ninguna molécula")
 
             ruta = os.path.join("uploads", nombre_archivo)
             if not os.path.exists(ruta):
-                raise ValueError(f"Archivo no encontrado: {ruta}")
+                raise ValueError(f"El fichero «{nombre_archivo}» ya no está en la plataforma: se ha borrado.")
 
             self.mapeo_archivos[nodo_id] = ruta
             self.resultados[nodo_id] = {"tipo": "upload", "archivo": ruta, "estado": "exito"}
@@ -497,15 +497,15 @@ class WorkflowExecutor:
 
             if not nombre_archivo:
                 raise ValueError(
-                    "Seleccionar Molécula: no se ha elegido ninguna molécula. "
-                    "Abre el nodo y selecciona una de la lista."
+                    "Elegir molécula: no se ha elegido ninguna molécula. "
+                    "Abre el nodo y elige una de la lista."
                 )
 
             ruta = os.path.join("uploads", nombre_archivo)
             if not os.path.exists(ruta):
                 raise ValueError(
-                    f"El archivo '{nombre_archivo}' no se encuentra en el servidor. "
-                    "Comprueba que sigue estando en uploads/."
+                    f"El fichero «{nombre_archivo}» ya no está en la plataforma: se ha borrado. "
+                    "Elige otro en el nodo «Elegir molécula»."
                 )
 
             self.mapeo_archivos[nodo_id] = ruta
@@ -533,11 +533,11 @@ class WorkflowExecutor:
                 datos          = nodo.get("data", {})
                 nombre_archivo = datos.get("nombre_archivo")
                 if not nombre_archivo:
-                    self.errores.append(f"Nodo {nodo_id}: no se ha seleccionado ninguna base de datos")
+                    self.errores.append(f"Nodo {nodo_id}: no se ha elegido ninguna biblioteca")
                     return False
                 ruta = os.path.join("uploads", nombre_archivo)
                 if not os.path.exists(ruta):
-                    self.errores.append(f"Nodo {nodo_id}: el archivo '{nombre_archivo}' no existe en uploads/")
+                    self.errores.append(f"Nodo {nodo_id}: la biblioteca «{nombre_archivo}» ya no está en la plataforma: se ha borrado.")
                     return False
                 self.mapeo_archivos[nodo_id] = ruta
                 self.resultados[nodo_id] = {"tipo": "selectDB", "archivo": ruta, "estado": "exito"}
@@ -878,13 +878,13 @@ class BatchWorkflowExecutor:
         """Devuelve (nombre, ruta) del SDF del nodo selectDB, o lanza ValueError."""
         nodo_bd = self._encontrar_nodo_bd()
         if not nodo_bd:
-            raise ValueError("No hay nodo 'Seleccionar BD' en el workflow")
+            raise ValueError("El workflow no tiene ningún nodo «Elegir biblioteca».")
         nombre_archivo = nodo_bd.get("data", {}).get("nombre_archivo")
         if not nombre_archivo:
-            raise ValueError("El nodo 'Seleccionar BD' no tiene base de datos seleccionada")
+            raise ValueError("El nodo «Elegir biblioteca» no tiene ninguna biblioteca elegida.")
         ruta_sdf = os.path.join("uploads", nombre_archivo)
         if not os.path.exists(ruta_sdf):
-            raise ValueError(f"Base de datos '{nombre_archivo}' no encontrada en uploads/")
+            raise ValueError(f"La biblioteca «{nombre_archivo}» ya no está en la plataforma: se ha borrado.")
         return nombre_archivo, ruta_sdf
 
 
@@ -1823,21 +1823,12 @@ class BatchWorkflowExecutor:
     def ejecutar_batch(self, on_progreso=None) -> Dict[str, Any]:
         inicio = datetime.utcnow()
 
+        nombre_archivo, ruta_sdf = self.localizar_base_de_datos()
         nodo_bd = self._encontrar_nodo_bd()
-        if not nodo_bd:
-            raise ValueError("No hay nodo 'Seleccionar BD' en el workflow")
-
-        nombre_archivo = nodo_bd.get("data", {}).get("nombre_archivo")
-        if not nombre_archivo:
-            raise ValueError("El nodo 'Seleccionar BD' no tiene base de datos seleccionada")
-
-        ruta_sdf = os.path.join("uploads", nombre_archivo)
-        if not os.path.exists(ruta_sdf):
-            raise ValueError(f"Base de datos '{nombre_archivo}' no encontrada en uploads/")
 
         moleculas = self._split_sdf(ruta_sdf)
         if not moleculas:
-            raise ValueError("La base de datos no contiene moléculas válidas")
+            raise ValueError("La biblioteca no contiene moléculas válidas.")
 
         nodo_bd_id          = nodo_bd["id"]
         resultados_batch    = []

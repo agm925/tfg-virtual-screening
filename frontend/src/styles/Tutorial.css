@@ -1,356 +1,284 @@
-/* ── Tutorial Page ── */
-
-.tutorial-container {
-  flex: 1;
-  width: 100%;
-  min-width: 0;
-  min-height: 100vh;
-  background: var(--ual-gris);
-}
-
-/* Hero */
-.tutorial-hero {
-  background: var(--ual-azul);
-  color: white;
-  padding: 48px 40px 36px;
-  text-align: center;
-  width: 100%;
-  box-sizing: border-box;
-}
-.tutorial-hero-title {
-  font-size: 2rem;
-  font-weight: 700;
-  margin: 0 0 12px;
-}
-.tutorial-hero-subtitle {
-  font-size: 1rem;
-  opacity: 0.9;
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-/* Layout */
+/*
+ * Tutorial (spec 003). Mismas reglas que el resto de la aplicación: colores
+ * solo de tokens.css, esquinas de --radio, sin degradados ni sombras. El
+ * color de cada tipo de nodo llega por la clase `familia-<familia>` de
+ * Nodos.css (--color-familia), la misma que usan el editor y Algoritmos.
+ */
+ 
+/* Centrado: el fondo gris sigue a todo el ancho, y el título, el subtítulo y el
+   tutorial se quedan en una columna de 1200 px en el centro (en pantallas más
+   estrechas, el margen de siempre de la página). */
+   .seccion-wrapper.tutorial-pagina {
+    padding-left: max(32px, calc((100% - 1200px) / 2));
+    padding-right: max(32px, calc((100% - 1200px) / 2));
+  }
 .tutorial-layout {
-  display: flex;
-  gap: 0;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 32px 24px;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
 }
 
-/* Index nav */
-.tutorial-index {
-  width: 240px;
-  flex-shrink: 0;
+/* ===== Índice ===== */
+.tutorial-indice {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   position: sticky;
-  top: 24px;
+  top: 16px;
 }
-.tutorial-index-btn {
-  text-align: left;
+.tutorial-indice-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   padding: 10px 14px;
-  border: none;
-  border-radius: 8px;
-  background: white;
-  color: var(--texto-2);
-  font-size: 13px;
-  cursor: pointer;
-  border-left: 3px solid transparent;
-  transition: all 0.2s;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  text-align: left;
+  font-size: var(--t-s);
+  color: var(--ual-texto);
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-left: 4px solid transparent;
+  border-radius: var(--radio);
 }
-.tutorial-index-btn:hover {
-  background: var(--proceso-fondo);
-  border-left-color: var(--ual-azul);
-}
-.tutorial-index-btn.activo {
-  background: var(--ual-azul);
-  color: white;
-  border-left-color: var(--ual-azul);
+.tutorial-indice-btn:hover { color: var(--ual-azul); background: var(--proceso-fondo); }
+.tutorial-indice-btn[aria-current="true"] {
+  color: var(--ual-azul);
   font-weight: 600;
+  border-left-color: var(--ual-cian);
 }
+.tutorial-indice-btn .icono { flex-shrink: 0; }
 
-/* Content area */
-.tutorial-content {
-  flex: 1;
-  margin-left: 28px;
+/* ===== Contenido ===== */
+.tutorial-contenido {
+  min-width: 0;
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  padding: 28px 32px;
+  display: flex;
+  justify-content: center; 
 }
-.tutorial-section h2 {
-  font-size: 1.5rem;
-  color: var(--ual-texto);
-  margin: 0 0 16px;
-  padding-bottom: 8px;
-  border-bottom: 2px solid var(--linea);
+.tutorial-seccion h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--t-l);
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--linea);
 }
-.tutorial-section h3 {
-  font-size: 1.05rem;
-  color: var(--ual-texto);
-  margin: 24px 0 10px;
-}
-.tutorial-section p {
-  color: var(--texto-2);
-  line-height: 1.7;
-  margin: 0 0 12px;
-}
+.tutorial-seccion h3 { font-size: var(--t-m); margin: 28px 0 10px; }
+.tutorial-seccion p { color: var(--texto-2); line-height: 1.7; margin: 0 0 12px; max-width: 75ch; }
+.tutorial-seccion strong { color: var(--ual-texto); }
 
-/* Info cards */
-.tutorial-cards-grid {
+/* ===== Tarjetas de la visión general ===== */
+.tutorial-tarjetas {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
   margin: 20px 0;
 }
-.tutorial-info-card {
-  background: white;
-  border-radius: 10px;
-  padding: 18px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
-  border-top: 3px solid var(--ual-azul);
+.tutorial-tarjeta {
+  background: var(--ual-gris);
+  border: 1px solid var(--linea);
+  border-top: 4px solid var(--ual-azul);
+  border-radius: var(--radio);
+  padding: 16px 18px;
 }
-.tutorial-info-card h3 {
+.tutorial-tarjeta h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 8px;
-  font-size: 0.95rem;
-  color: var(--ual-texto);
+  font-size: var(--t-s);
 }
-.tutorial-info-card p {
-  font-size: 13px;
-  color: var(--texto-2);
-  margin: 0;
-}
+.tutorial-tarjeta p { margin: 0; font-size: var(--t-xs); }
 
-/* Callout */
-.tutorial-callout {
-  background: var(--proceso-fondo);
-  border-left: 4px solid var(--ual-azul);
-  border-radius: 6px;
-  padding: 14px 18px;
+/* ===== Avisos ===== */
+.tutorial-aviso {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
   margin: 20px 0;
-  color: var(--texto-2);
-  font-size: 14px;
+  padding: 14px 18px;
+  color: var(--ual-texto);
+  background: var(--proceso-fondo);
+  border: 1px solid var(--proceso);
+  border-left-width: 4px;
+  border-radius: var(--radio);
 }
-.tutorial-callout.warning {
-  background: var(--aviso-fondo);
-  border-left-color: var(--aviso);
-}
-.tutorial-callout code {
-  background: rgba(0,0,0,0.08);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 12px;
-}
+.tutorial-aviso .icono { flex-shrink: 0; margin-top: 3px; color: var(--proceso); }
+.tutorial-aviso > div { min-width: 0; line-height: 1.6; }
+.tutorial-aviso.aviso { background: var(--aviso-fondo); border-color: var(--aviso); }
+.tutorial-aviso.aviso .icono { color: var(--aviso); }
+.tutorial-aviso.ok { background: var(--ok-fondo); border-color: var(--ok); }
+.tutorial-aviso.ok .icono { color: var(--ok); }
 
-/* Pipeline diagram */
-.pipeline-diagram {
+/* ===== Flujo habitual (visión general) ===== */
+.tutorial-flujo {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 14px;
-}
-.pipeline-step-wrapper {
-  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
 }
-.pipeline-step {
-  display: flex;
+.tutorial-flujo li { display: flex; align-items: center; gap: 8px; }
+.tutorial-flujo-paso {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: white;
-  border: 2px solid;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  white-space: nowrap;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--superficie);
+  background: var(--color-familia, var(--ual-azul));
+  border-radius: var(--radio);
 }
-.pipeline-step-emoji { font-size: 16px; }
-.pipeline-step-label { color: var(--ual-texto); font-weight: 500; }
-.pipeline-arrow { font-size: 18px; color: var(--texto-2); }
+/* La flecha entre pasos, con bordes: una flecha de texto la dibuja cada sistema a su manera. */
+.tutorial-flujo li + li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-top: 2px solid var(--texto-2);
+  border-right: 2px solid var(--texto-2);
+  transform: rotate(45deg);
+}
 
-/* Table */
-.tutorial-table-wrapper { overflow-x: auto; margin: 12px 0 20px; }
-.tutorial-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.tutorial-table th {
-  background: var(--ual-azul);
-  color: white;
+/* ===== Tablas ===== */
+.tutorial-tabla-contenedor { overflow-x: auto; margin: 12px 0 20px; }
+.tutorial-tabla { width: 100%; min-width: 520px; border-collapse: collapse; font-size: var(--t-xs); }
+.tutorial-tabla th {
   padding: 10px 12px;
   text-align: left;
+  color: var(--superficie);
+  background: var(--ual-azul);
 }
-.tutorial-table td {
+.tutorial-tabla td {
   padding: 9px 12px;
-  border-bottom: 1px solid var(--linea);
-  color: var(--texto-2);
   vertical-align: top;
-}
-.tutorial-table tr:hover td { background: var(--proceso-fondo); }
-.badge {
-  display: inline-block;
-  color: white;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-/* Steps list */
-.tutorial-steps {
   color: var(--texto-2);
-  line-height: 1.8;
-  padding-left: 20px;
-  margin: 10px 0 18px;
+  border-bottom: 1px solid var(--linea);
 }
-.tutorial-steps li { margin-bottom: 6px; }
-.tutorial-steps code {
-  background: var(--ual-gris);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-/* Zonas */
-.tutorial-zonas {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  margin: 16px 0;
-}
-.zona-card {
-  background: white;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.08);
-}
-.zona-header {
+.tutorial-tabla td:first-child { color: var(--ual-texto); }
+.tutorial-boton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
   font-weight: 600;
   color: var(--ual-texto);
-  font-size: 13px;
-  margin-bottom: 8px;
 }
-.zona-card p {
-  font-size: 13px;
-  color: var(--texto-2);
-  margin: 0;
+.tutorial-tipo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--superficie);
+  background: var(--color-familia, var(--ual-azul));
+  border-radius: var(--radio);
 }
 
-/* Nodo cards (section 4) */
-.tutorial-nodos-grid {
+/* ===== Listas de pasos y consejos ===== */
+.tutorial-pasos, .tutorial-consejos {
+  margin: 10px 0 18px;
+  padding-left: 22px;
+  line-height: 1.8;
+  color: var(--texto-2);
+}
+.tutorial-pasos li, .tutorial-consejos li { margin-bottom: 8px; padding-left: 4px; max-width: 75ch; }
+
+/* ===== Las tres zonas del Constructor ===== */
+.tutorial-zonas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
+.tutorial-zona {
+  padding: 16px;
+  background: var(--ual-gris);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+}
+.tutorial-zona h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--t-s); }
+.tutorial-zona p { margin: 0; font-size: var(--t-xs); }
+
+/* ===== Tipos de nodo ===== */
+.tutorial-nodos {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
   margin-top: 16px;
 }
-.tutorial-nodo-card {
-  background: white;
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-.tutorial-nodo-header {
-  color: white;
+.tutorial-nodo { overflow: hidden; border: 1px solid var(--linea); border-radius: var(--radio); }
+.tutorial-nodo-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 14px;
   font-weight: 600;
-  font-size: 13px;
+  color: var(--superficie);
+  background: var(--color-familia, var(--ual-azul));
 }
-.tutorial-nodo-body {
-  padding: 14px;
+.tutorial-nodo-opcional {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: var(--t-xs);
+  font-weight: 400;
+  border: 1px solid var(--superficie);
+  border-radius: var(--radio);
 }
-.tutorial-nodo-body p {
-  font-size: 13px;
-  color: var(--texto-2);
-  margin: 0 0 6px;
-}
-.tutorial-nodo-meta {
-  font-size: 12px;
-  color: var(--texto-2);
-}
-.tutorial-nodo-meta strong {
-  color: var(--texto-2);
-}
+.tutorial-nodo-cuerpo { padding: 14px; }
+.tutorial-nodo-cuerpo p { margin: 0 0 8px; font-size: var(--t-xs); }
+.tutorial-nodo-cuerpo p:last-child { margin-bottom: 0; }
 
-/* Steps visual (section 5) */
-.tutorial-steps-visual {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-top: 20px;
-}
-.tutorial-step-visual {
+/* ===== Ejemplo paso a paso ===== */
+.tutorial-ejemplo { display: flex; flex-direction: column; gap: 12px; margin: 20px 0 0; padding: 0; list-style: none; }
+.tutorial-ejemplo li {
   display: flex;
   gap: 16px;
-  background: white;
-  border-radius: 10px;
-  padding: 18px;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+  padding: 16px 18px;
+  background: var(--ual-gris);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
 }
-.tutorial-step-number {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--ual-azul);
-  color: white;
-  font-weight: 700;
-  font-size: 15px;
+.tutorial-ejemplo-numero {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  font-weight: 700;
+  color: var(--superficie);
+  background: var(--ual-azul);
+  border-radius: var(--radio);
 }
-.tutorial-step-content h4 {
-  margin: 0 0 6px;
-  font-size: 14px;
-  color: var(--ual-texto);
-}
-.tutorial-step-content p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--texto-2);
-  line-height: 1.6;
-}
+.tutorial-ejemplo h4 { margin: 0 0 6px; font-size: var(--t-s); }
+.tutorial-ejemplo p { margin: 0; font-size: var(--t-xs); line-height: 1.6; }
 
-/* Tips (section 6) */
-.tutorial-tips {
-  color: var(--texto-2);
-  line-height: 1.8;
-  padding-left: 20px;
-  margin: 10px 0 24px;
-}
-.tutorial-tips li { margin-bottom: 8px; }
-
-/* Error cards */
-.tutorial-errores {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 10px;
-}
-.tutorial-error-card {
-  background: white;
-  border-radius: 8px;
+/* ===== Errores frecuentes ===== */
+.tutorial-errores { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.tutorial-error {
   padding: 14px 18px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
-  border-left: 4px solid var(--ual-rojo);
-}
-.error-titulo {
-  font-weight: 600;
-  color: var(--ual-rojo);
-  font-size: 13px;
-  margin-bottom: 6px;
-}
-.tutorial-error-card p {
-  font-size: 13px;
-  color: var(--texto-2);
-  margin: 0;
-}
-.tutorial-error-card code {
   background: var(--ual-gris);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 12px;
+  border: 1px solid var(--linea);
+  border-left: 4px solid var(--error);
+  border-radius: var(--radio);
+}
+.tutorial-error h4 { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 6px; font-size: var(--t-s); color: var(--error); }
+.tutorial-error h4 .icono { flex-shrink: 0; margin-top: 3px; }
+.tutorial-error p { margin: 0; font-size: var(--t-xs); }
+
+/* ===== Pantallas estrechas: el índice pasa encima del contenido ===== */
+@media (max-width: 900px) {
+  .seccion-wrapper.tutorial-pagina { padding-left: 16px; padding-right: 16px; }
+  .tutorial-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .tutorial-indice { position: static; flex-direction: row; flex-wrap: wrap; }
+  .tutorial-indice-btn { width: auto; border-left-width: 1px; border-bottom: 4px solid transparent; }
+  .tutorial-indice-btn[aria-current="true"] { border-left-color: var(--linea); border-bottom-color: var(--ual-cian); }
+  .tutorial-contenido { padding: 20px 16px; }
+  .tutorial-zonas { grid-template-columns: minmax(0, 1fr); }
 }

@@ -170,3 +170,50 @@ class AlgoritmoAdminActualizar(BaseModel):
     es_publico: Optional[bool] = None
     nombre: Optional[str] = Field(default=None, min_length=1, max_length=120)
     descripcion: Optional[str] = Field(default=None, max_length=2000)
+
+
+# --- Visor 3D (spec 002) -------------------------------------------------
+# Lo que devuelven los endpoints /visor/...: las mismas claves que
+# app/visor.py, para que la interfaz no tenga que distinguir formatos.
+
+class FicheroVisor(BaseModel):
+    """Un fichero que el visor ofrece en su buscador (RF-2, RF-3)."""
+    nombre: str
+    grupo: str                            # "molecula" | "biblioteca" | "resultado"
+    formato: str                          # sdf, mol, mol2, pdb, pdbqt, xyz, smi
+    num_moleculas: Optional[int] = None   # nulo mientras no se ha contado
+    fecha: Optional[datetime] = None
+
+
+class CoincidenciaMolecula(BaseModel):
+    posicion: int                         # desde 1, como la ve el usuario
+    nombre: str
+
+
+class PaginaMoleculas(BaseModel):
+    """Una pagina de la lista de moleculas de un SDF (RF-6)."""
+    total: int
+    coincidencias: List[CoincidenciaMolecula]
+    hay_mas: bool
+    fuera_de_rango: bool
+
+
+class CampoSDF(BaseModel):
+    nombre: str
+    valor: str                            # literal: se pinta como texto (RNF-2)
+
+
+class MoleculaVisor(BaseModel):
+    """Una molecula lista para dibujar y describir (RF-5, RF-9, RF-10, RF-12)."""
+    nombre: str
+    num_atomos: Optional[int] = None
+    campos: List[CampoSDF] = []
+    es_proteina: bool = False
+    solo_2d: bool = False
+    sin_enlaces: bool = False
+    dibujable: bool
+    motivo: Optional[str] = None
+    contenido: str
+    formato: str
+    origen: str
+    posicion: Optional[int] = None

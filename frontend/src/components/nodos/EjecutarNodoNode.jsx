@@ -2,15 +2,11 @@ import React from 'react';
 import { Handle, Position } from 'reactflow';
 import MarcoNodo from './MarcoNodo';
 
-const EjecutarNodoNode = ({ id }) => {
-  return (
-    <MarcoNodo id={id} tipo="ejecutar">
-      <div className="nodo-body">
-        <p>Marca el inicio de ejecución del workflow</p>
-      </div>
-      <Handle type="source" position={Position.Right} id="output" />
-    </MarcoNodo>
-  );
-};
+// Sin cuerpo propio: lo que hace ya lo dice la descripcion del marco.
+const EjecutarNodoNode = ({ data, id }) => (
+  <MarcoNodo id={id} tipo="ejecutar" data={data}>
+    <Handle type="source" position={Position.Right} id="output" />
+  </MarcoNodo>
+);
 
 export default EjecutarNodoNode;

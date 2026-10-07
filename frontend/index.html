@@ -1,11 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- El escudo de la UAL (el mismo de la cabecera, LogoUAL.jsx): 192 px,
+         que el navegador reduce para la pestaña. %BASE_URL% lo cambia Vite
+         por la base de la aplicación (spec 004): /molserver/ en producción. -->
+    <link rel="icon" type="image/png" href="%BASE_URL%ual/escudo-ual.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VirtualScreening</title>
-  <script src="https://3dmol.org/build/3Dmol-min.js"></script>
+    <title>MolServer</title>
+  <!-- Libreria de dibujo 3D: excepcion de los principios 1 y 3 de la
+       constitucion (spec 002, decision D10 del plan). Version fija: la URL
+       anterior (3dmol.org/build/3Dmol-min.js) servia siempre la ultima, y una
+       actualizacion externa podia cambiar el visor sin avisar. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.5.5/3Dmol-min.js"></script>
   </head>
   <body>
     <div id="root"></div>

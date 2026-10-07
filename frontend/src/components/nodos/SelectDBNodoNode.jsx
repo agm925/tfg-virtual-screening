@@ -26,7 +26,7 @@ const SelectDBNodoNode = ({ data, id }) => {
       const elegida  = guardada || sdfs[0];
       if (elegida) aplicarCambio(elegida.nombre);
     } catch {
-      setError('No se pudo cargar la lista de bases de datos');
+      setError('No se pudo cargar la lista de bibliotecas');
     } finally {
       setCargando(false);
     }
@@ -38,42 +38,35 @@ const SelectDBNodoNode = ({ data, id }) => {
   };
 
   return (
-    <MarcoNodo id={id} tipo="selectDB">
+    <MarcoNodo id={id} tipo="selectDB" data={data}>
       <div className="nodo-body">
         {cargando ? (
-          <p style={{ fontSize: '11px', color: '#7f8c8d', margin: 0 }}>Cargando bases de datos…</p>
+          <p className="nodo-nota">Cargando bibliotecas…</p>
         ) : error ? (
-          <p style={{ fontSize: '11px', color: '#e74c3c', margin: 0 }}>{error}</p>
+          <p className="nodo-aviso">{error}</p>
         ) : bases.length === 0 ? (
-          <div>
-            <p style={{ fontSize: '11px', color: '#e74c3c', margin: 0 }}>Sin bases de datos disponibles</p>
-            <p style={{ fontSize: '10px', color: '#95a5a6', margin: '4px 0 0' }}>
-              Sube un SDF desde la pestaña 🧪 Moléculas
-            </p>
-          </div>
+          <>
+            <p className="nodo-aviso">Todavía no tienes ninguna biblioteca.</p>
+            <p className="nodo-nota">Sube un fichero SDF desde la página Moléculas.</p>
+          </>
         ) : (
           <>
             <select
               className="select-input"
               value={seleccionada}
               onChange={e => aplicarCambio(e.target.value)}
-              style={{ width: '100%' }}
+              aria-label="Biblioteca"
             >
               {bases.map(m => (
                 <option key={m.nombre} value={m.nombre}>
-                  📦 {m.nombre}
+                  {m.nombre}
                   {m.num_moleculas != null ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
                 </option>
               ))}
             </select>
-            <p style={{ fontSize: '10px', color: '#7f8c8d', margin: 0 }}>
-              {bases.length} base{bases.length !== 1 ? 's' : ''} disponible{bases.length !== 1 ? 's' : ''} ·{' '}
-              <span
-                style={{ color: '#9b59b6', cursor: 'pointer', textDecoration: 'underline' }}
-                onClick={cargarBases}
-              >
-                actualizar
-              </span>
+            <p className="nodo-nota">
+              {bases.length} biblioteca{bases.length !== 1 ? 's' : ''} ·{' '}
+              <button type="button" className="nodo-enlace" onClick={cargarBases}>actualizar</button>
             </p>
           </>
         )}

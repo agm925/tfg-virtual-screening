@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { apiFetch, descargarConToken } from '../api/client'
 import { claseEstado, textoEstado, etiquetaFichero, formatFecha } from '../utils/ficheros'
+import { mensajeError } from '../utils/mensajes'
+import VerEn3D from './VerEn3D'
 
 // Cuántas ejecuciones recientes se enseñan aquí; el resto está en Resultados.
 const RECIENTES = 5;
@@ -9,8 +11,15 @@ const RECIENTES = 5;
 // último que ha lanzado, con sus ficheros a mano. Antes eran cuatro tarjetas
 // de presentación iguales para todos, y los resultados de un cribado no
 // aparecían en ninguna parte fuera del editor.
-export default function Home({ usuario, setPaginaActual, nuevoWorkflow }) {
+export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnVisor }) {
   const [ejecuciones, setEjecuciones] = useState(null);   // null = cargando
+  const [errorDescarga, setErrorDescarga] = useState(null);
+
+  const descargar = (f) => {
+    setErrorDescarga(null);
+    descargarConToken(`/uploads/${f}`, f)
+      .catch(err => setErrorDescarga(mensajeError('descargar el fichero', err)));
+  };
 
   useEffect(() => {
     let vigente = true;
@@ -49,6 +58,7 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow }) {
       </div>
 
       {ejecuciones === null && <p className="texto-secundario">Cargando…</p>}
+      {errorDescarga && <p className="error-msg" role="status">{errorDescarga}</p>}
 
       {ejecuciones?.length === 0 && (
         <div className="panel inicio-vacio">
@@ -86,14 +96,16 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow }) {
                   <td>
                     {e.archivos?.length
                       ? e.archivos.map(f => (
-                          <button
-                            key={f}
-                            className="btn-descarga"
-                            title={f}
-                            onClick={() => descargarConToken(`/uploads/${f}`, f).catch(err => alert(err.message))}
-                          >
-                            {etiquetaFichero(f)}
-                          </button>
+                          <span key={f} className="fichero-acciones">
+                            <button
+                              className="btn-descarga"
+                              title={f}
+                              onClick={() => descargar(f)}
+                            >
+                              {etiquetaFichero(f)}
+                            </button>
+                            <VerEn3D fichero={f} abrirEnVisor={abrirEnVisor} />
+                          </span>
                         ))
                       : <span className="col-cifra">—</span>}
                   </td>

@@ -8,6 +8,7 @@ const ENLACES = [
   { id: 'visual',     label: 'Constructor' },
   { id: 'peticiones', label: 'Resultados' },
   { id: 'moleculas',  label: 'Moléculas' },
+  { id: 'visor',      label: 'Visor 3D' },
   { id: 'algoritmos', label: 'Algoritmos' },
   { id: 'tutorial',   label: 'Tutorial' },
 ];
@@ -34,7 +35,7 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, nuevoWo
     <header>
       <div className="franja-ual">
         <div className="franja-ual-contenido">
-          <span className="franja-ual-tfg">Trabajo Fin de Grado · Universidad de Almería</span>
+          <span className="franja-ual-tfg">Universidad de Almería</span>
           <div className="franja-usuario">
             <span>{usuario.nombre}</span>
             <button onClick={cerrarSesion}>Cerrar sesión</button>

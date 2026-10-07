@@ -20,6 +20,7 @@ Reglas (las mismas que aplicaba app/main.py):
 """
 from typing import Any, Dict, Iterable
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -69,6 +70,69 @@ def comprobar_acceso_a_archivo(nombre_archivo: str, db: Session, usuario_id: int
             "Solo el propietario puede borrar este archivo.",
             nombre_archivo,
         )
+
+
+def resultado_disponible(archivo, db: Session) -> bool:
+    """
+    Si el visor 3D puede ofrecer este fichero (spec 002, RF-2): los subidos
+    siempre; un resultado, solo si la ejecucion o peticion que lo produjo
+    termino bien. El de una en curso puede estar a medio escribir, y el de una
+    cancelada o con error, incompleto. Esto no es una regla de acceso --quien
+    puede leerlo lo sigue decidiendo comprobar_acceso_a_archivo--, sino de
+    que tiene sentido ofrecer.
+    """
+    if archivo.visibilidad != models.VisibilidadArchivo.resultado:
+        return True
+    if archivo.ejecucion_id is not None:
+        ejecucion = db.get(models.WorkflowExecution, archivo.ejecucion_id)
+        return ejecucion is not None and ejecucion.estado == "completado"
+    if archivo.peticion_id is not None:
+        peticion = db.get(models.Peticion, archivo.peticion_id)
+        return peticion is not None and peticion.estado == "COMPLETADO"
+    # Resultados anteriores a que se anotara su origen: no hay estado que
+    # mirar, y el resto de la plataforma los sigue ofreciendo.
+    return True
+
+
+def solo_disponibles(consulta):
+    """
+    La misma regla que resultado_disponible, aplicada a una consulta de
+    `archivos`: la lista del visor la resuelve en una sola consulta en vez de
+    preguntar fichero a fichero. tests/test_resultado_disponible.py comprueba
+    que las dos dicen lo mismo.
+    """
+    archivo = models.Archivo
+    ejecucion = models.WorkflowExecution
+    peticion = models.Peticion
+    return (
+        consulta
+        .outerjoin(ejecucion, archivo.ejecucion_id == ejecucion.id)
+        .outerjoin(peticion, archivo.peticion_id == peticion.id)
+        .filter(or_(
+            archivo.visibilidad != models.VisibilidadArchivo.resultado,
+            and_(archivo.ejecucion_id.is_(None), archivo.peticion_id.is_(None)),
+            and_(archivo.ejecucion_id.isnot(None), ejecucion.estado == "completado"),
+            and_(archivo.ejecucion_id.is_(None), peticion.estado == "COMPLETADO"),
+        ))
+    )
+
+
+def archivos_para_visor(db: Session, usuario_id: int) -> list:
+    """
+    Los ficheros que el visor 3D ofrece a un usuario (spec 002, RF-2): los
+    subidos por cualquiera (la biblioteca compartida) y sus propios
+    resultados terminados. Nunca los resultados de otro.
+
+    Se aplica la regla de un biologo tambien al administrador, a proposito:
+    comprobar_acceso_a_archivo le deja leer cualquier fichero, pero la lista
+    del visor es la misma para todos; los resultados ajenos los tiene en su
+    panel de Administracion.
+    """
+    visibles = or_(
+        models.Archivo.visibilidad == models.VisibilidadArchivo.biblioteca,
+        models.Archivo.propietario_id == usuario_id,
+    )
+    return solo_disponibles(db.query(models.Archivo).filter(visibles)).all()
 
 
 def nombres_de_archivo_del_grafo(grafo_json: Dict[str, Any]) -> Iterable[str]:

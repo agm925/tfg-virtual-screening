@@ -31,10 +31,11 @@ const AlgoritmoNodoNode = ({ data, id }) => {
   };
 
   return (
-    <MarcoNodo id={id} tipo="alineacion">
+    <MarcoNodo id={id} tipo="alineacion" data={data}>
       <div className="nodo-body">
         <select
           className="select-algo"
+          aria-label="Algoritmo de alineación"
           value={seleccionado}
           onChange={e => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
@@ -45,13 +46,12 @@ const AlgoritmoNodoNode = ({ data, id }) => {
             ? algoritmos.map(a => <option key={a.id} value={String(a.id)}>{a.nombre}</option>)
             : <option value="">Sin algoritmos de alineación</option>}
         </select>
-        <p className="algo-desc">Selecciona un algoritmo de alineación</p>
-        <p style={{ fontSize: '0.7rem', color: '#95a5a6', marginTop: '0.25rem' }}>
-          Molécula → entrada sup. · Referencia → entrada inf. (opcional)
+        <p className="nodo-nota">
+          Conecta la molécula al punto de arriba y, si quieres, la referencia al de abajo.
         </p>
       </div>
-      <Handle type="target" position={Position.Left}  id="input_molecula"  style={{ top: '35%' }} />
-      <Handle type="target" position={Position.Left}  id="input_referencia" style={{ top: '70%' }} />
+      <Handle type="target" position={Position.Left}  id="input_molecula"   title="Molécula"   style={{ top: '35%' }} />
+      <Handle type="target" position={Position.Left}  id="input_referencia" title="Referencia (opcional)" style={{ top: '70%' }} />
       <Handle type="source" position={Position.Right} id="output" />
     </MarcoNodo>
   );

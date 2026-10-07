@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { apiFetch } from '../api/client'
 import LogoUAL from './LogoUAL'
+import { textoDetalle } from '../utils/mensajes'
 
 // El backend ya explica en español la cuenta sin confirmar o desactivada
 // (403). Solo "Credenciales incorrectas" (400) se dice de forma más útil, y los
 // errores de validación de FastAPI llegan como lista.
 function mensajeDeError(resp, data, esRegistro) {
   if (!esRegistro && resp.status === 400) return 'El correo o la contraseña no son correctos.';
-  if (Array.isArray(data.detail)) return data.detail.map(e => e.msg).join(', ');
-  return data.detail || 'No se pudo completar la operación.';
+  return textoDetalle(data.detail) || 'No se pudo completar la operación. Inténtalo de nuevo.';
 }
 
 export default function Login({ alLoguear }) {
@@ -101,7 +101,7 @@ export default function Login({ alLoguear }) {
           )}
         </div>
       </main>
-      <p className="login-pie">Trabajo Fin de Grado · Universidad de Almería</p>
+      <p className="login-pie">Universidad de Almería</p>
     </div>
   );
 }

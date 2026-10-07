@@ -1,0 +1,56 @@
+/* Página Sistema. Paneles y mensajes de App.css; colores de tokens.css. */
+
+.estado-cola {
+  display: flex;
+  align-items: flex-start;
+  margin: 0 0 24px;
+}
+.estado-cola .icono {
+  margin-top: 0.2em;
+}
+
+.paneles-sistema {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.panel-sistema {
+  margin-bottom: 0;
+}
+.panel-sistema h3 {
+  display: flex;
+  align-items: center;
+  font-size: var(--t-m);
+}
+.panel-sistema h3 .icono {
+  color: var(--ual-azul);
+}
+
+.metricas {
+  margin: 0;
+}
+.metrica {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--linea);
+  font-size: var(--t-s);
+}
+.metrica:last-child {
+  border-bottom: none;
+}
+.metrica dt {
+  color: var(--texto-2);
+}
+.metrica dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cifra-completado { color: var(--ok); }
+.cifra-error      { color: var(--error); }
+.cifra-pendiente  { color: var(--aviso); }
+.cifra-procesando { color: var(--proceso); }

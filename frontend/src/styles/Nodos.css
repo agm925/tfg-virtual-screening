@@ -1,67 +1,79 @@
-/* Estilos para nodos del Constructor Visual */
+/* Nodos del editor de workflows. Todos los colores salen de tokens.css: el
+ * de cada familia por --color-familia, y los de estado de --ok / --error. */
 
 .nodo {
-  background: white;
-  border-radius: 8px;
-  border: 2px solid #ddd;
-  padding: 0;
-  min-width: 180px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
+  background: var(--superficie);
+  border-radius: var(--radio);
+  border: 2px solid var(--linea);
+  min-width: 200px;
+  max-width: 260px;
   font-size: 12px;
+  color: var(--ual-texto);
 }
 
-.nodo:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  transform: translateY(-2px);
+/* React Flow marca la seleccion en su envoltorio, no en .nodo: antes la regla
+   .nodo.selected no se aplicaba nunca. */
+.react-flow__node.selected .nodo {
+  border-color: var(--ual-cian);
 }
 
-.nodo.selected {
-  border-color: #667eea;
-  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
-}
+/* Color de cada familia de nodo (utils/tiposNodo.js). La clase solo fija la
+ * variable; la usan la cabecera del nodo y su entrada en la paleta
+ * (visualBuilder.css), asi que las dos no pueden volver a divergir. */
+.familia-entrada     { --color-familia: var(--nodo-entrada); }
+.familia-preparacion { --color-familia: var(--nodo-preparacion); }
+.familia-alineacion  { --color-familia: var(--nodo-alineacion); }
+.familia-comparacion { --color-familia: var(--nodo-comparacion); }
+.familia-docking     { --color-familia: var(--nodo-docking); }
+.familia-control     { --color-familia: var(--nodo-control); }
 
-/* Header del nodo */
 .nodo-header {
   background: var(--color-familia);
-  color: white;
-  padding: 10px 12px;
-  border-radius: 6px 6px 0 0;
+  color: var(--superficie);
+  padding: 8px 30px;
   font-weight: 600;
   position: relative;
   text-align: center;
   font-size: 13px;
 }
 
-/* Botón eliminar nodo */
+/* Boton de borrar el nodo, en la cabecera. */
 .nodo-btn-borrar {
   position: absolute;
   top: 50%;
   right: 6px;
   transform: translateY(-50%);
-  background: rgba(255, 255, 255, 0.2);
-  border: none;
-  color: white;
-  border-radius: 50%;
-  width: 18px;
-  height: 18px;
-  font-size: 14px;
-  line-height: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--superficie);
+  border-radius: var(--radio);
+  width: 20px;
+  height: 20px;
   cursor: pointer;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
+}
+/* Va solo, sin texto detras: sin el margen que separa icono y texto. */
+.nodo-btn-borrar .icono {
+  margin: 0;
 }
 .nodo-btn-borrar:hover {
-  background: rgba(231, 76, 60, 0.75);
+  border-color: var(--superficie);
 }
 
-/* Body del nodo */
+/* Para que sirve el nodo (tiposNodo.js), siempre visible: quien no conoce la
+   herramienta no tiene que abrir el tutorial para saberlo. */
+.nodo-desc {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--texto-2);
+}
+
 .nodo-body {
-  padding: 12px;
-  min-height: 60px;
+  padding: 2px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -69,8 +81,46 @@
 
 .nodo-body p {
   margin: 0;
-  font-size: 12px;
-  color: #666;
+}
+
+/* Textos pequenos dentro del nodo: como conectarlo, cuantos ficheros hay... */
+.nodo-nota {
+  font-size: 11px;
+  color: var(--texto-2);
+}
+
+.nodo-aviso {
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* "actualizar": un boton, para que llegue tambien con teclado, con aspecto de
+   enlace. */
+.nodo-enlace {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ual-azul);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Campo con su etiqueta encima (parametros del docking). */
+.nodo-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--texto-2);
+  min-width: 0;
+}
+
+.nodo-fila {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
 }
 
 /* Inputs y selects */
@@ -78,13 +128,12 @@
 .select-input,
 .select-algo {
   width: 100%;
-  padding: 6px 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  padding: 5px 6px;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
   font-size: 12px;
-  color: #333;
-  background: white;
-  cursor: pointer;
+  color: var(--ual-texto);
+  background: var(--superficie);
   box-sizing: border-box;
 }
 
@@ -92,46 +141,38 @@
 .select-input:focus,
 .select-algo:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+  border-color: var(--ual-azul);
 }
 
 .file-name {
   margin: 0;
   padding: 6px;
-  background: #d4edda;
-  border: 1px solid #c3e6cb;
-  border-radius: 4px;
-  color: #155724;
+  background: var(--ok-fondo);
+  border-radius: var(--radio);
+  color: var(--ok);
   font-size: 11px;
+  word-break: break-all;
 }
 
 .upload-btn {
   padding: 6px 10px;
-  background: #27ae60;
-  color: white;
+  background: var(--ual-azul);
+  color: var(--superficie);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radio);
   cursor: pointer;
-  font-weight: 500;
+  font-weight: 600;
   font-size: 12px;
-  transition: all 0.2s ease;
 }
 
 .upload-btn:hover:not(:disabled) {
-  background: #229954;
+  background: var(--ual-azul-h);
 }
 
 .upload-btn:disabled {
-  background: #bdc3c7;
+  background: var(--linea);
+  color: var(--texto-2);
   cursor: not-allowed;
-}
-
-.algo-desc {
-  margin: 0;
-  font-size: 11px;
-  color: #7f8c8d;
-  font-style: italic;
 }
 
 .opciones-checkbox {
@@ -145,77 +186,47 @@
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #444;
   cursor: pointer;
 }
 
-.opciones-checkbox input[type="checkbox"] {
-  cursor: pointer;
-}
-
-/* Color de cada familia de nodo (utils/tiposNodo.js). La clase solo fija la
- * variable; la usan la cabecera del nodo y su entrada en la paleta
- * (visualBuilder.css), asi que las dos no pueden volver a divergir. */
-.familia-entrada     { --color-familia: var(--nodo-entrada); }
-.familia-preparacion { --color-familia: var(--nodo-preparacion); }
-.familia-alineacion  { --color-familia: var(--nodo-alineacion); }
-.familia-comparacion { --color-familia: var(--nodo-comparacion); }
-.familia-docking     { --color-familia: var(--nodo-docking); }
-.familia-control     { --color-familia: var(--nodo-control); }
-
-/* Handles (puertos de conexión) */
+/* Puertos de conexion */
 .react-flow__handle {
-  width: 8px;
-  height: 8px;
-  background: #667eea;
-  border: 2px solid white;
+  width: 10px;
+  height: 10px;
+  background: var(--ual-azul);
+  border: 2px solid var(--superficie);
 }
 
-.react-flow__handle:hover {
-  background: #764ba2;
+.react-flow__handle:hover,
+.react-flow__handle.connectingto {
+  background: var(--ual-cian);
 }
 
-.react-flow__handle.connectingNode {
-  background: #f39c12;
-}
-
-/* Edges (conexiones) */
-.react-flow__edge {
-  stroke: #95a5a6;
+.react-flow__edge-path {
+  stroke: var(--texto-2);
   stroke-width: 2;
 }
 
-.react-flow__edge.animated {
-  stroke-dasharray: 5;
-  animation: dash 0.5s linear infinite;
+/* --- Estado tras ejecutar (spec 001, CA2) ---
+ * Color en el borde y, ademas, una franja con icono y texto: el color solo no
+ * basta para quien no distingue el verde del rojo. */
+.nodo.ejecutado { border-color: var(--ok); }
+.nodo.error     { border-color: var(--error); }
+
+.nodo-estado {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.nodo-estado.ok    { background: var(--ok-fondo);    color: var(--ok); }
+.nodo-estado.error { background: var(--error-fondo); color: var(--error); }
+
+/* Mientras se ejecuta el workflow, el borde de todos los nodos late. */
+.ejecutando .nodo {
+  animation: latido 1.5s ease-in-out infinite;
 }
 
-@keyframes dash {
-  to {
-    stroke-dashoffset: -10;
-  }
-}
-
-/* Estados de ejecución */
-.nodo.ejecutado {
-  border-color: #27ae60;
-  background: #d4edda;
-}
-
-.nodo.error {
-  border-color: #e74c3c;
-  background: #f8d7da;
-}
-
-.nodo.procesando {
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.3);
-  }
+@keyframes latido {
+  50% { border-color: var(--proceso); }
 }

@@ -17,6 +17,13 @@ leyendo entero para contar sus moleculas-- y, para las que se subieron antes
 de que existiera, la primera vez que se usan. Vive en uploads/.indices/, fuera
 de lo que se lista y se sirve.
 
+TITULOS. Junto al indice se guarda el titulo (la primera linea) de cada
+registro, en un fichero aparte (<nombre>.titulos) con la misma cabecera de
+caducidad. Es el mapa con el que el visor 3D lista y busca por nombre las
+moleculas de una biblioteca sin abrirla entera (spec 002, RF-6). Sale de la
+misma pasada que las posiciones, y va aparte para no tocar el formato del
+.idx que ya leen los bloques del cribado.
+
 NUMERACION. Un registro es lo que hay entre dos lineas "$$$$", y el indice los
 numera en ese orden. Es a proposito la misma numeracion para todo el camino
 del cribado --el inventario, la extraccion por bloques y el trozo que va al
@@ -40,27 +47,45 @@ def ruta_indice(ruta_sdf: str) -> str:
                         os.path.basename(ruta_sdf) + ".idx")
 
 
-def construir(ruta_sdf: str) -> array:
+def ruta_titulos(ruta_sdf: str) -> str:
+    return os.path.join(os.path.dirname(ruta_sdf) or ".", ".indices",
+                        os.path.basename(ruta_sdf) + ".titulos")
+
+
+def _texto_titulo(primera_linea: bytes) -> str:
+    # Igual que titulo(): el mapa no puede tener una idea propia de cual es el
+    # nombre de un registro, o el visor buscaria por uno y abriria otro.
+    return primera_linea.decode("utf-8", errors="replace").strip()
+
+
+def construir_mapa(ruta_sdf: str):
     """
-    Los limites de cada registro: el byte donde empieza cada uno y, al final,
-    el tamano del fichero. El registro i ocupa [limites[i], limites[i + 1]).
+    En una sola pasada, los limites de cada registro --el byte donde empieza
+    cada uno y, al final, el tamano del fichero; el registro i ocupa
+    [limites[i], limites[i + 1])-- y el titulo de cada uno, en el mismo orden.
 
     Un ultimo registro sin su "$$$$" cuenta si tiene contenido, igual que lo
     lee RDKit: los molfiles de ChEMBL, por ejemplo, llegan sin separador. Lo
     que haya en blanco tras el ultimo separador no es un registro.
     """
     inicios = array("Q")
+    titulos = []
     posicion = 0
     inicio_actual = 0
     con_contenido = False
+    titulo_actual = None   # None: la siguiente linea es la primera de un registro
 
     with open(ruta_sdf, "rb", buffering=_BUFFER) as f:
         for linea in f:
+            if titulo_actual is None:
+                titulo_actual = _texto_titulo(linea)
             if linea.rstrip() == SEPARADOR:
                 inicios.append(inicio_actual)
+                titulos.append(titulo_actual)
                 posicion += len(linea)
                 inicio_actual = posicion
                 con_contenido = False
+                titulo_actual = None
                 continue
             if linea.strip():
                 con_contenido = True
@@ -68,8 +93,14 @@ def construir(ruta_sdf: str) -> array:
 
     if con_contenido:
         inicios.append(inicio_actual)
+        titulos.append(titulo_actual)
     inicios.append(posicion)
-    return inicios
+    return inicios, titulos
+
+
+def construir(ruta_sdf: str) -> array:
+    """Solo los limites de cada registro (ver construir_mapa)."""
+    return construir_mapa(ruta_sdf)[0]
 
 
 def _cabecera(ruta_sdf: str, registros: int) -> dict:
@@ -83,18 +114,35 @@ def _cabecera(ruta_sdf: str, registros: int) -> dict:
     }
 
 
-def guardar(ruta_sdf: str, limites: array) -> None:
-    ruta = ruta_indice(ruta_sdf)
+def _escribir_atomico(ruta: str, escribir) -> None:
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
-
     # Se escribe aparte y se renombra: varios bloques pueden estar
     # construyendolo a la vez la primera vez que se usa la biblioteca, y el
     # renombrado atomico evita que uno lea el que otro esta a medio escribir.
     temporal = "{}.{}.tmp".format(ruta, os.getpid())
     with open(temporal, "wb") as f:
+        escribir(f)
+    os.replace(temporal, ruta)
+
+
+def guardar(ruta_sdf: str, limites: array) -> None:
+    def escribir(f):
         f.write((json.dumps(_cabecera(ruta_sdf, len(limites) - 1)) + "\n").encode("utf-8"))
         limites.tofile(f)
-    os.replace(temporal, ruta)
+    _escribir_atomico(ruta_indice(ruta_sdf), escribir)
+
+
+def guardar_titulos(ruta_sdf: str, titulos: list) -> None:
+    """
+    Cabecera (la misma que la del indice) y, en la linea siguiente, la lista
+    de titulos en JSON. JSON y no una linea por titulo: un titulo puede llevar
+    caracteres que algunos lectores toman como salto de linea (\\x0b, \\u2028),
+    y un titulo de mas o de menos descuadraria todos los siguientes.
+    """
+    def escribir(f):
+        f.write((json.dumps(_cabecera(ruta_sdf, len(titulos))) + "\n").encode("utf-8"))
+        f.write(json.dumps(titulos, ensure_ascii=False).encode("utf-8"))
+    _escribir_atomico(ruta_titulos(ruta_sdf), escribir)
 
 
 def cargar(ruta_sdf: str):
@@ -116,20 +164,56 @@ def cargar(ruta_sdf: str):
         return None
 
 
+def cargar_titulos(ruta_sdf: str):
+    """Los titulos guardados, o None si no los hay o ya no corresponden al fichero."""
+    try:
+        with open(ruta_titulos(ruta_sdf), "rb") as f:
+            guardada = json.loads(f.readline())
+            if guardada != _cabecera(ruta_sdf, guardada.get("registros")):
+                return None
+            titulos = json.loads(f.read())
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(titulos, list) or len(titulos) != guardada["registros"]:
+        return None
+    return titulos
+
+
+def _construir_y_guardar(ruta_sdf: str):
+    # Posiciones y titulos salen de la misma lectura: si hay que recorrer el
+    # fichero para uno, se guardan los dos.
+    limites, titulos = construir_mapa(ruta_sdf)
+    guardar(ruta_sdf, limites)
+    guardar_titulos(ruta_sdf, titulos)
+    return limites, titulos
+
+
 def obtener(ruta_sdf: str) -> array:
     """El indice del fichero, construyendolo si no existe o esta caducado."""
     limites = cargar(ruta_sdf)
     if limites is None:
-        limites = construir(ruta_sdf)
-        guardar(ruta_sdf, limites)
+        limites, _ = _construir_y_guardar(ruta_sdf)
     return limites
 
 
+def obtener_titulos(ruta_sdf: str) -> list:
+    """
+    El titulo de cada registro, en el orden del indice: la posicion N del
+    visor es el registro N del indice. Se construye si no existe o esta
+    caducado, como el indice, y en la misma pasada.
+    """
+    titulos = cargar_titulos(ruta_sdf)
+    if titulos is None:
+        _, titulos = _construir_y_guardar(ruta_sdf)
+    return titulos
+
+
 def borrar(ruta_sdf: str) -> None:
-    try:
-        os.remove(ruta_indice(ruta_sdf))
-    except OSError:
-        pass
+    for ruta in (ruta_indice(ruta_sdf), ruta_titulos(ruta_sdf)):
+        try:
+            os.remove(ruta)
+        except OSError:
+            pass
 
 
 def leer_registro(fichero, limites: array, i: int) -> bytes:

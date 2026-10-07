@@ -1,269 +1,257 @@
 import { useState, useEffect, useRef } from 'react'
 import '../styles/Moleculas.css'
-import MolViewer3D from './MolViewer3D'
+import VerEn3D from './VerEn3D'
+import Icono from './Icono'
 import { apiFetch, descargarConToken } from '../api/client'
+import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
 
-const EXT_MOLECULA = '.mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz'
-const EXT_BD       = '.sdf'
+const FORMATOS_MOLECULA = ['mol2', 'sdf', 'mol', 'pdb', 'pdbqt', 'smi', 'xyz']
 
-export default function Moleculas() {
-  const [archivos,     setArchivos]     = useState([])
-  const [cargando,     setCargando]     = useState(false)
-  const [msgMol,       setMsgMol]       = useState(null)
-  const [msgBD,        setMsgBD]        = useState(null)
-  const [fileMol,      setFileMol]      = useState(null)
-  const [fileBD,       setFileBD]       = useState(null)
-  const [filtroBuscar, setFiltroBuscar] = useState('')
-  const [visor3D,      setVisor3D]      = useState(null) // nombre del archivo a visualizar
-  const refMol = useRef()
-  const refBD  = useRef()
+// Zona para soltar o elegir un fichero. Es un boton (y no un div con onClick)
+// para que tambien se pueda usar con el teclado.
+function ZonaFichero({ fichero, accept, alElegir, id }) {
+  const ref = useRef()
+  return (
+    <>
+      <button
+        type="button"
+        className="zona-fichero"
+        onClick={() => ref.current?.click()}
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); alElegir(e.dataTransfer.files[0]) }}
+        aria-describedby={`${id}-formatos`}
+      >
+        <Icono nombre={fichero ? 'fichero' : 'subir'} tamano={28} />
+        <span>{fichero ? fichero.name : 'Arrastra el fichero aquí o haz clic para elegirlo'}</span>
+      </button>
+      <input
+        ref={ref}
+        id={id}
+        type="file"
+        accept={accept}
+        hidden
+        onChange={e => alElegir(e.target.files[0])}
+      />
+    </>
+  )
+}
 
-  useEffect(() => { cargarArchivos() }, [])
+// Un panel de subida: molecula suelta o biblioteca. `tipo` es lo que se pide
+// al servidor; el servidor lo comprueba contra el contenido (ver mas abajo).
+function PanelSubida({ tipo, titulo, explicacion, formatos, alSubir }) {
+  const [fichero,  setFichero]  = useState(null)
+  const [subiendo, setSubiendo] = useState(false)
+  const [mensaje,  setMensaje]  = useState(null) // { tipo: 'exito'|'error', texto }
+  const id = `subir-${tipo}`
 
-  const cargarArchivos = async () => {
-    try {
-      const resp = await apiFetch('/moleculas')
-      if (resp.ok) setArchivos(await resp.json())
-    } catch { /* silent */ }
-  }
-
-  // ── Subida genérica ──────────────────────────────────────────────────────
-  const subir = async (archivo, tipo, setMsg, resetRef) => {
-    if (!archivo) { setMsg({ ok: false, texto: 'Selecciona un archivo primero.' }); return }
-    setCargando(true); setMsg(null)
+  const subir = async () => {
+    setSubiendo(true); setMensaje(null)
     const fd = new FormData()
-    fd.append('archivo', archivo)
-    fd.append('tipo',    tipo)
+    fd.append('archivo', fichero)
+    fd.append('tipo', tipo)
     try {
       const resp = await apiFetch('/moleculas/subir', { method: 'POST', body: fd })
+      if (!resp.ok) throw await errorDeRespuesta(resp)
       const data = await resp.json()
-      if (resp.ok) {
-        const extra = data.num_moleculas != null ? ` (${data.num_moleculas} moléculas)` : ''
-        // El backend verifica el tipo contra el contenido real, no se fía de
-        // lo que se marcó en el formulario (ver /moleculas/subir): un .sdf
-        // con un único registro se guarda como molécula aunque se subiera
-        // por "Base de Datos", y viceversa. Si ha corregido lo que se pidió,
-        // se avisa -- si no, pasaría desapercibido y el fichero aparecería
-        // en la columna "equivocada" sin explicación.
-        const corregido = data.tipo && data.tipo !== tipo
-          ? ` (guardado como ${data.tipo === 'base_de_datos' ? 'base de datos' : 'molécula individual'}` +
-            `${data.tipo === 'molecula' ? ': solo tiene una molécula' : ': tiene varias moléculas'})`
-          : ''
-        setMsg({ ok: true, texto: `✅ "${data.nombre}" subido correctamente${extra}.${corregido}` })
-        if (resetRef?.current) resetRef.current.value = ''
-        tipo === 'molecula' ? setFileMol(null) : setFileBD(null)
-        cargarArchivos()
-      } else {
-        setMsg({ ok: false, texto: `❌ ${data.detail || 'Error al subir'}` })
-      }
-    } catch (e) {
-      setMsg({ ok: false, texto: `❌ Error de conexión: ${e.message}` })
+      const cuantas = data.num_moleculas > 1 ? ` con ${data.num_moleculas} moléculas` : ''
+      // El backend verifica el tipo contra el contenido real, no se fía de
+      // lo que se marcó en el formulario (ver /moleculas/subir): un .sdf con
+      // un único registro se guarda como molécula aunque se subiera como
+      // biblioteca, y viceversa. Si ha corregido lo que se pidió, se avisa:
+      // si no, el fichero aparecería en la tabla "equivocada" sin explicación.
+      const corregido = data.tipo && data.tipo !== tipo
+        ? data.tipo === 'molecula'
+          ? ' Solo tiene una molécula, así que se ha guardado como molécula individual.'
+          : ' Tiene varias moléculas, así que se ha guardado como biblioteca.'
+        : ''
+      setMensaje({ tipo: 'exito', texto: `«${data.nombre}» subido${cuantas}.${corregido}` })
+      setFichero(null)
+      alSubir()
+    } catch (err) {
+      setMensaje({ tipo: 'error', texto: mensajeError('subir el fichero', err) })
     } finally {
-      setCargando(false)
+      setSubiendo(false)
     }
   }
 
-  // ── Borrar ───────────────────────────────────────────────────────────────
+  return (
+    <section className="panel panel-subida">
+      <h3>{titulo}</h3>
+      <p className="texto-secundario">{explicacion}</p>
+      <ZonaFichero id={id} fichero={fichero} accept={formatos.map(f => `.${f}`).join(',')}
+                   alElegir={f => { setFichero(f); setMensaje(null) }} />
+      <p className="formatos" id={`${id}-formatos`}>
+        Formatos: {formatos.map(f => <code key={f}>.{f}</code>)}
+      </p>
+      <button className="btn-primary" disabled={subiendo || !fichero} onClick={subir}>
+        <Icono nombre="subir" />{subiendo ? 'Subiendo…' : 'Subir'}
+      </button>
+      {mensaje && (
+        <p className={mensaje.tipo === 'exito' ? 'exito-msg' : 'error-msg'} role="status">{mensaje.texto}</p>
+      )}
+    </section>
+  )
+}
+
+function TablaFicheros({ titulo, ficheros, vacio, conMoleculas, acciones }) {
+  return (
+    <>
+      <h3 className="subtitulo-tabla">{titulo} <span className="contador">{ficheros.length}</span></h3>
+      <div className="tabla-contenedor">
+        <table className="tabla-peticiones tabla-ficheros">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Formato</th>
+              {conMoleculas && <th>Moléculas</th>}
+              <th>Tamaño</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ficheros.length === 0 ? (
+              <tr><td colSpan={conMoleculas ? 5 : 4} className="tabla-vacia">{vacio}</td></tr>
+            ) : ficheros.map(a => (
+              <tr key={a.nombre}>
+                <td className="col-fichero" title={a.nombre}>
+                  {a.nombre}
+                  {a.tipo === 'resultado' && <span className="texto-secundario"> · resultado</span>}
+                </td>
+                <td>{a.nombre.split('.').pop().toUpperCase()}</td>
+                {conMoleculas && <td className="col-cifra">{a.num_moleculas ?? '—'}</td>}
+                <td className="col-cifra">{a.tamano_kb} KB</td>
+                <td className="acciones-celda">{acciones(a)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
+export default function Moleculas({ abrirEnVisor }) {
+  const [archivos,     setArchivos]     = useState(null) // null = cargando
+  const [errorLista,   setErrorLista]   = useState(null)
+  const [aviso,        setAviso]        = useState(null) // errores de las acciones de las tablas
+  const [filtroBuscar, setFiltroBuscar] = useState('')
+
+  // Todos los cambios de estado van despues del await: al llamarse desde el
+  // efecto de montaje no deben provocar un render en cascada.
+  const cargarArchivos = async () => {
+    try {
+      const resp = await apiFetch('/moleculas')
+      if (!resp.ok) throw await errorDeRespuesta(resp)
+      setArchivos(await resp.json())
+      setErrorLista(null)
+    } catch (err) {
+      // Antes el fallo se tragaba en silencio y la pagina decia "no hay
+      // moleculas subidas" aunque las hubiera.
+      setErrorLista(mensajeError('cargar la lista de ficheros', err))
+      setArchivos(a => a ?? [])
+    }
+  }
+
+  useEffect(() => { cargarArchivos() }, [])
+
   // /uploads/{nombre} exige token (security-review): un <a href> normal no
   // puede llevar cabeceras, así que se descarga como blob autenticado.
   const descargar = async (nombre) => {
+    setAviso(null)
     try {
       await descargarConToken(`/uploads/${nombre}`, nombre)
-    } catch (e) {
-      alert(e.message)
+    } catch (err) {
+      setAviso(mensajeError('descargar el fichero', err))
     }
   }
 
   const borrar = async (nombre) => {
-    if (!confirm(`¿Eliminar "${nombre}" del servidor?`)) return
-    const resp = await apiFetch(`/moleculas/${encodeURIComponent(nombre)}`, { method: 'DELETE' })
-    if (resp.ok) cargarArchivos()
-    else {
-      const data = await resp.json().catch(() => ({}))
-      alert(data.detail || 'No se pudo eliminar el archivo')
+    if (!confirm(`¿Eliminar «${nombre}»? No se puede deshacer.`)) return
+    setAviso(null)
+    try {
+      const resp = await apiFetch(`/moleculas/${encodeURIComponent(nombre)}`, { method: 'DELETE' })
+      if (!resp.ok) throw await errorDeRespuesta(resp)
+      cargarArchivos()
+    } catch (err) {
+      setAviso(mensajeError(`eliminar «${nombre}»`, err))
     }
   }
 
-  // ── Filtrado y clasificación ─────────────────────────────────────────────
   // `tipo` lo verifica el backend contra el contenido real al subir el
   // fichero (ver /moleculas/subir), no se adivina aquí por extensión y
   // tamaño: ese heurístico clasificaba mal cualquier .sdf pequeño con varias
   // moléculas diminutas, o cualquier .sdf grande con una sola.
-  const lista = archivos.filter(a =>
+  const lista = (archivos || []).filter(a =>
     a.nombre.toLowerCase().includes(filtroBuscar.toLowerCase())
   )
   const moleculas = lista.filter(a => a.tipo !== 'base_de_datos')
   const bases     = lista.filter(a => a.tipo === 'base_de_datos')
 
-  const puedeVer3D = (nombre) => /\.(sdf|mol2|mol|pdb)$/i.test(nombre)
+  // También las bibliotecas: el visor las abre con su lista de moléculas y
+  // su buscador, sin traerlas enteras (spec 002, RF-6 y RF-15). Los
+  // resultados que salen aquí no: pueden ser de una ejecución en curso, que
+  // el visor no ofrece (RF-2), y el botón acababa en un falso «ya no está
+  // disponible». Los terminados tienen su «Ver en 3D» en Resultados.
+  const acciones = (a) => (
+    <>
+      {a.tipo !== 'resultado' && <VerEn3D fichero={a.nombre} abrirEnVisor={abrirEnVisor} />}
+      <button className="btn-descarga" onClick={() => descargar(a.nombre)}>
+        <Icono nombre="bajar" />Descargar
+      </button>
+      <button className="btn-borrar" onClick={() => borrar(a.nombre)} aria-label={`Eliminar ${a.nombre}`}>
+        <Icono nombre="papelera" />Eliminar
+      </button>
+    </>
+  )
 
   return (
-    <div className="moleculas-page">
-      {visor3D && <MolViewer3D archivo={visor3D} onClose={() => setVisor3D(null)} />}
-      <div className="moleculas-hero">
-        <h1>🧪 Biblioteca Molecular</h1>
-        <p>Sube moléculas individuales o bases de datos completas para usarlas en el Constructor Visual.</p>
+    <div className="seccion-wrapper">
+      <h2>Moléculas</h2>
+      <p className="seccion-subtitulo">
+        Sube moléculas sueltas o bibliotecas SDF enteras para usarlas en tus workflows.
+      </p>
+
+      <div className="moleculas-subida">
+        <PanelSubida
+          tipo="molecula"
+          titulo="Molécula individual"
+          explicacion="Un único compuesto, en cualquiera de los formatos habituales."
+          formatos={FORMATOS_MOLECULA}
+          alSubir={cargarArchivos}
+        />
+        <PanelSubida
+          tipo="base_de_datos"
+          titulo="Biblioteca"
+          explicacion="Un fichero SDF con muchos compuestos, para cribarlos todos de una vez. Al subirlo se cuentan las moléculas que tiene."
+          formatos={['sdf']}
+          alSubir={cargarArchivos}
+        />
       </div>
 
-      {/* ── Formularios ── */}
-      <div className="formularios-grid">
-
-        {/* Molécula individual */}
-        <div className="card-upload">
-          <div className="card-upload-header" style={{ background: 'linear-gradient(135deg,#3498db,#2980b9)' }}>
-            <span className="card-upload-icon">🔬</span>
-            <div>
-              <h2>Molécula Individual</h2>
-              <p>Un único compuesto en cualquier formato estándar</p>
-            </div>
-          </div>
-          <div className="card-upload-body">
-            <label className="upload-label">Formatos admitidos</label>
-            <div className="formato-chips">
-              {['mol2','sdf','mol','pdb','pdbqt','smi','xyz'].map(f => (
-                <span key={f} className="chip">.{f}</span>
-              ))}
-            </div>
-            <div
-              className="drop-zone"
-              onClick={() => refMol.current?.click()}
-              onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); setFileMol(e.dataTransfer.files[0]) }}
-            >
-              {fileMol
-                ? <><span className="drop-icon">📄</span><span>{fileMol.name}</span></>
-                : <><span className="drop-icon">⬆️</span><span>Arrastra aquí o haz clic para seleccionar</span></>
-              }
-            </div>
-            <input
-              ref={refMol}
-              type="file"
-              accept={EXT_MOLECULA}
-              style={{ display: 'none' }}
-              onChange={e => setFileMol(e.target.files[0])}
-            />
-            {msgMol && <p className={`upload-msg ${msgMol.ok ? 'ok' : 'err'}`}>{msgMol.texto}</p>}
-            <button
-              className="btn-subir azul"
-              disabled={cargando || !fileMol}
-              onClick={() => subir(fileMol, 'molecula', setMsgMol, refMol)}
-            >
-              {cargando ? 'Subiendo…' : '📤 Subir molécula'}
-            </button>
-          </div>
-        </div>
-
-        {/* Base de datos */}
-        <div className="card-upload">
-          <div className="card-upload-header" style={{ background: 'linear-gradient(135deg,#27ae60,#229954)' }}>
-            <span className="card-upload-icon">🗄️</span>
-            <div>
-              <h2>Base de Datos</h2>
-              <p>Archivo SDF con múltiples compuestos</p>
-            </div>
-          </div>
-          <div className="card-upload-body">
-            <label className="upload-label">Formato requerido</label>
-            <div className="formato-chips">
-              <span className="chip destacado">.sdf</span>
-            </div>
-            <div
-              className="drop-zone"
-              onClick={() => refBD.current?.click()}
-              onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); setFileBD(e.dataTransfer.files[0]) }}
-            >
-              {fileBD
-                ? <><span className="drop-icon">🗂️</span><span>{fileBD.name}</span></>
-                : <><span className="drop-icon">⬆️</span><span>Arrastra aquí o haz clic para seleccionar</span></>
-              }
-            </div>
-            <input
-              ref={refBD}
-              type="file"
-              accept={EXT_BD}
-              style={{ display: 'none' }}
-              onChange={e => setFileBD(e.target.files[0])}
-            />
-            <p className="hint-bd">
-              💡 El archivo SDF puede contener cientos de moléculas. El sistema detectará automáticamente cuántas hay al subirlo.
-            </p>
-            {msgBD && <p className={`upload-msg ${msgBD.ok ? 'ok' : 'err'}`}>{msgBD.texto}</p>}
-            <button
-              className="btn-subir verde"
-              disabled={cargando || !fileBD}
-              onClick={() => subir(fileBD, 'base_de_datos', setMsgBD, refBD)}
-            >
-              {cargando ? 'Subiendo…' : '📤 Subir base de datos'}
-            </button>
-          </div>
-        </div>
+      <div className="moleculas-buscar">
+        <label htmlFor="moleculas-buscar">Buscar por nombre</label>
+        <input id="moleculas-buscar" type="search" value={filtroBuscar}
+               onChange={e => setFiltroBuscar(e.target.value)} />
+        <button className="btn-secundario" onClick={cargarArchivos}>
+          <Icono nombre="procesando" />Actualizar
+        </button>
       </div>
 
-      {/* ── Biblioteca actual ── */}
-      <div className="biblioteca-section">
-        <div className="biblioteca-header">
-          <h2>📚 Archivos en el servidor</h2>
-          <input
-            className="buscador"
-            placeholder="🔍 Buscar por nombre…"
-            value={filtroBuscar}
-            onChange={e => setFiltroBuscar(e.target.value)}
-          />
-          <button className="btn-refrescar" onClick={cargarArchivos}>🔄 Refrescar</button>
-        </div>
+      {errorLista && <p className="error-msg" role="status">{errorLista}</p>}
+      {aviso && <p className="error-msg" role="status">{aviso}</p>}
 
-        <div className="biblioteca-grid">
-          {/* Moléculas individuales */}
-          <div className="biblioteca-col">
-            <h3>🔬 Moléculas individuales <span className="count">{moleculas.length}</span></h3>
-            {moleculas.length === 0
-              ? <p className="empty">No hay moléculas subidas todavía.</p>
-              : moleculas.map(a => (
-                  <div key={a.nombre} className="archivo-card">
-                    <div className="archivo-info">
-                      <span className="archivo-nombre">{a.nombre}</span>
-                      <span className="archivo-meta">
-                        {a.tamano_kb} KB · {a.nombre.split('.').pop().toUpperCase()}
-                        {a.tipo === 'resultado' && ' · resultado propio'}
-                      </span>
-                    </div>
-                    <div className="archivo-acciones">
-                      {puedeVer3D(a.nombre) && (
-                        <button className="btn-ver3d" onClick={() => setVisor3D(a.nombre)}>🔬 3D</button>
-                      )}
-                      <button onClick={() => descargar(a.nombre)} className="btn-dl">⬇️</button>
-                      <button className="btn-del" onClick={() => borrar(a.nombre)}>🗑️</button>
-                    </div>
-                  </div>
-                ))
-            }
-          </div>
-
-          {/* Bases de datos */}
-          <div className="biblioteca-col">
-            <h3>🗄️ Bases de datos <span className="count">{bases.length}</span></h3>
-            {bases.length === 0
-              ? <p className="empty">No hay bases de datos subidas todavía.</p>
-              : bases.map(a => (
-                  <div key={a.nombre} className="archivo-card bd">
-                    <div className="archivo-info">
-                      <span className="archivo-nombre">{a.nombre}</span>
-                      <span className="archivo-meta">
-                        {a.tamano_kb} KB · SDF
-                        {a.num_moleculas != null && ` · ${a.num_moleculas} moléculas`}
-                      </span>
-                    </div>
-                    <div className="archivo-acciones">
-                      <button onClick={() => descargar(a.nombre)} className="btn-dl">⬇️</button>
-                      <button className="btn-del" onClick={() => borrar(a.nombre)}>🗑️</button>
-                    </div>
-                  </div>
-                ))
-            }
-          </div>
-        </div>
-      </div>
+      {archivos === null ? (
+        <p className="texto-secundario">Cargando…</p>
+      ) : (
+        <>
+          <TablaFicheros titulo="Moléculas individuales" ficheros={moleculas}
+                         vacio={filtroBuscar ? 'Ninguna coincide con la búsqueda.' : 'Todavía no has subido ninguna molécula.'}
+                         acciones={acciones} />
+          <TablaFicheros titulo="Bibliotecas" ficheros={bases} conMoleculas
+                         vacio={filtroBuscar ? 'Ninguna coincide con la búsqueda.' : 'Todavía no has subido ninguna biblioteca.'}
+                         acciones={acciones} />
+        </>
+      )}
     </div>
   )
 }

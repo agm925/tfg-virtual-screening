@@ -3,18 +3,24 @@ import { apiFetch, descargarConToken } from '../api/client'
 import {
   claseEstado, textoEstado, estaActivo, etiquetaFichero, formatFecha,
 } from '../utils/ficheros'
+import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
+import VerEn3D from './VerEn3D'
 
 const POLL_MS = 4000;
 
 // ── Componente principal ─────────────────────────────────────────────────────
 
-export default function RealizarPeticion({ usuario }) {
+export default function RealizarPeticion({ usuario, abrirEnVisor }) {
   // — estado peticiones algoritmo —
   const [peticiones,   setPeticiones]   = useState([]);
   const [algoritmos,   setAlgoritmos]   = useState([]);
   const [archivo,      setArchivo]      = useState(null);
   const [algoritmoSel, setAlgoritmoSel] = useState('');
   const [mensaje,      setMensaje]      = useState(null); // { tipo: 'exito'|'error', texto }
+  // Errores de las acciones de las tablas (cancelar, descargar): se enseñan
+  // junto a las tablas, no arriba en el formulario, que puede quedar fuera
+  // de la pantalla.
+  const [avisoTablas,  setAvisoTablas]  = useState(null);
   const [cargando,     setCargando]     = useState(false);
   const [posiciones,   setPosiciones]   = useState({});
   const intervalRef = useRef(null);
@@ -88,27 +94,32 @@ export default function RealizarPeticion({ usuario }) {
     fd.append('algoritmo_id', algoritmoSel);
     fd.append('archivo_mol',  archivo);
 
-    const resp = await apiFetch('/peticiones', { method: 'POST', body: fd });
-    setCargando(false);
-    if (resp.ok) {
+    const formulario = e.target;
+    try {
+      const resp = await apiFetch('/peticiones', { method: 'POST', body: fd });
+      if (!resp.ok) throw await errorDeRespuesta(resp);
       setMensaje({ tipo: 'exito', texto: 'Petición enviada. Te avisaremos por correo cuando termine.' });
       setArchivo(null);
-      e.target.reset();
+      formulario.reset();
       cargarDatos();
-    } else {
-      const err = await resp.json();
-      setMensaje({ tipo: 'error', texto: `No se pudo enviar la petición: ${err.detail || 'error desconocido'}.` });
+    } catch (err) {
+      // Antes un fallo de red dejaba el boton en "Enviando…" para siempre.
+      setMensaje({ tipo: 'error', texto: mensajeError('enviar la petición', err) });
+    } finally {
+      setCargando(false);
     }
   };
 
   // ── Cancelar ejecución de workflow ───────────────────────────────────────
   const cancelarEjecucion = async (id) => {
     if (!confirm('¿Cancelar esta ejecución? Se detendrá y no generará resultados.')) return;
-    const resp = await apiFetch(`/workflows/ejecuciones/${id}/cancelar`, { method: 'POST' });
-    if (resp.ok) cargarDatos();
-    else {
-      const err = await resp.json();
-      alert(`No se pudo cancelar: ${err.detail || 'error desconocido'}.`);
+    setAvisoTablas(null);
+    try {
+      const resp = await apiFetch(`/workflows/ejecuciones/${id}/cancelar`, { method: 'POST' });
+      if (!resp.ok) throw await errorDeRespuesta(resp);
+      cargarDatos();
+    } catch (err) {
+      setAvisoTablas(mensajeError('cancelar la ejecución', err));
     }
   };
 
@@ -121,10 +132,15 @@ export default function RealizarPeticion({ usuario }) {
 
   // ── Descargar resultado (endpoint autenticado: no puede ser un <a href> normal) ──
   const descargarPeticion = async (id, nombreSugerido) => {
+    descargar(`/descargar/${id}`, nombreSugerido);
+  };
+
+  const descargar = async (ruta, nombre) => {
+    setAvisoTablas(null);
     try {
-      await descargarConToken(`/descargar/${id}`, nombreSugerido);
-    } catch (e) {
-      alert(e.message);
+      await descargarConToken(ruta, nombre);
+    } catch (err) {
+      setAvisoTablas(mensajeError('descargar el fichero', err));
     }
   };
 
@@ -170,6 +186,8 @@ export default function RealizarPeticion({ usuario }) {
           </p>
         )}
       </section>
+
+      {avisoTablas && <p className="error-msg" role="status">{avisoTablas}</p>}
 
       {/* ══════════ TABLA PETICIONES DE ALGORITMO ══════════ */}
       <h3 className="subtitulo-tabla">
@@ -227,6 +245,9 @@ export default function RealizarPeticion({ usuario }) {
                       Descargar resultado
                     </button>
                   )}
+                  {p.estado === 'COMPLETADO' && p.ruta_mol_resultado && (
+                    <VerEn3D fichero={p.ruta_mol_resultado} abrirEnVisor={abrirEnVisor} />
+                  )}
                   <button onClick={() => borrarPeticion(p.id)} className="btn-borrar">Borrar</button>
                 </td>
               </tr>
@@ -268,14 +289,16 @@ export default function RealizarPeticion({ usuario }) {
                 </td>
                 <td>
                   {e.archivos && e.archivos.length > 0 && e.archivos.map(f => (
-                    <button
-                      key={f}
-                      onClick={() => descargarConToken(`/uploads/${f}`, f).catch(err => alert(err.message))}
-                      className="btn-descarga"
-                      title={f}
-                    >
-                      {etiquetaFichero(f)}
-                    </button>
+                    <span key={f} className="fichero-acciones">
+                      <button
+                        onClick={() => descargar(`/uploads/${f}`, f)}
+                        className="btn-descarga"
+                        title={f}
+                      >
+                        {etiquetaFichero(f)}
+                      </button>
+                      <VerEn3D fichero={f} abrirEnVisor={abrirEnVisor} />
+                    </span>
                   ))}
                   {estaActivo(e.estado) && (
                     <button onClick={() => cancelarEjecucion(e.id)} className="btn-borrar">

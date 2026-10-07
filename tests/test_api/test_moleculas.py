@@ -326,3 +326,32 @@ def test_subir_una_biblioteca_deja_su_indice_y_borrarla_lo_quita(client, usuario
     borrado = client.delete(f"/moleculas/{nombre}", headers=usuario_autenticado["headers"])
     assert borrado.status_code == 200, borrado.text
     assert not os.path.exists(indice_sdf.ruta_indice(ruta))
+
+
+def test_subir_una_biblioteca_deja_sus_titulos_y_borrarla_los_quita(client, usuario_autenticado):
+    """
+    Los titulos (el mapa con el que el visor 3D lista y busca las moleculas de
+    una biblioteca, spec 002) salen de la misma pasada que el indice, al
+    subir: la primera vez que alguien la abra en el visor no tiene que
+    esperar a que se recorra entera.
+    """
+    import os
+
+    from app import indice_sdf
+
+    respuesta = client.post(
+        "/moleculas/subir",
+        data={"tipo": "base_de_datos"},
+        files={"archivo": ("test_titulos_bd.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
+        headers=usuario_autenticado["headers"],
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    ruta = os.path.join("uploads", respuesta.json()["nombre"])
+
+    # cargar_titulos y no obtener_titulos: obtener los construiria ahora, y
+    # lo que se comprueba es que ya estaban guardados.
+    assert indice_sdf.cargar_titulos(ruta) == ["mol1", "mol2"]
+
+    borrado = client.delete(f"/moleculas/{respuesta.json()['nombre']}", headers=usuario_autenticado["headers"])
+    assert borrado.status_code == 200, borrado.text
+    assert not os.path.exists(indice_sdf.ruta_titulos(ruta))

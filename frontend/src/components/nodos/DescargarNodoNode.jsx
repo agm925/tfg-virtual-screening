@@ -2,15 +2,11 @@ import React from 'react';
 import { Handle, Position } from 'reactflow';
 import MarcoNodo from './MarcoNodo';
 
-const DescargarNodoNode = ({ id }) => {
-  return (
-    <MarcoNodo id={id} tipo="descargar">
-      <div className="nodo-body">
-        <p>Archivo listo para descargar</p>
-      </div>
-      <Handle type="target" position={Position.Left} id="input" />
-    </MarcoNodo>
-  );
-};
+// Sin cuerpo propio: lo que hace ya lo dice la descripcion del marco.
+const DescargarNodoNode = ({ data, id }) => (
+  <MarcoNodo id={id} tipo="descargar" data={data}>
+    <Handle type="target" position={Position.Left} id="input" />
+  </MarcoNodo>
+);
 
 export default DescargarNodoNode;

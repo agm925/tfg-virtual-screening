@@ -17,6 +17,7 @@ x-backend-env: &backend-env
   BANCO_SOCKET: /sock/banco.sock
   BATCH_TAMANO_BLOQUE: ${BATCH_TAMANO_BLOQUE:-25}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+  PUBLIC_URL: ${PUBLIC_URL:-http://localhost:5173}
   SLURM_HOST: ${SLURM_HOST:-bullxual.hpca.ual.es}
   SLURM_PORT: ${SLURM_PORT:-22}
   SLURM_USER: ${SLURM_USER:-}
@@ -100,7 +101,11 @@ services:
       # Solo el socket del sandbox. El banco no ve ninguno de los otros dos.
       - banco_sock:/sock
     ports:
-      - "8000:8000"
+      # Solo desde la propia máquina (spec 004): el navegador llega a la API
+      # por el frontend (/api/), y en el servidor RTX por el proxy de HPCA.
+      # Publicado a toda la red, se podía llamar a la API saltándose ese
+      # proxy. En desarrollo, el proxy de Vite sigue llegando por localhost.
+      - "127.0.0.1:8000:8000"
     # El backend tampoco tenia limite de memoria. Lo tenia el worker y no el
     # proceso web, que es el que atiende a los usuarios: una peticion que
     # consumiera toda la RAM se llevaba por delante la maquina entera.
@@ -298,7 +303,9 @@ services:
     container_name: tfg_frontend
     restart: unless-stopped
     ports:
-      - "5173:80"
+      # Configurable (spec 004): en el servidor RTX hay otros servicios, y el
+      # puerto tiene que ser el que se acuerde con el responsable del proxy.
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       - backend
 

@@ -1,9 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+// Explícito: el linter trata este fichero como código de navegador, sin `process`.
+import process from 'node:process'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+
+  // Dirección bajo la que se sirve la aplicación (spec 004). En el servidor
+  // RTX cuelga de https://rt.hpca.ual.es/molserver, no de la raíz, así que el
+  // build pide sus ficheros a /molserver/assets/... En desarrollo sigue en /,
+  // como siempre. VITE_BASE la cambia al compilar (por ejemplo, VITE_BASE=/).
+  base: process.env.VITE_BASE || (command === 'build' ? '/molserver/' : '/'),
 
   // En producción es nginx quien sirve la SPA y reenvía /api/ al backend
   // (ver frontend/nginx.conf). En desarrollo no hay nginx, así que el servidor
@@ -21,4 +29,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

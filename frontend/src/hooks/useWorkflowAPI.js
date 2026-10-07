@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { apiFetch, descargarConToken } from '../api/client';
+import { errorDeRespuesta } from '../utils/mensajes';
 
 const useWorkflowAPI = () => {
   const [cargando, setCargando] = useState(false);
@@ -19,7 +20,7 @@ const useWorkflowAPI = () => {
         body: formData,
       });
 
-      if (!response.ok) throw new Error('Error creando workflow');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -38,7 +39,7 @@ const useWorkflowAPI = () => {
     try {
       const response = await apiFetch(`/workflows/usuario/${usuarioId}`);
 
-      if (!response.ok) throw new Error('Error obteniendo workflows');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -57,7 +58,7 @@ const useWorkflowAPI = () => {
     try {
       const response = await apiFetch(`/workflows/${workflowId}`);
 
-      if (!response.ok) throw new Error('Error obteniendo workflow');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -84,7 +85,7 @@ const useWorkflowAPI = () => {
         }),
       });
 
-      if (!response.ok) throw new Error('Error actualizando workflow');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -106,10 +107,7 @@ const useWorkflowAPI = () => {
         method: 'POST',
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Error encolando workflow');
-      }
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -124,13 +122,24 @@ const useWorkflowAPI = () => {
 
   // Polling: espera hasta que la ejecución termine (completado | error)
   // onProgreso recibe el objeto completo { estado, resultados_json: { progreso, total, molecula_actual, ... } }
-  const esperarEjecucion = useCallback(async (ejecucionId, onProgreso) => {
+  //
+  // `signal` corta la espera (AbortError). Sin el, salir del editor a mitad de
+  // un cribado dejaba el sondeo vivo para siempre, cada 3 s, escribiendo en un
+  // componente que ya no existia.
+  const esperarEjecucion = useCallback(async (ejecucionId, onProgreso, signal) => {
     const INTERVALO = 3000; // 3 s
     return new Promise((resolve, reject) => {
+      const abortada = () => {
+        if (!signal?.aborted) return false;
+        reject(new DOMException('Espera cancelada', 'AbortError'));
+        return true;
+      };
       const tick = async () => {
+        if (abortada()) return;
         try {
-          const resp = await apiFetch(`/workflows/ejecuciones/${ejecucionId}`);
-          if (!resp.ok) { reject(new Error('Error consultando estado')); return; }
+          const resp = await apiFetch(`/workflows/ejecuciones/${ejecucionId}`, { signal });
+          if (abortada()) return;
+          if (!resp.ok) { reject(await errorDeRespuesta(resp)); return; }
           const datos = await resp.json();
           if (onProgreso) onProgreso(datos);
           if (['completado', 'error', 'fallido', 'cancelado'].includes(datos.estado)) {
@@ -150,7 +159,7 @@ const useWorkflowAPI = () => {
     try {
       const response = await apiFetch(`/workflows/${workflowId}/ejecuciones`);
 
-      if (!response.ok) throw new Error('Error obteniendo ejecuciones');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -169,7 +178,7 @@ const useWorkflowAPI = () => {
     try {
       const response = await apiFetch(`/workflows/ejecuciones/${ejecucionId}`);
 
-      if (!response.ok) throw new Error('Error obteniendo ejecución');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       const data = await response.json();
       setError(null);
@@ -202,7 +211,7 @@ const useWorkflowAPI = () => {
         method: 'DELETE',
       });
 
-      if (!response.ok) throw new Error('Error borrando workflow');
+      if (!response.ok) throw await errorDeRespuesta(response);
 
       setError(null);
     } catch (err) {

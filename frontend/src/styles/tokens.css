@@ -41,6 +41,16 @@
   --nodo-docking:     #00695C;
   --nodo-control:     var(--ual-noche);
 
+  /* --- Huecos A y B del visor 3D (spec 002, RF-4 y RF-7) ---
+   * Son el color del panel de cada hueco y el de los carbonos de su
+   * molecula en el dibujo; el lienzo los lee de aqui (decision D11). Evitan
+   * los colores por elemento del resto de atomos (O rojo, N azul, S amarillo)
+   * y son un par que se distingue tambien con daltonismo (verde azulado y
+   * naranja de la paleta Dark2), oscurecidos para que el texto de su color
+   * sea legible sobre blanco (mas de 4.5:1). */
+  --hueco-a: #12795B;
+  --hueco-b: #B34A00;
+
   /* --- Tipografia ---
    * La UAL usa Segoe UI. Es de Microsoft y no se puede redistribuir, asi que
    * se pide la del sistema: en los equipos Windows de la universidad es la

@@ -2,17 +2,22 @@ import React, { useState } from 'react';
 import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
+import Icono from '../Icono';
+import { errorDeRespuesta, mensajeError } from '../../utils/mensajes';
 
 const UploadNodoNode = ({ data, id }) => {
   const [archivo, setArchivo] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [nombreSubido, setNombreSubido] = useState(data.nombre_archivo || null);
+  // Error dentro del propio nodo, junto a lo que lo ha causado (antes, alert).
+  const [error, setError] = useState(null);
 
   const EXTENSIONES = ['.mol2', '.sdf', '.mol', '.pdb', '.pdbqt', '.smi', '.xyz'];
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    setError(null);
     const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
     if (EXTENSIONES.includes(ext)) {
       // El nombre definitivo no se conoce hasta que el servidor responde
@@ -20,7 +25,8 @@ const UploadNodoNode = ({ data, id }) => {
       // fichero elegido.
       setArchivo(file);
     } else {
-      alert(`Formato no soportado. Usa: ${EXTENSIONES.join(', ')}`);
+      setArchivo(null);
+      setError(`Ese formato no se admite. Usa uno de estos: ${EXTENSIONES.join(', ')}.`);
     }
   };
 
@@ -35,38 +41,39 @@ const UploadNodoNode = ({ data, id }) => {
   // El endpoint correcto es /moleculas/subir, que es justamente lo que este
   // nodo necesita: dejar el fichero disponible para los nodos siguientes.
   const uploadMolecula = async () => {
-    if (!archivo) { alert('Selecciona un archivo primero'); return; }
     setCargando(true);
+    setError(null);
     const formData = new FormData();
     formData.append('archivo', archivo);
     formData.append('tipo', 'molecula');
     try {
       const response = await apiFetch('/moleculas/subir', { method: 'POST', body: formData });
+      if (!response.ok) throw await errorDeRespuesta(response);
       const result = await response.json();
-      if (response.ok) {
-        // El servidor puede haber renombrado el fichero si el nombre ya
-        // estaba ocupado, así que se guarda el que devuelve, no el local.
-        data.nombre_archivo = result.nombre;
-        setNombreSubido(result.nombre);
-        alert(`"${result.nombre}" subido correctamente`);
-      } else {
-        alert(result.detail || 'Error cargando archivo');
-      }
+      // El servidor puede haber renombrado el fichero si el nombre ya
+      // estaba ocupado, así que se guarda el que devuelve, no el local. La
+      // confirmación es la línea con el nombre subido.
+      data.nombre_archivo = result.nombre;
+      setNombreSubido(result.nombre);
+      setArchivo(null);
     } catch (err) {
-      alert('Error: ' + err.message);
+      setError(mensajeError('subir la molécula', err));
     } finally {
       setCargando(false);
     }
   };
 
   return (
-    <MarcoNodo id={id} tipo="upload">
+    <MarcoNodo id={id} tipo="upload" data={data}>
       <div className="nodo-body">
-        <input type="file" accept=".mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz" onChange={handleFileChange} className="file-input" />
-        {archivo && !nombreSubido && <p className="file-name">{archivo.name}</p>}
-        {nombreSubido && <p className="file-name">✓ {nombreSubido}</p>}
+        <input type="file" accept=".mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz" onChange={handleFileChange}
+               className="file-input" aria-label="Fichero de la molécula" />
+        {nombreSubido && !archivo && (
+          <p className="file-name"><Icono nombre="ok" tamano={12} />Subida: {nombreSubido}</p>
+        )}
+        {error && <p className="nodo-aviso" role="status">{error}</p>}
         <button onClick={uploadMolecula} disabled={!archivo || cargando} className="upload-btn">
-          {cargando ? 'Cargando...' : 'Cargar'}
+          {cargando ? 'Subiendo…' : 'Subir'}
         </button>
       </div>
       <Handle type="source" position={Position.Right} id="output" />

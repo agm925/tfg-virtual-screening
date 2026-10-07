@@ -1,244 +1,95 @@
-.moleculas-page {
-  flex: 1;
-  width: 100%;
-  min-width: 0;
-  padding: 0 0 60px;
-  box-sizing: border-box;
-}
+/* Página Moléculas. Lo comun (panel, tablas, botones, mensajes) sale de
+   App.css; aqui solo lo propio: los dos paneles de subida y su zona para
+   soltar el fichero. Colores de tokens.css. */
 
-/* Hero */
-.moleculas-hero {
-  background: var(--ual-noche);
-  color: white;
-  padding: 40px 48px;
-  width: 100%;
-  box-sizing: border-box;
-}
-.moleculas-hero h1 { margin: 0 0 8px; font-size: 2rem; }
-.moleculas-hero p  { margin: 0; opacity: .75; font-size: 1.05rem; }
-
-/* Grid de formularios */
-.formularios-grid {
+.moleculas-subida {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 28px;
-  padding: 36px 48px 0;
-  box-sizing: border-box;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
 }
-@media (max-width: 860px) { .formularios-grid { grid-template-columns: 1fr; } }
 
-/* Tarjeta de upload */
-.card-upload {
-  border-radius: 12px;
-  border: 1px solid var(--linea);
-  overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0,0,0,.07);
-  background: white;
-}
-.card-upload-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 20px 24px;
-  color: white;
-}
-.card-upload-icon { font-size: 2.2rem; }
-.card-upload-header h2 { margin: 0 0 4px; font-size: 1.2rem; }
-.card-upload-header p  { margin: 0; opacity: .85; font-size: .88rem; }
-
-.card-upload-body {
-  padding: 24px;
+.panel-subida {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  margin-bottom: 0;
+}
+.panel-subida h3,
+.panel-subida .texto-secundario {
+  margin: 0;
+}
+.panel-subida .btn-primary {
+  align-self: flex-start;
+  margin-top: 0;
 }
 
-.upload-label {
-  font-size: .8rem;
-  font-weight: 600;
-  color: var(--texto-2);
-  text-transform: uppercase;
-  letter-spacing: .5px;
-}
-
-.formato-chips {
+/* Zona para soltar o elegir el fichero */
+.zona-fichero {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.chip {
-  background: var(--ual-gris);
-  color: var(--texto-2);
-  border-radius: 20px;
-  padding: 3px 10px;
-  font-size: .78rem;
-  font-family: monospace;
-  font-weight: 600;
-}
-.chip.destacado {
-  background: var(--ok-fondo);
-  color: var(--ok);
-}
-
-/* Zona de arrastre */
-.drop-zone {
-  border: 2px dashed var(--linea);
-  border-radius: 8px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 28px 16px;
+  border: 2px dashed var(--linea);
+  border-radius: var(--radio);
+  background: var(--superficie);
+  color: var(--texto-2);
+  font-size: var(--t-s);
   text-align: center;
+  word-break: break-all;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  color: var(--texto-2);
-  font-size: .9rem;
-  transition: border-color .2s, background .2s;
 }
-.drop-zone:hover { border-color: var(--ual-azul); background: var(--proceso-fondo); }
-.drop-icon { font-size: 2rem; }
-
-.hint-bd {
-  font-size: .82rem;
-  color: var(--texto-2);
+.zona-fichero:hover {
+  border-color: var(--ual-azul);
+  background: var(--proceso-fondo);
+  color: var(--ual-azul);
+}
+.zona-fichero .icono {
   margin: 0;
-  background: var(--ual-gris);
-  padding: 10px 12px;
-  border-radius: 6px;
-  border-left: 3px solid var(--ok);
 }
 
-/* Mensajes */
-.upload-msg {
+.formatos {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 6px;
-  font-size: .88rem;
+  font-size: var(--t-xs);
+  color: var(--texto-2);
 }
-.upload-msg.ok  { background: var(--ok-fondo); color: var(--ok); }
-.upload-msg.err { background: var(--error-fondo); color: var(--ual-rojo); }
+.formatos code {
+  margin-left: 6px;
+}
 
-/* Botones de subida */
-.btn-subir {
-  padding: 10px 20px;
-  border: none;
-  border-radius: 8px;
-  font-size: .95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity .2s, transform .1s;
-  color: white;
-}
-.btn-subir:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
-.btn-subir:disabled { opacity: .45; cursor: not-allowed; }
-.btn-subir.azul  { background: var(--ual-azul); }
-.btn-subir.verde { background: var(--ok); }
-
-/* ── Sección biblioteca ── */
-.biblioteca-section {
-  margin: 36px 48px 0;
-}
-.biblioteca-header {
+/* Buscador y actualizar */
+.moleculas-buscar {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 20px;
   flex-wrap: wrap;
-}
-.biblioteca-header h2 { margin: 0; font-size: 1.3rem; flex: 1; }
-
-.buscador {
-  padding: 8px 14px;
-  border: 1px solid var(--linea);
-  border-radius: 20px;
-  font-size: .9rem;
-  min-width: 220px;
-  outline: none;
-  transition: border-color .2s;
-}
-.buscador:focus { border-color: var(--ual-azul); }
-
-.btn-refrescar {
-  padding: 8px 14px;
-  background: var(--ual-gris);
-  border: 1px solid var(--linea);
-  border-radius: 20px;
-  font-size: .88rem;
-  cursor: pointer;
-  transition: background .2s;
-}
-.btn-refrescar:hover { background: var(--ual-gris); }
-
-/* Grid de dos columnas */
-.biblioteca-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 28px;
-}
-@media (max-width: 860px) { .biblioteca-grid { grid-template-columns: 1fr; } }
-
-.biblioteca-col h3 {
-  font-size: 1rem;
-  color: var(--ual-texto);
-  margin: 0 0 14px;
-  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
+  margin-bottom: 24px;
 }
-.count {
-  background: var(--ual-gris);
-  color: var(--texto-2);
-  border-radius: 12px;
-  padding: 1px 8px;
-  font-size: .78rem;
-  font-weight: 700;
-}
-
-.empty { color: var(--texto-2); font-size: .9rem; font-style: italic; }
-
-/* Tarjeta de archivo */
-.archivo-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border: 1px solid var(--ual-gris);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  background: white;
-  transition: box-shadow .15s;
-}
-.archivo-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-.archivo-card.bd { border-left: 3px solid var(--ok); }
-
-.archivo-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.archivo-nombre {
-  font-size: .88rem;
+.moleculas-buscar label {
+  font-size: var(--t-xs);
   font-weight: 600;
-  color: var(--ual-texto);
-  white-space: nowrap;
+}
+.moleculas-buscar input {
+  padding: 8px 11px;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  font-size: var(--t-s);
+  min-width: 240px;
+}
+.moleculas-buscar input:focus {
+  border-color: var(--ual-azul);
+}
+
+.contador {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--texto-2);
+}
+
+.tabla-ficheros .col-fichero {
+  max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 280px;
+  white-space: nowrap;
 }
-.archivo-meta { font-size: .75rem; color: var(--texto-2); }
-
-.archivo-acciones { display: flex; gap: 6px; flex-shrink: 0; }
-.btn-dl, .btn-del {
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
-  border: 1px solid var(--linea);
-  background: white;
-  cursor: pointer;
-  font-size: .9rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-  transition: background .15s;
-}
-.btn-dl:hover  { background: var(--proceso-fondo); border-color: var(--ual-azul); }
-.btn-del:hover { background: var(--error-fondo); border-color: var(--ual-rojo); }
-
-.btn-ver3d { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:5px; border:1px solid var(--ual-azul); background:transparent; color:var(--ual-azul); font-size:11px; cursor:pointer; transition:all 0.15s; }

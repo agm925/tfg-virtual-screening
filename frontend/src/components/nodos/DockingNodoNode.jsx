@@ -57,10 +57,11 @@ const DockingNodoNode = ({ data, id }) => {
   };
 
   return (
-    <MarcoNodo id={id} tipo="docking">
+    <MarcoNodo id={id} tipo="docking" data={data}>
       <div className="nodo-body">
         <select
           className="select-algo"
+          aria-label="Algoritmo de docking"
           value={seleccionado}
           onChange={(e) => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
@@ -77,66 +78,83 @@ const DockingNodoNode = ({ data, id }) => {
             <option disabled>Sin algoritmos de docking</option>
           )}
         </select>
-        <p className="algo-desc" style={{ fontSize: '0.7rem' }}>
-          Ligando → <strong>input_ligando</strong> (izq.)<br />
-          Receptor → <strong>input_receptor</strong> (inf.)
+        <p className="nodo-nota">
+          Conecta el ligando al punto de la izquierda y el receptor al de abajo
+          {modoCaja === 'referencia' && '; la referencia, al de arriba'}.
         </p>
 
-        <select className="select-input" value={scoring} onChange={(e) => setScoring(e.target.value)}>
-          <option value="vinardo">Scoring: vinardo</option>
-          <option value="vina">Scoring: vina</option>
-          <option value="dkoes_fast">Scoring: dkoes_fast</option>
-          <option value="dkoes_scoring">Scoring: dkoes_scoring</option>
-        </select>
+        {/* Los nombres de smina (exhaustiveness, num_modes, autobox_add...)
+            quedan en el tooltip para quien los conozca; la etiqueta visible
+            dice en castellano para que sirve cada uno. */}
+        <label className="nodo-campo">
+          Función de puntuación
+          <select className="select-input" value={scoring} onChange={(e) => setScoring(e.target.value)}>
+            <option value="vinardo">Vinardo</option>
+            <option value="vina">Vina</option>
+            <option value="dkoes_fast">dkoes (rápida)</option>
+            <option value="dkoes_scoring">dkoes</option>
+          </select>
+        </label>
 
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <input type="number" className="select-input" style={{ width: '50%' }} value={exhaustiveness}
-            min={1} max={32} title="exhaustiveness" onChange={(e) => setExhaustiveness(Number(e.target.value))} />
-          <input type="number" className="select-input" style={{ width: '50%' }} value={numModes}
-            min={1} max={20} title="num_modes" onChange={(e) => setNumModes(Number(e.target.value))} />
+        <div className="nodo-fila">
+          <label className="nodo-campo" title="exhaustiveness: más alto, búsqueda más completa y más lenta">
+            Exhaustividad
+            <input type="number" className="select-input" value={exhaustiveness}
+              min={1} max={32} onChange={(e) => setExhaustiveness(Number(e.target.value))} />
+          </label>
+          <label className="nodo-campo" title="num_modes: poses que se guardan por molécula">
+            Poses
+            <input type="number" className="select-input" value={numModes}
+              min={1} max={20} onChange={(e) => setNumModes(Number(e.target.value))} />
+          </label>
         </div>
 
-        <select className="select-input" value={modoCaja} onChange={(e) => setModoCaja(e.target.value)}>
-          <option value="auto">Caja: autobox sobre el ligando (redocking)</option>
-          <option value="referencia">Caja: autobox sobre referencia</option>
-          <option value="manual">Caja: manual (centro + tamaño)</option>
-        </select>
+        <label className="nodo-campo">
+          Zona de búsqueda (caja)
+          <select className="select-input" value={modoCaja} onChange={(e) => setModoCaja(e.target.value)}>
+            <option value="auto">Alrededor del ligando (redocking)</option>
+            <option value="referencia">Alrededor de una referencia</option>
+            <option value="manual">Manual (centro y tamaño)</option>
+          </select>
+        </label>
 
         {modoCaja !== 'manual' && (
-          <input type="number" className="select-input" value={autoboxAdd} title="autobox_add"
-            placeholder="autobox_add (Å)" onChange={(e) => setAutoboxAdd(Number(e.target.value))} />
+          <label className="nodo-campo" title="autobox_add">
+            Margen alrededor (Å)
+            <input type="number" className="select-input" value={autoboxAdd}
+              onChange={(e) => setAutoboxAdd(Number(e.target.value))} />
+          </label>
         )}
 
         {modoCaja === 'manual' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ display: 'flex', gap: '4px' }}>
+          <>
+            <span className="nodo-campo">Centro (x, y, z), en Å</span>
+            <div className="nodo-fila">
               {['center_x', 'center_y', 'center_z'].map((campo) => (
-                <input key={campo} type="number" className="select-input" style={{ width: '33%' }}
-                  value={caja[campo]} title={campo} placeholder={campo}
+                <input key={campo} type="number" className="select-input"
+                  value={caja[campo]} title={campo} aria-label={`Centro ${campo.slice(-1)}`}
                   onChange={(e) => setCaja({ ...caja, [campo]: Number(e.target.value) })} />
               ))}
             </div>
-            <div style={{ display: 'flex', gap: '4px' }}>
+            <span className="nodo-campo">Tamaño (x, y, z), en Å</span>
+            <div className="nodo-fila">
               {['size_x', 'size_y', 'size_z'].map((campo) => (
-                <input key={campo} type="number" className="select-input" style={{ width: '33%' }}
-                  value={caja[campo]} title={campo} placeholder={campo}
+                <input key={campo} type="number" className="select-input"
+                  value={caja[campo]} title={campo} aria-label={`Tamaño ${campo.slice(-1)}`}
                   onChange={(e) => setCaja({ ...caja, [campo]: Number(e.target.value) })} />
               ))}
             </div>
-          </div>
+          </>
         )}
       </div>
 
-      {/* Entrada ligando (izquierda) */}
-      <Handle type="target" position={Position.Left}   id="input_ligando"  style={{ top: '35%' }} />
-      {/* Entrada receptor (abajo) */}
-      <Handle type="target" position={Position.Bottom} id="input_receptor" />
-      {/* Entrada referencia cristalográfica (opcional, solo modo "referencia") */}
+      <Handle type="target" position={Position.Left}   id="input_ligando"  title="Ligando" style={{ top: '35%' }} />
+      <Handle type="target" position={Position.Bottom} id="input_receptor" title="Receptor" />
+      {/* Referencia cristalográfica: opcional, solo con la caja "referencia". */}
       {modoCaja === 'referencia' && (
-        <Handle type="target" position={Position.Top} id="input_referencia" />
+        <Handle type="target" position={Position.Top} id="input_referencia" title="Referencia" />
       )}
-      {/* Salida poses */}
-      <Handle type="source" position={Position.Right}  id="output" />
+      <Handle type="source" position={Position.Right}  id="output" title="Poses" />
     </MarcoNodo>
   );
 };

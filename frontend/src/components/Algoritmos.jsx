@@ -1,5 +1,9 @@
 import { useState } from 'react'
 import { apiFetch } from '../api/client'
+import Icono from './Icono'
+import { tipoNodo, ETIQUETA_ALGORITMO } from '../utils/tiposNodo'
+import { mensajeError, textoDetalle } from '../utils/mensajes'
+import '../styles/Algoritmos.css'
 
 // Un único formulario con un selector de tipo, en lugar de los cuatro
 // formularios separados que había antes.
@@ -9,34 +13,34 @@ import { apiFetch } from '../api/client'
 // ligando más receptor-- antes de aceptarlo. Con cuatro formularios, elegir el
 // equivocado se traducía en un mensaje de "el tipo no coincide"; ahora es un
 // campo explícito y la plataforma verifica que la declaración sea cierta.
+//
+// El icono y el color de cada tipo son los del nodo que lo usa en el editor
+// (utils/tiposNodo.js): quien sube un algoritmo de docking lo reconoce luego
+// en el nodo Docking.
 const TIPOS = [
   {
     valor: 'preprocesado',
-    etiqueta: '⚗️ Preprocesado',
+    etiqueta: ETIQUETA_ALGORITMO.preprocesado,
     resumen: 'Prepara o filtra una molécula: conversión de formato, hidrógenos, 3D, reglas de Lipinski.',
     entradas: 'Recibe 1 molécula.',
-    color: '#e67e22',
   },
   {
     valor: 'alineacion',
-    etiqueta: '📐 Alineación',
+    etiqueta: ETIQUETA_ALGORITMO.alineacion,
     resumen: 'Reorienta una molécula en el espacio, con o sin una referencia.',
     entradas: 'Recibe 1 molécula (y opcionalmente una de referencia).',
-    color: '#3498db',
   },
   {
     valor: 'comparacion',
-    etiqueta: '⚖️ Comparación',
+    etiqueta: ETIQUETA_ALGORITMO.comparacion,
     resumen: 'Compara dos moléculas y devuelve una métrica (similitud, RMSD) o una molécula alineada.',
     entradas: 'Recibe 2 moléculas.',
-    color: '#e74c3c',
   },
   {
     valor: 'docking',
-    etiqueta: '🔬 Docking',
+    etiqueta: ETIQUETA_ALGORITMO.docking,
     resumen: 'Acopla un ligando sobre un receptor y devuelve las poses generadas.',
     entradas: 'Recibe 1 ligando y 1 receptor.',
-    color: '#8e44ad',
   },
 ]
 
@@ -47,14 +51,13 @@ const estadoInicial = {
 
 export default function Algoritmos() {
   const [form, setForm] = useState(estadoInicial)
+  // Se cambia al subir uno bien, para vaciar el <input type="file">, que no
+  // se puede controlar desde el estado.
+  const [claveFichero, setClaveFichero] = useState(0)
   const tipoActual = TIPOS.find(t => t.valor === form.tipo)
 
   const registrarAlgoritmo = async (e) => {
     e.preventDefault()
-    if (!form.archivo) {
-      setForm(s => ({ ...s, resultado: { ok: false, motivo: 'Selecciona un archivo .py' } }))
-      return
-    }
     setForm(s => ({ ...s, cargando: true, resultado: null }))
 
     const formData = new FormData()
@@ -66,7 +69,7 @@ export default function Algoritmos() {
 
     try {
       const resp = await apiFetch('/algoritmos', { method: 'POST', body: formData })
-      const datos = await resp.json()
+      const datos = await resp.json().catch(() => ({}))
 
       if (resp.ok) {
         setForm({
@@ -79,21 +82,31 @@ export default function Algoritmos() {
             clave: datos.clave_score,
           },
         })
+        setClaveFichero(k => k + 1)
         return
       }
 
       // 422 = no ha superado el banco de pruebas. El backend devuelve un
-      // objeto con motivo, detalle y la salida del script: se muestra entero,
-      // porque es lo que el autor necesita para arreglarlo.
+      // objeto con mensaje, motivo, detalle, salida y ayuda. Mensaje, motivo
+      // y ayuda van a la vista, limpios de rutas; lo que devolvio el script y
+      // su consola, plegados en "Detalles tecnicos": los necesita quien
+      // escribio el .py para arreglarlo, pero no se imponen a nadie.
       const d = datos.detail
-      if (resp.status === 422 && d && typeof d === 'object') {
-        setForm(s => ({ ...s, resultado: { ok: false, ...d } }))
+      if (resp.status === 422 && d && typeof d === 'object' && !Array.isArray(d)) {
+        setForm(s => ({ ...s, resultado: {
+          ok: false,
+          mensaje: textoDetalle(d.mensaje),
+          motivo: textoDetalle(d.motivo),
+          ayuda: textoDetalle(d.ayuda),
+          detalle: d.detalle,
+          salida: d.salida,
+        } }))
       } else {
         setForm(s => ({ ...s, resultado: { ok: false,
-          motivo: typeof d === 'string' ? d : 'No se pudo subir el algoritmo.' } }))
+          mensaje: mensajeError('subir el algoritmo', textoDetalle(d)) } }))
       }
-    } catch (error) {
-      setForm(s => ({ ...s, resultado: { ok: false, motivo: `Error de conexión: ${error.message}` } }))
+    } catch (err) {
+      setForm(s => ({ ...s, resultado: { ok: false, mensaje: mensajeError('subir el algoritmo', err) } }))
     } finally {
       setForm(s => ({ ...s, cargando: false }))
     }
@@ -102,147 +115,117 @@ export default function Algoritmos() {
   const r = form.resultado
 
   return (
-    <div className="seccion-wrapper">
+    <div className="seccion-wrapper algoritmos-pagina">
       <h2>Subir un algoritmo</h2>
       <p className="seccion-subtitulo">
         El script se ejecuta sobre dos moléculas de referencia antes de aceptarlo.
         Si falla, no se añade al catálogo y verás aquí el motivo.
       </p>
 
-      {/* .seccion-wrapper no centra su contenido -- es un panel a ancho
-          completo --, así que un bloque con maxWidth se queda pegado al
-          borde izquierdo en vez de quedar en medio de la página. margin
-          left/right auto es lo que lo centra; marginTop no puede ir en el
-          shorthand `margin` sin repetirlo, así que se deja aparte. */}
-      <form onSubmit={registrarAlgoritmo} className="formulario"
-            style={{ maxWidth: 640, marginTop: '1.5rem', marginLeft: 'auto', marginRight: 'auto' }}>
+      <section className="panel panel-algoritmo">
+        <form onSubmit={registrarAlgoritmo} className="formulario">
+          <fieldset className="tipos-algoritmo">
+            <legend>¿Qué hace el algoritmo?</legend>
+            {TIPOS.map(t => {
+              const { familia, icono } = tipoNodo(t.valor)
+              return (
+                <label key={t.valor} className={`tipo-algoritmo familia-${familia}`}>
+                  <input
+                    type="radio"
+                    name="tipo"
+                    value={t.valor}
+                    checked={form.tipo === t.valor}
+                    onChange={() => setForm(s => ({ ...s, tipo: t.valor, resultado: null }))}
+                  />
+                  <Icono nombre={icono} tamano={20} />
+                  {t.etiqueta}
+                </label>
+              )
+            })}
+          </fieldset>
 
-        <label>¿Qué hace el algoritmo?</label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
-          {TIPOS.map(t => (
-            <button
-              type="button"
-              key={t.valor}
-              onClick={() => setForm(s => ({ ...s, tipo: t.valor, resultado: null }))}
-              style={{
-                padding: '10px 8px', cursor: 'pointer', fontSize: '0.9rem',
-                borderRadius: 6, textAlign: 'left',
-                // Explícito: sin color propio, un botón hereda el color de
-                // sistema `buttontext`, que con el `color-scheme: light dark`
-                // de index.css es BLANCO si el sistema operativo está en modo
-                // oscuro, y estas tarjetas tienen el fondo blanco.
-                color: '#2c3e50',
-                border: form.tipo === t.valor ? `2px solid ${t.color}` : '1px solid #ccc',
-                background: form.tipo === t.valor ? `${t.color}18` : 'white',
-                fontWeight: form.tipo === t.valor ? 600 : 400,
-              }}
-            >
-              {t.etiqueta}
-            </button>
-          ))}
-        </div>
-
-        <p style={{
-          fontSize: '0.85rem', color: '#555', background: '#f6f8f9',
-          borderLeft: `3px solid ${tipoActual.color}`, padding: '10px 12px',
-          margin: '10px 0 4px', borderRadius: '0 4px 4px 0',
-        }}>
-          {tipoActual.resumen}<br />
-          <strong>{tipoActual.entradas}</strong> El resultado se escribe en el <strong>último</strong> argumento
-          de la línea de comandos.
-        </p>
-
-        <label>Nombre del algoritmo</label>
-        <input
-          placeholder="Ej: Filtro de Lipinski"
-          value={form.nombre}
-          onChange={e => setForm(s => ({ ...s, nombre: e.target.value }))}
-          required
-        />
-
-        <label>Descripción</label>
-        <input
-          placeholder="Qué hace este algoritmo..."
-          value={form.descripcion}
-          onChange={e => setForm(s => ({ ...s, descripcion: e.target.value }))}
-          required
-        />
-
-        <label>Script de Python (.py)</label>
-        <input
-          type="file"
-          accept=".py"
-          onChange={e => setForm(s => ({ ...s, archivo: e.target.files[0], resultado: null }))}
-          required
-        />
-
-        <button type="submit" className="btn-primary" disabled={form.cargando}>
-          {form.cargando ? 'Validando el algoritmo…' : 'Subir y validar'}
-        </button>
-      </form>
-
-      {form.cargando && (
-        <p style={{ marginTop: '1rem', color: '#555' }}>
-          Ejecutando el algoritmo sobre las moléculas de referencia. Puede tardar unos segundos.
-        </p>
-      )}
-
-      {r && r.ok && (
-        <div style={{
-          marginTop: '1.5rem', maxWidth: 640, padding: '1rem 1.25rem',
-          marginLeft: 'auto', marginRight: 'auto',
-          background: '#d5f4e6', color: '#1e6b45', borderRadius: 6,
-        }}>
-          <strong>✅ «{r.nombre}» superó la validación y ya está en el catálogo.</strong>
-          <p style={{ margin: '8px 0 0', fontSize: '0.9rem' }}>
-            Formato de salida detectado: <strong>{r.formato === 'json' ? 'métricas (JSON)' : 'molécula'}</strong>
-            {r.clave && <> · puntuación en <code>{r.clave}</code></>}
+          <p className={`tipo-resumen familia-${tipoNodo(tipoActual.valor).familia}`}>
+            {tipoActual.resumen}<br />
+            <strong>{tipoActual.entradas}</strong> El resultado se escribe en el <strong>último</strong> argumento
+            de la línea de comandos.
           </p>
-        </div>
-      )}
 
-      {r && !r.ok && (
-        <div style={{
-          marginTop: '1.5rem', maxWidth: 640, padding: '1rem 1.25rem',
-          marginLeft: 'auto', marginRight: 'auto',
-          background: '#fadbd8', color: '#922b21', borderRadius: 6,
-        }}>
-          <strong>❌ {r.mensaje || 'No se pudo subir el algoritmo'}</strong>
-          {r.motivo && <p style={{ margin: '8px 0 0' }}>{r.motivo}</p>}
+          <label htmlFor="algoritmo-nombre">Nombre del algoritmo</label>
+          <input
+            id="algoritmo-nombre"
+            placeholder="Ej: Filtro de Lipinski"
+            value={form.nombre}
+            onChange={e => setForm(s => ({ ...s, nombre: e.target.value }))}
+            required
+          />
 
-          {r.detalle && (
-            <>
-              <p style={{ margin: '12px 0 4px', fontWeight: 600, fontSize: '0.85rem' }}>
-                Lo que devolvió el script:
-              </p>
-              <pre style={{
-                background: '#fff', color: '#5b1a14', padding: '8px 10px',
-                borderRadius: 4, fontSize: '0.78rem', overflowX: 'auto',
-                maxHeight: 200, whiteSpace: 'pre-wrap',
-              }}>{r.detalle}</pre>
-            </>
-          )}
+          <label htmlFor="algoritmo-descripcion">Descripción</label>
+          <input
+            id="algoritmo-descripcion"
+            placeholder="Qué hace este algoritmo…"
+            value={form.descripcion}
+            onChange={e => setForm(s => ({ ...s, descripcion: e.target.value }))}
+            required
+          />
 
-          {r.salida && (
-            <>
-              <p style={{ margin: '12px 0 4px', fontWeight: 600, fontSize: '0.85rem' }}>
-                Salida por consola:
-              </p>
-              <pre style={{
-                background: '#fff', color: '#5b1a14', padding: '8px 10px',
-                borderRadius: 4, fontSize: '0.78rem', overflowX: 'auto',
-                maxHeight: 160, whiteSpace: 'pre-wrap',
-              }}>{r.salida}</pre>
-            </>
-          )}
+          <label htmlFor="algoritmo-fichero">Script de Python (.py)</label>
+          <input
+            key={claveFichero}
+            id="algoritmo-fichero"
+            type="file"
+            accept=".py"
+            onChange={e => setForm(s => ({ ...s, archivo: e.target.files[0], resultado: null }))}
+            required
+          />
 
-          {r.ayuda && (
-            <p style={{ margin: '12px 0 0', fontSize: '0.85rem', fontStyle: 'italic' }}>
-              {r.ayuda}
+          <button type="submit" className="btn-primary" disabled={form.cargando}>
+            <Icono nombre={form.cargando ? 'procesando' : 'subir'} />
+            {form.cargando ? 'Validando el algoritmo…' : 'Subir y validar'}
+          </button>
+        </form>
+
+        {form.cargando && (
+          <p className="texto-secundario" role="status">
+            Ejecutando el algoritmo sobre las moléculas de referencia. Puede tardar unos segundos.
+          </p>
+        )}
+
+        {r && r.ok && (
+          <div className="exito-msg" role="status">
+            <strong>«{r.nombre}» ha superado la validación y ya está en el catálogo.</strong>
+            <p>
+              Devuelve <strong>{r.formato === 'json' ? 'resultados numéricos (JSON)' : 'moléculas'}</strong>
+              {r.clave && <>; la puntuación se lee de <code>{r.clave}</code></>}.
             </p>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+
+        {r && !r.ok && (
+          <div className="error-msg" role="status">
+            <strong>{r.mensaje || 'No se pudo subir el algoritmo.'}</strong>
+            {r.motivo && <p>{r.motivo}</p>}
+            {r.ayuda && <p>{r.ayuda}</p>}
+
+            {(r.detalle || r.salida) && (
+              <details className="detalles-tecnicos">
+                <summary>Detalles técnicos</summary>
+                {r.detalle && (
+                  <>
+                    <p>Lo que devolvió el script:</p>
+                    <pre>{r.detalle}</pre>
+                  </>
+                )}
+                {r.salida && (
+                  <>
+                    <p>Salida por consola:</p>
+                    <pre>{r.salida}</pre>
+                  </>
+                )}
+              </details>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

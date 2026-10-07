@@ -8,7 +8,14 @@ import MarcoNodo from './MarcoNodo';
 // icono salía de si el fichero era privado o no, así que la molécula de
 // entrada de una petición cualquiera --privada, pero una molécula corriente--
 // se mostraba igual que una base de datos.
-const ICONO_TIPO = { molecula: '📁', base_de_datos: '🗄️', resultado: '📊' };
+//
+// Se agrupan con <optgroup> en vez de marcarlas con un emoji: un <option> no
+// admite iconos SVG, y el grupo dice lo mismo con palabras.
+const GRUPOS = [
+  ['molecula',      'Moléculas'],
+  ['base_de_datos', 'Bibliotecas'],
+  ['resultado',     'Resultados'],
+];
 
 const SelectMolNodoNode = ({ data, id }) => {
   const [moleculas, setMoleculas] = useState([]);
@@ -38,29 +45,41 @@ const SelectMolNodoNode = ({ data, id }) => {
   const handleCambio = (nombre) => { setSeleccionada(nombre); data.nombre_archivo = nombre; };
 
   return (
-    <MarcoNodo id={id} tipo="selectMol">
+    <MarcoNodo id={id} tipo="selectMol" data={data}>
       <div className="nodo-body">
         {cargando ? (
-          <p style={{ fontSize: '11px', color: '#7f8c8d', margin: 0 }}>Cargando moléculas...</p>
+          <p className="nodo-nota">Cargando moléculas…</p>
         ) : error ? (
-          <p style={{ fontSize: '11px', color: '#e74c3c', margin: 0 }}>{error}</p>
+          <p className="nodo-aviso">{error}</p>
         ) : moleculas.length === 0 ? (
-          <p style={{ fontSize: '11px', color: '#e74c3c', margin: 0 }}>Sin moléculas disponibles</p>
+          <>
+            <p className="nodo-aviso">Todavía no tienes ninguna molécula.</p>
+            <p className="nodo-nota">Súbela desde la página Moléculas o con el nodo Subir molécula.</p>
+          </>
         ) : (
           <>
-            <select className="select-input" value={seleccionada} onChange={e => handleCambio(e.target.value)} style={{ width: '100%' }}>
-              {moleculas.map(m => (
-                <option key={m.nombre} value={m.nombre}>
-                  {ICONO_TIPO[m.tipo] || '📁'} {m.nombre}
-                  {m.num_moleculas > 1 ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
-                </option>
-              ))}
+            <select className="select-input" value={seleccionada} onChange={e => handleCambio(e.target.value)}
+                    aria-label="Molécula">
+              {GRUPOS.map(([tipo, titulo]) => {
+                // Un tipo desconocido cae con las moléculas, como antes caía
+                // en su icono.
+                const delGrupo = moleculas.filter(m =>
+                  (GRUPOS.some(([t]) => t === m.tipo) ? m.tipo : 'molecula') === tipo);
+                return delGrupo.length > 0 && (
+                  <optgroup key={tipo} label={titulo}>
+                    {delGrupo.map(m => (
+                      <option key={m.nombre} value={m.nombre}>
+                        {m.nombre}
+                        {m.num_moleculas > 1 ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
             </select>
-            <p style={{ fontSize: '10px', color: '#7f8c8d', margin: '4px 0 0' }}>
-              {moleculas.length} molécula{moleculas.length !== 1 ? 's' : ''} ·{' '}
-              <span style={{ color: '#3498db', cursor: 'pointer', textDecoration: 'underline' }} onClick={cargarMoleculas}>
-                actualizar
-              </span>
+            <p className="nodo-nota">
+              {moleculas.length} fichero{moleculas.length !== 1 ? 's' : ''} ·{' '}
+              <button type="button" className="nodo-enlace" onClick={cargarMoleculas}>actualizar</button>
             </p>
           </>
         )}

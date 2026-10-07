@@ -130,7 +130,7 @@ class Peticion(Base):
     algoritmo = relationship("Algoritmo", back_populates="peticiones")
 
 
-# --- TABLA 4: WORKFLOWS (Flujos de trabajo visual tipo KNIME) ---
+# --- TABLA 4: WORKFLOWS (los grafos de nodos del Constructor) ---
 class Workflow(Base):
     __tablename__ = "workflows"
 

@@ -1,38 +1,92 @@
+"""
+Correos que manda la plataforma (spec 004, R7).
+
+Todos salen de una misma plantilla, con el nombre de la plataforma (MolServer)
+y los colores de la UAL, y los de resultado llevan a la seccion Resultados con
+un enlace a PUBLIC_URL. Reglas:
+
+- Nada de detalle tecnico: el mensaje de un algoritmo o del motor puede llevar
+  trazas y rutas del servidor (principio 7). Los correos de error dicen que ha
+  fallado y donde ver el motivo; por eso ni siquiera reciben ese texto.
+- Todo lo que escribe un usuario (su nombre, el del workflow, el del
+  algoritmo) se escapa antes de ir al HTML, y en el asunto se queda en una sola
+  linea: un salto de linea en el nombre de un workflow podia anadir cabeceras.
+"""
+import html
+import re
 import smtplib
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from app.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM
+from app.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM, PUBLIC_URL
+# Nombre y colores, compartidos con las paginas del backend (spec 005).
+from app.identidad import NOMBRE, AZUL_UAL, TEXTO, TEXTO_2, LINEA, VERDE_OK, ROJO_UAL
 
 
-def correo_verificacion(nombre: str, email: str, token: str, base_url: str = "http://localhost:8000") -> None:
-    enlace = f"{base_url}/verificar-email?token={token}"
+def _e(texto) -> str:
+    """Texto de usuario listo para el HTML del correo."""
+    return html.escape(str(texto), quote=True)
+
+
+def _asunto(texto: str) -> str:
+    """Una sola linea y sin caracteres de control."""
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", texto).strip()
+
+
+def _plantilla(titulo: str, parrafos: list, color: str = AZUL_UAL,
+               boton: tuple = None, enlace_visible: str = None) -> str:
+    """
+    El HTML comun de todos los correos. `titulo` y `parrafos` ya vienen
+    escapados por quien llama; `boton` es (texto, url).
+    """
+    cuerpo = "".join(f'<p style="margin:0 0 14px;line-height:1.6">{p}</p>' for p in parrafos)
+    if boton:
+        texto, url = boton
+        cuerpo += (
+            f'<p style="margin:28px 0;text-align:center">'
+            f'<a href="{_e(url)}" style="background:{AZUL_UAL};color:#FFFFFF;padding:12px 24px;'
+            f'border-radius:2px;text-decoration:none;font-weight:bold">{_e(texto)}</a></p>'
+        )
+    if enlace_visible:
+        cuerpo += (
+            f'<p style="font-size:13px;color:{TEXTO_2}">Si el botón no funciona, copia este enlace '
+            f'en tu navegador:<br><a href="{_e(enlace_visible)}" style="color:{AZUL_UAL}">'
+            f'{_e(enlace_visible)}</a></p>'
+        )
+    return (
+        f'<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto;color:{TEXTO}">'
+        f'<div style="background:{AZUL_UAL};color:#FFFFFF;padding:14px 20px;font-weight:bold">{NOMBRE}</div>'
+        f'<div style="border:1px solid {LINEA};border-top:none;padding:20px">'
+        f'<h2 style="color:{color};margin:0 0 16px;font-size:20px">{titulo}</h2>'
+        f'{cuerpo}'
+        f'</div>'
+        f'<p style="font-size:12px;color:{TEXTO_2};margin:12px 0">'
+        f'{NOMBRE} · Universidad de Almería — notificación automática</p>'
+        f'</div>'
+    )
+
+
+def _boton_plataforma() -> tuple:
+    # La aplicacion no tiene una direccion por pagina: se entra por el inicio,
+    # y desde ahi esta la seccion Resultados en el menu.
+    return ("Ir a MolServer", f"{PUBLIC_URL}/")
+
+
+def correo_verificacion(nombre: str, email: str, token: str) -> None:
+    # Por /api/ de la direccion publica, como cualquier otra llamada a la API:
+    # el puerto 8000 del backend no se publica en el servidor (spec 004).
+    enlace = f"{PUBLIC_URL}/api/verificar-email?token={token}"
     enviar_correo(
         destinatario=email,
-        asunto="✅ Confirma tu cuenta — VirtualScreening",
-        cuerpo_html=f"""
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
-          <h2 style="color:#667eea">Bienvenido a VirtualScreening, {nombre}</h2>
-          <p>Gracias por registrarte. Para activar tu cuenta y poder iniciar sesión,
-             confirma tu dirección de correo haciendo clic en el botón:</p>
-          <div style="text-align:center;margin:32px 0">
-            <a href="{enlace}"
-               style="background:#667eea;color:white;padding:14px 28px;border-radius:8px;
-                      text-decoration:none;font-weight:bold;font-size:15px">
-              Confirmar mi cuenta
-            </a>
-          </div>
-          <p style="font-size:12px;color:#999">
-            Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
-            <a href="{enlace}" style="color:#667eea">{enlace}</a>
-          </p>
-          <p style="font-size:12px;color:#999">
-            Si no creaste esta cuenta, ignora este correo.
-          </p>
-          <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-          <p style="font-size:12px;color:#999">VirtualScreening TFG &mdash; notificación automática</p>
-        </div>
-        """,
+        asunto=_asunto(f"Confirma tu cuenta — {NOMBRE}"),
+        cuerpo_html=_plantilla(
+            f"Bienvenido a {NOMBRE}, {_e(nombre)}",
+            ["Gracias por registrarte. Para activar tu cuenta y poder iniciar sesión, "
+             "confirma tu dirección de correo con el botón:",
+             "Si no creaste esta cuenta, ignora este correo."],
+            boton=("Confirmar mi cuenta", enlace),
+            enlace_visible=enlace,
+        ),
     )
 
 
@@ -68,72 +122,69 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo_html: str) -> bool:
 def correo_completado(nombre: str, email: str, peticion_id: int, algoritmo: str) -> None:
     enviar_correo(
         destinatario=email,
-        asunto=f"✅ Tu petición #{peticion_id} ha finalizado — VirtualScreening",
-        cuerpo_html=f"""
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
-          <h2 style="color:#27ae60">¡Tu análisis ha terminado!</h2>
-          <p>Hola <strong>{nombre}</strong>,</p>
-          <p>La petición <strong>#{peticion_id}</strong> con el algoritmo
-             <strong>{algoritmo}</strong> se ha completado con éxito.</p>
-          <p>Entra en la plataforma y pulsa <em>Descargar</em> para obtener el resultado.</p>
-          <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-          <p style="font-size:12px;color:#999">VirtualScreening TFG &mdash; notificación automática</p>
-        </div>
-        """,
+        asunto=_asunto(f"Tu petición nº {peticion_id} ha terminado — {NOMBRE}"),
+        cuerpo_html=_plantilla(
+            "Tu análisis ha terminado",
+            [f"Hola, {_e(nombre)}:",
+             f"La petición nº {_e(peticion_id)} con el algoritmo <strong>{_e(algoritmo)}</strong> "
+             f"ha terminado correctamente.",
+             "Puedes ver y descargar el resultado en la sección <strong>Resultados</strong> "
+             "de la plataforma."],
+            color=VERDE_OK,
+            boton=_boton_plataforma(),
+        ),
     )
 
 
-def correo_workflow_completado(nombre: str, email: str, workflow_nombre: str, duracion: float) -> None:
+def correo_error(nombre: str, email: str, peticion_id: int, algoritmo: str) -> None:
     enviar_correo(
         destinatario=email,
-        asunto=f"✅ Workflow '{workflow_nombre}' completado — VirtualScreening",
-        cuerpo_html=f"""
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
-          <h2 style="color:#27ae60">¡Tu workflow ha terminado!</h2>
-          <p>Hola <strong>{nombre}</strong>,</p>
-          <p>El workflow <strong>{workflow_nombre}</strong> se ha completado correctamente
-             en <strong>{duracion:.1f} segundos</strong>.</p>
-          <p>Entra en el KNIME Builder para ver los resultados y descargar los archivos.</p>
-          <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-          <p style="font-size:12px;color:#999">VirtualScreening TFG &mdash; notificación automática</p>
-        </div>
-        """,
+        asunto=_asunto(f"La petición nº {peticion_id} no se ha completado — {NOMBRE}"),
+        cuerpo_html=_plantilla(
+            "Tu análisis no se ha completado",
+            [f"Hola, {_e(nombre)}:",
+             f"La petición nº {_e(peticion_id)} con el algoritmo <strong>{_e(algoritmo)}</strong> "
+             f"ha fallado.",
+             "El motivo está en la sección <strong>Resultados</strong> de la plataforma. Si no "
+             "sabes cómo resolverlo, avisa al administrador."],
+            color=ROJO_UAL,
+            boton=_boton_plataforma(),
+        ),
     )
 
 
-def correo_workflow_error(nombre: str, email: str, workflow_nombre: str, errores: list) -> None:
-    lista_errores = "".join(f"<li>{e}</li>" for e in errores[:5])
+def correo_workflow_completado(nombre: str, email: str, ejecucion_id: int,
+                               workflow_nombre: str, duracion: float) -> None:
+    segundos = f"{duracion:.1f}".replace(".", ",")
     enviar_correo(
         destinatario=email,
-        asunto=f"❌ Error en workflow '{workflow_nombre}' — VirtualScreening",
-        cuerpo_html=f"""
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
-          <h2 style="color:#e74c3c">El workflow ha encontrado errores</h2>
-          <p>Hola <strong>{nombre}</strong>,</p>
-          <p>El workflow <strong>{workflow_nombre}</strong> ha finalizado con errores:</p>
-          <ul style="background:#fdf2f0;padding:12px 24px;border-radius:6px">{lista_errores}</ul>
-          <p>Revisa la configuración de los nodos y vuelve a intentarlo.</p>
-          <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-          <p style="font-size:12px;color:#999">VirtualScreening TFG &mdash; notificación automática</p>
-        </div>
-        """,
+        asunto=_asunto(f"El workflow «{workflow_nombre}» ha terminado — {NOMBRE}"),
+        cuerpo_html=_plantilla(
+            "Tu workflow ha terminado",
+            [f"Hola, {_e(nombre)}:",
+             f"La ejecución nº {_e(ejecucion_id)} del workflow <strong>{_e(workflow_nombre)}</strong> "
+             f"ha terminado correctamente en {segundos} segundos.",
+             "Puedes ver los resultados y descargar sus ficheros en la sección "
+             "<strong>Resultados</strong> de la plataforma, o en el panel de resultados del Constructor."],
+            color=VERDE_OK,
+            boton=_boton_plataforma(),
+        ),
     )
 
 
-def correo_error(nombre: str, email: str, peticion_id: int, algoritmo: str, detalle: str) -> None:
+def correo_workflow_error(nombre: str, email: str, ejecucion_id: int, workflow_nombre: str) -> None:
     enviar_correo(
         destinatario=email,
-        asunto=f"❌ Error en la petición #{peticion_id} — VirtualScreening",
-        cuerpo_html=f"""
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
-          <h2 style="color:#e74c3c">Se produjo un error en tu análisis</h2>
-          <p>Hola <strong>{nombre}</strong>,</p>
-          <p>La petición <strong>#{peticion_id}</strong> con el algoritmo
-             <strong>{algoritmo}</strong> ha fallado.</p>
-          <p><strong>Detalle:</strong> <code style="background:#f0f0f0;padding:2px 6px">{detalle}</code></p>
-          <p>Contacta con el administrador si el error persiste.</p>
-          <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-          <p style="font-size:12px;color:#999">VirtualScreening TFG &mdash; notificación automática</p>
-        </div>
-        """,
+        asunto=_asunto(f"El workflow «{workflow_nombre}» ha terminado con errores — {NOMBRE}"),
+        cuerpo_html=_plantilla(
+            "El workflow ha terminado con errores",
+            [f"Hola, {_e(nombre)}:",
+             f"La ejecución nº {_e(ejecucion_id)} del workflow <strong>{_e(workflow_nombre)}</strong> "
+             f"no se ha completado.",
+             "El motivo está en la sección <strong>Resultados</strong> de la plataforma y en el panel "
+             "de resultados del Constructor. Revisa la configuración de los nodos y vuelve a "
+             "intentarlo; si no sabes cómo resolverlo, avisa al administrador."],
+            color=ROJO_UAL,
+            boton=_boton_plataforma(),
+        ),
     )
