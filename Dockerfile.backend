@@ -40,7 +40,24 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install flower==2.0.1
 
 COPY . .
-RUN mkdir -p uploads algoritmos secrets \
+
+# Ningún secreto en la imagen (spec 006). Lo excluye el .dockerignore, pero si
+# alguien lo rompe, la construcción falla aquí en vez de dejar pasar la clave:
+# antes, la clave privada del clúster de secrets/ssh/ acababa en
+# /app/secrets/ssh/, legible por los algoritmos subidos (corren como nobody).
+# La plataforma no la necesita en la imagen: le llega montada en
+# /root/ssh_montado al arrancar (docker-compose.yml).
+RUN encontrados="$(find /app \( -path /app/secrets -o -name 'id_rsa*' -o -name 'id_ed25519*' \
+        -o -name 'id_ecdsa*' -o -name '.env' -o -name '*.env' -o -name '.env.*' \) \
+        ! -name '*.pub' ! -name '.env.example' -print)"; \
+    if [ -n "$encontrados" ]; then \
+        echo "ERROR: la imagen llevaría secretos dentro (revisa .dockerignore, spec 006):" >&2; \
+        echo "$encontrados" >&2; \
+        exit 1; \
+    fi
+
+# Sin carpeta secrets: nada la usa, la clave llega montada en /root.
+RUN mkdir -p uploads algoritmos \
     && chmod +x scripts/docker-entrypoint.sh
 
 # Punto de montaje del socket del banco de pruebas. Se crea aqui, y con dueno

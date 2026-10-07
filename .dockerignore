@@ -9,3 +9,22 @@ uploads/
 frontend/node_modules/
 frontend/dist/
 .git/
+
+# Dockerfile.backend copia la carpeta entera (COPY . .). Sin estas líneas, la
+# clave privada del clúster de secrets/ssh/ acababa dentro de la imagen, con
+# permiso de lectura para todos, y la leía cualquier algoritmo subido (corre
+# como nobody) (spec 006). La plataforma no la necesita en la imagen: la recibe
+# montada en /root/ssh_montado al arrancar (docker-compose.yml).
+secrets/
+.env.*
+!.env.example
+
+# Configuración y datos de prueba del equipo de desarrollo, documentación de
+# trabajo y pruebas: nada de esto pinta en la imagen de producción. Para lanzar
+# las pruebas dentro del worker se montan (CLAUDE.md).
+.claude/
+docs/
+CLAUDE.md
+MEMORY.md
+tests/
+*.stackdump
