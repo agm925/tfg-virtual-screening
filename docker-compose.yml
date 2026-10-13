@@ -54,7 +54,11 @@ services:
       # Atado a 127.0.0.1: sigue siendo accesible desde el host (pgAdmin, psql,
       # DBeaver) pero deja de estar publicado a toda la red local, donde estaba
       # expuesto con la contraseña por defecto del compose.
-      - "127.0.0.1:5432:5432"
+      # DB_PORT: en el servidor RTX el 5432 ya lo ocupaba otro proceso, la base
+      # no arrancaba y con ella se caía toda la plataforma. La plataforma no
+      # usa este puerto (habla con la base por la red interna, db:5432): solo
+      # es para conectarse desde la propia máquina.
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tfg_user} -d ${POSTGRES_DB:-tfg_virtual_screening}"]
       interval: 5s
@@ -68,7 +72,8 @@ services:
     ports:
       # Solo desde el host: Redis no tiene contraseña, y publicado a la red
       # cualquiera podría leer o borrar la cola de tareas.
-      - "127.0.0.1:6379:6379"
+      # REDIS_PORT: lo mismo que DB_PORT, por si el 6379 ya está ocupado.
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

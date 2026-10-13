@@ -87,3 +87,16 @@ def test_el_servicio_de_copias_lee_los_datos_sin_poder_cambiarlos():
     backend = compose.split("\n  backend:\n", 1)[1].split("\n  worker:\n", 1)[0]
     assert "copias_estado:/app/copias_estado:ro" in backend
     assert "/copias" not in backend.replace("copias_estado", "")
+
+
+# --- Puertos que se publican en el servidor (13/10/2026) ----------------------
+
+def test_los_puertos_de_base_y_redis_se_pueden_cambiar():
+    # En el RTX el 127.0.0.1:5432 ya lo ocupaba otro proceso: la base no
+    # arrancaba y con ella se caia toda la plataforma. Solo se publican para
+    # pgAdmin/psql desde la propia maquina; la plataforma usa la red interna.
+    compose = (RAIZ / "docker-compose.yml").read_text(encoding="utf-8")
+    assert '"127.0.0.1:${DB_PORT:-5432}:5432"' in compose
+    assert '"127.0.0.1:${REDIS_PORT:-6379}:6379"' in compose
+    ejemplo = (RAIZ / ".env.example").read_text(encoding="utf-8")
+    assert "DB_PORT=" in ejemplo and "REDIS_PORT=" in ejemplo
