@@ -195,6 +195,16 @@ export function tieneLista(fichero) {
   return fichero.formato === 'sdf' && (fichero.num_moleculas === null || fichero.num_moleculas > 1);
 }
 
+// Texto bajo el nombre de cada fichero del buscador. Sin recuento se da el
+// formato: antes decía «Contando moléculas…», y en un resultado nadie lo iba
+// a contar, así que se quedaba así para siempre (spec 008). Una molécula
+// suelta también da su formato, que dice más que «1 molécula».
+export function detalleFichero(f) {
+  if (f.num_moleculas > 1) return `${f.num_moleculas} moléculas`;
+  if (f.num_moleculas === 1 && f.grupo !== 'molecula') return '1 molécula';
+  return f.formato.toUpperCase();
+}
+
 // Pone una molécula en un hueco concreto sin cambiar nada más. Es para
 // restaurar lo guardado (RF-14): el hueco activo y los estilos tienen que
 // quedar como estaban, y `colocar` los cambia.

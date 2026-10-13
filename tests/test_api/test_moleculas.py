@@ -17,7 +17,7 @@ CONTENIDO_SDF_UNA_MOLECULA = b"mol1\n\n\n  0  0\nM  END\n$$$$\n"
 def test_subir_molecula_individual(client, usuario_autenticado):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy_mol.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
         headers=usuario_autenticado["headers"],
     )
@@ -31,7 +31,7 @@ def test_subir_molecula_individual(client, usuario_autenticado):
 def test_subir_base_de_datos_sdf_cuenta_moleculas(client, usuario_autenticado):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "base_de_datos"},
+        data={"tipo": "base_de_datos", "es_publico": "true"},
         files={"archivo": ("test_dummy_bd.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
         headers=usuario_autenticado["headers"],
     )
@@ -42,7 +42,7 @@ def test_subir_base_de_datos_sdf_cuenta_moleculas(client, usuario_autenticado):
 def test_subir_base_de_datos_no_sdf_devuelve_400(client, usuario_autenticado):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "base_de_datos"},
+        data={"tipo": "base_de_datos", "es_publico": "true"},
         files={"archivo": ("test_dummy_bd.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
         headers=usuario_autenticado["headers"],
     )
@@ -52,7 +52,7 @@ def test_subir_base_de_datos_no_sdf_devuelve_400(client, usuario_autenticado):
 def test_subir_extension_no_soportada_devuelve_400(client, usuario_autenticado):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy.docx", b"contenido irrelevante", "application/octet-stream")},
         headers=usuario_autenticado["headers"],
     )
@@ -71,7 +71,7 @@ def test_borrar_molecula_del_deposito_publico(client, usuario_autenticado):
     headers = usuario_autenticado["headers"]
     client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy_borrar.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
         headers=usuario_autenticado["headers"],
     )
@@ -135,7 +135,7 @@ def test_subir_molecula_sin_token_devuelve_401(client):
     """El deposito dejo de ser anonimo: sin credenciales no se escribe nada."""
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy_sin_token.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
     )
     assert respuesta.status_code == 401
@@ -153,7 +153,7 @@ def test_subida_que_excede_el_limite_devuelve_413(client, usuario_autenticado, m
 
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy_gordo.mol2", b"x" * 5000, "chemical/x-mol2")},
         headers=usuario_autenticado["headers"],
     )
@@ -182,7 +182,7 @@ def test_subir_sdf_de_una_molecula_se_guarda_como_molecula_aunque_se_declare_bas
 ):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "base_de_datos"},
+        data={"tipo": "base_de_datos", "es_publico": "true"},
         files={"archivo": ("test_dummy_bd_de_una.sdf", CONTENIDO_SDF_UNA_MOLECULA, "chemical/x-mdl-sdfile")},
         headers=usuario_autenticado["headers"],
     )
@@ -197,7 +197,7 @@ def test_subir_sdf_de_varias_moleculas_se_guarda_como_base_de_datos_aunque_se_de
 ):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy_mol_multiple.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
         headers=usuario_autenticado["headers"],
     )
@@ -210,7 +210,7 @@ def test_subir_sdf_de_varias_moleculas_se_guarda_como_base_de_datos_aunque_se_de
 def test_subir_molecula_con_tipo_invalido_devuelve_400(client, usuario_autenticado):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "no_es_un_tipo_valido"},
+        data={"tipo": "no_es_un_tipo_valido", "es_publico": "true"},
         files={"archivo": ("test_dummy_tipo_invalido.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
         headers=usuario_autenticado["headers"],
     )
@@ -220,7 +220,7 @@ def test_subir_molecula_con_tipo_invalido_devuelve_400(client, usuario_autentica
 def test_listar_moleculas_devuelve_tipo_y_num_moleculas(client, usuario_autenticado):
     subida = client.post(
         "/moleculas/subir",
-        data={"tipo": "base_de_datos"},
+        data={"tipo": "base_de_datos", "es_publico": "true"},
         files={"archivo": ("test_dummy_listado_tipo.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
         headers=usuario_autenticado["headers"],
     )
@@ -298,6 +298,32 @@ def test_registrar_resultados_marca_tipo_resultado(client, db_session, usuario_a
     assert archivo.visibilidad == models.VisibilidadArchivo.resultado
 
 
+def test_registrar_resultados_cuenta_las_moleculas_de_un_sdf(client, db_session, usuario_autenticado):
+    """
+    Spec 008, R1: sin el recuento, el visor 3D decia «Contando moleculas…»
+    para siempre en cualquier resultado SDF, porque el numero solo se
+    calculaba al subir un fichero. Los demas formatos no tienen recuento.
+    """
+    import os
+
+    from app import models
+    from app.tasks import _registrar_resultados
+
+    sdf = "test_dummy_resultado_tres.sdf"
+    csv = "test_dummy_resultado_ranking.csv"
+    with open(os.path.join("uploads", sdf), "wb") as f:
+        f.write(CONTENIDO_SDF_DOS_MOLECULAS + CONTENIDO_SDF_UNA_MOLECULA)
+    with open(os.path.join("uploads", csv), "w") as f:
+        f.write("molecula,score\nmol1,0.9\n")
+
+    _registrar_resultados(db_session, [sdf, csv], usuario_autenticado["usuario"]["id"])
+
+    def fila(nombre):
+        return db_session.query(models.Archivo).filter(models.Archivo.nombre == nombre).first()
+    assert fila(sdf).num_moleculas == 3
+    assert fila(csv).num_moleculas is None
+
+
 
 def test_subir_una_biblioteca_deja_su_indice_y_borrarla_lo_quita(client, usuario_autenticado):
     """
@@ -312,7 +338,7 @@ def test_subir_una_biblioteca_deja_su_indice_y_borrarla_lo_quita(client, usuario
 
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "base_de_datos"},
+        data={"tipo": "base_de_datos", "es_publico": "true"},
         files={"archivo": ("test_indice_bd.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
         headers=usuario_autenticado["headers"],
     )
@@ -341,7 +367,7 @@ def test_subir_una_biblioteca_deja_sus_titulos_y_borrarla_los_quita(client, usua
 
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": "base_de_datos"},
+        data={"tipo": "base_de_datos", "es_publico": "true"},
         files={"archivo": ("test_titulos_bd.sdf", CONTENIDO_SDF_DOS_MOLECULAS, "chemical/x-mdl-sdfile")},
         headers=usuario_autenticado["headers"],
     )

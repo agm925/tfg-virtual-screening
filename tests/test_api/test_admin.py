@@ -301,6 +301,7 @@ def test_admin_ve_los_ficheros_de_todos_con_su_propietario(
     subida = client.post(
         "/moleculas/subir",
         files={"archivo": (f"test_admin_{uuid.uuid4().hex[:8]}.sdf", b"dummy\n", "chemical/x-mdl-sdfile")},
+        data={"es_publico": "true"},
         headers=usuario_autenticado["headers"],
     )
     assert subida.status_code == 200, subida.text

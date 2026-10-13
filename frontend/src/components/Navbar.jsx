@@ -71,6 +71,13 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, nuevoWo
                 {e.label}
               </button>
             ))}
+            {/* En el móvil la franja de arriba se oculta para que la cabecera
+                no se coma la pantalla (spec 010): quién eres y salir pasan
+                aquí, dentro del menú. */}
+            <div className="menu-usuario">
+              <span>{usuario.nombre}</span>
+              <button onClick={cerrarSesion}>Cerrar sesión</button>
+            </div>
             {/* En el constructor sobra: el editor tiene su propio botón. */}
             {paginaActual !== 'visual' && (
               <button className="nav-destacado" onClick={() => { nuevoWorkflow(); setMenuAbierto(false); }}>

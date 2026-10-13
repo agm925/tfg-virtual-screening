@@ -1,0 +1,45 @@
+/* Diálogo «¿Quién puede ver este fichero?» (spec 007). */
+.pregunta-visibilidad {
+  width: min(480px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--linea);
+  border-top: 3px solid var(--ual-azul);
+  border-radius: var(--radio);
+  background: var(--superficie);
+  color: var(--ual-texto);
+  font-family: var(--fuente);
+  box-shadow: var(--sombra-menu);
+}
+.pregunta-visibilidad::backdrop { background: rgba(13, 37, 49, 0.45); }
+
+.pregunta-visibilidad h3 { margin: 0 0 4px; font-size: var(--t-l); }
+.pregunta-visibilidad-fichero { margin: 0 0 16px; overflow-wrap: anywhere; }
+
+.pregunta-visibilidad-opciones {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 480px) {
+  .pregunta-visibilidad-opciones { grid-template-columns: 1fr; }
+}
+
+.opcion-visibilidad {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  background: var(--superficie);
+  color: var(--ual-azul);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.opcion-visibilidad:hover { background: var(--proceso-fondo); border-color: var(--ual-azul); }
+.opcion-visibilidad:focus-visible { outline: 2px solid var(--ual-cian); outline-offset: 2px; }
+.opcion-visibilidad-titulo { font-size: var(--t-m); font-weight: 600; }
+.opcion-visibilidad-texto { font-size: var(--t-s); color: var(--texto-2); }

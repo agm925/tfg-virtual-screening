@@ -81,6 +81,16 @@ test('nginx conserva la API, el tamaño de subida y los tiempos de espera (R3)',
   assert.match(nginx, /proxy_read_timeout\s+300s;/);
 });
 
+test('tras actualizar, el navegador no se queda con la página vieja (12/10/2026)', () => {
+  // Sin Cache-Control, el navegador reutilizaba su index.html anterior, que
+  // apunta al JavaScript de antes: la tarjeta de copias (spec 009) no salía
+  // en Sistema aunque el servidor ya la tenía.
+  const nginx = leer('frontend/nginx.conf');
+  assert.match(nginx, /location\s*=\s*\/index\.html\s*\{[^}]*add_header\s+Cache-Control\s+"no-cache"/);
+  // Los ficheros de assets/ llevan una huella en el nombre: pueden guardarse.
+  assert.match(nginx, /location\s+\/assets\/\s*\{[^}]*immutable/);
+});
+
 // ---------------------------------------------------------------------------
 // R5: almacenamiento propio en el navegador
 // ---------------------------------------------------------------------------

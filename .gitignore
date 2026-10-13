@@ -16,6 +16,9 @@ secrets/
 # Archivos subidos por usuarios
 uploads/
 
+# Copias de seguridad (spec 009): datos de todos los usuarios
+copias/
+
 # Node modules y build del frontend
 node_modules/
 frontend/dist/
@@ -26,6 +29,7 @@ frontend/dist/
 htmlcov/
 
 # Archivos del sistema operativo / editor
+*.stackdump
 .DS_Store
 Thumbs.db
 .vscode/

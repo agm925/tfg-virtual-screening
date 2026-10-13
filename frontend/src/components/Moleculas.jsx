@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import '../styles/Moleculas.css'
 import VerEn3D from './VerEn3D'
 import Icono from './Icono'
+import PreguntaVisibilidad from './PreguntaVisibilidad'
 import { apiFetch, descargarConToken } from '../api/client'
 import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
 
@@ -42,13 +43,17 @@ function PanelSubida({ tipo, titulo, explicacion, formatos, alSubir }) {
   const [fichero,  setFichero]  = useState(null)
   const [subiendo, setSubiendo] = useState(false)
   const [mensaje,  setMensaje]  = useState(null) // { tipo: 'exito'|'error', texto }
+  const [preguntando, setPreguntando] = useState(false)
   const id = `subir-${tipo}`
 
-  const subir = async () => {
+  // Se sube después de elegir en el diálogo quién podrá verlo (spec 007).
+  const subir = async (esPublico) => {
+    setPreguntando(false)
     setSubiendo(true); setMensaje(null)
     const fd = new FormData()
     fd.append('archivo', fichero)
     fd.append('tipo', tipo)
+    fd.append('es_publico', esPublico ? 'true' : 'false')
     try {
       const resp = await apiFetch('/moleculas/subir', { method: 'POST', body: fd })
       if (!resp.ok) throw await errorDeRespuesta(resp)
@@ -64,7 +69,8 @@ function PanelSubida({ tipo, titulo, explicacion, formatos, alSubir }) {
           ? ' Solo tiene una molécula, así que se ha guardado como molécula individual.'
           : ' Tiene varias moléculas, así que se ha guardado como biblioteca.'
         : ''
-      setMensaje({ tipo: 'exito', texto: `«${data.nombre}» subido${cuantas}.${corregido}` })
+      const como = data.es_publico ? 'público' : 'privado'
+      setMensaje({ tipo: 'exito', texto: `«${data.nombre}» subido como ${como}${cuantas}.${corregido}` })
       setFichero(null)
       alSubir()
     } catch (err) {
@@ -83,9 +89,11 @@ function PanelSubida({ tipo, titulo, explicacion, formatos, alSubir }) {
       <p className="formatos" id={`${id}-formatos`}>
         Formatos: {formatos.map(f => <code key={f}>.{f}</code>)}
       </p>
-      <button className="btn-primary" disabled={subiendo || !fichero} onClick={subir}>
+      <button className="btn-primary" disabled={subiendo || !fichero} onClick={() => setPreguntando(true)}>
         <Icono nombre="subir" />{subiendo ? 'Subiendo…' : 'Subir'}
       </button>
+      <PreguntaVisibilidad fichero={preguntando ? fichero?.name : null}
+                           alElegir={subir} alCancelar={() => setPreguntando(false)} />
       {mensaje && (
         <p className={mensaje.tipo === 'exito' ? 'exito-msg' : 'error-msg'} role="status">{mensaje.texto}</p>
       )}
@@ -113,14 +121,17 @@ function TablaFicheros({ titulo, ficheros, vacio, conMoleculas, acciones }) {
               <tr><td colSpan={conMoleculas ? 5 : 4} className="tabla-vacia">{vacio}</td></tr>
             ) : ficheros.map(a => (
               <tr key={a.nombre}>
-                <td className="col-fichero" title={a.nombre}>
+                <td data-label="Nombre" className="col-fichero" title={a.nombre}>
                   {a.nombre}
                   {a.tipo === 'resultado' && <span className="texto-secundario"> · resultado</span>}
+                  {a.tipo !== 'resultado' && a.es_publico === false && (
+                    <span className="texto-secundario" title="Solo lo ves tú"> · privado</span>
+                  )}
                 </td>
-                <td>{a.nombre.split('.').pop().toUpperCase()}</td>
-                {conMoleculas && <td className="col-cifra">{a.num_moleculas ?? '—'}</td>}
-                <td className="col-cifra">{a.tamano_kb} KB</td>
-                <td className="acciones-celda">{acciones(a)}</td>
+                <td data-label="Formato">{a.nombre.split('.').pop().toUpperCase()}</td>
+                {conMoleculas && <td data-label="Moléculas" className="col-cifra">{a.num_moleculas ?? '—'}</td>}
+                <td data-label="Tamaño" className="col-cifra">{a.tamano_kb} KB</td>
+                <td data-label="Acciones" className="acciones-celda">{acciones(a)}</td>
               </tr>
             ))}
           </tbody>

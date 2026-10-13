@@ -66,3 +66,24 @@ def test_uploads_no_esta_en_el_repositorio():
     if resultado.returncode != 0:
         pytest.skip("no es un repositorio de git")
     assert resultado.stdout.strip() == "", resultado.stdout
+
+
+# --- Spec 009: las copias de seguridad no salen de la maquina -----------------
+
+def test_las_copias_no_entran_en_la_imagen_ni_en_git():
+    # Llevan los hashes de las contrasenas y los ficheros privados de todos.
+    assert "copias/" in _patrones_dockerignore()
+    gitignore = (RAIZ / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "copias/" in [l.strip() for l in gitignore]
+
+
+def test_el_servicio_de_copias_lee_los_datos_sin_poder_cambiarlos():
+    compose = (RAIZ / "docker-compose.yml").read_text(encoding="utf-8")
+    servicio = compose.split("\n  copias:\n", 1)[1].split("\n  frontend:\n", 1)[0]
+    assert "./uploads:/datos/uploads:ro" in servicio
+    assert "./algoritmos:/datos/algoritmos:ro" in servicio
+    assert "copias_estado:/estado" in servicio
+    # Solo el estado llega al backend, y de solo lectura: las copias no.
+    backend = compose.split("\n  backend:\n", 1)[1].split("\n  worker:\n", 1)[0]
+    assert "copias_estado:/app/copias_estado:ro" in backend
+    assert "/copias" not in backend.replace("copias_estado", "")

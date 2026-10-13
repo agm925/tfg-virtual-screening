@@ -30,6 +30,7 @@ import { estaActivo } from '../utils/ficheros';
 import { getToken } from '../api/client';
 import { mensajeError } from '../utils/mensajes';
 import { claveEditor } from '../utils/almacenamiento';
+import { aCoordenadasDelLienzo, posicionNuevoNodo } from '../utils/lienzo';
 import '../styles/Nodos.css';
 
 const I_REPRODUCIR = <Icono nombre="reproducir" />;
@@ -134,6 +135,11 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   // Aviso en la propia pagina { tipo: 'exito'|'error', texto }. Antes eran
   // alert(), que bloquean la pantalla y enseñaban el err.message tal cual.
   const [aviso, setAviso] = useState(null);
+  // En el móvil la paleta y los resultados son paneles que se abren encima
+  // del lienzo, de uno en uno (spec 010). En escritorio no se usa: los dos
+  // están siempre a los lados.
+  const [panelMovil, setPanelMovil] = useState(null); // 'paleta' | 'resultados' | null
+  const alternarPanel = (panel) => setPanelMovil(p => (p === panel ? null : panel));
   const avisar = (tipo, texto) => setAviso({ tipo, texto });
 
   // Los de exito se van solos; los de error se quedan hasta cerrarlos, para
@@ -248,16 +254,34 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     event.dataTransfer.dropEffect = 'move';
   };
 
+  // La instancia de React Flow, para saber cuánto está desplazado y ampliado
+  // el lienzo (onInit).
+  const flujo = useRef(null);
+  const vistaDelLienzo = () => flujo.current?.getViewport() ?? { x: 0, y: 0, zoom: 1 };
+
   const onDrop = (event) => {
     event.preventDefault();
     const tipo = event.dataTransfer.getData('tipo');
-    
-    const reactFlowBounds = document.querySelector('.react-flow-wrapper').getBoundingClientRect();
-    const position = {
-      x: event.clientX - reactFlowBounds.left,
-      y: event.clientY - reactFlowBounds.top,
-    };
+    const caja = event.currentTarget.getBoundingClientRect();
+    // Con el desplazamiento y el zoom del lienzo: antes se tomaba el punto de
+    // la pantalla tal cual, y con el lienzo movido o ampliado el nodo caía
+    // lejos de donde se soltaba.
+    añadirNodo(tipo, aCoordenadasDelLienzo(
+      { x: event.clientX - caja.left, y: event.clientY - caja.top }, vistaDelLienzo()));
+  };
 
+  // Tocar (o pulsar Enter sobre) un nodo de la paleta lo añade en el centro
+  // de lo que se ve (spec 010): en el móvil el arrastre del navegador no
+  // funciona con el dedo, y con el teclado tampoco había forma de añadirlo.
+  const añadirAlTocar = (tipo) => {
+    const caja = document.querySelector('.react-flow-wrapper').getBoundingClientRect();
+    añadirNodo(tipo, posicionNuevoNodo({
+      ancho: caja.width, alto: caja.height, viewport: vistaDelLienzo(), nodos: nodes,
+    }));
+    setPanelMovil(null);   // en el móvil, para ver dónde ha caído
+  };
+
+  const añadirNodo = (tipo, position) => {
     const nuevoNodo = {
       id: `${tipo}_${nodoId}`,
       type: tipo,
@@ -366,6 +390,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     const espera = new AbortController();
     esperaRef.current = espera;
     setEjecutando(true);
+    setPanelMovil('resultados');   // en el móvil, para ver el progreso
     try {
       // Polling cada 3 s hasta que el worker termine
       const resultado = await esperarEjecucion(id, (datos) => {
@@ -550,23 +575,37 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
         </div>
       </div>
 
+      {/* Solo en el móvil (ver visualBuilder.css). */}
+      <div className="barra-paneles-movil">
+        <button type="button" aria-expanded={panelMovil === 'paleta'} aria-controls="paleta-nodos"
+                className={panelMovil === 'paleta' ? 'activo' : ''} onClick={() => alternarPanel('paleta')}>
+          <Icono nombre="mas" />Añadir nodo
+        </button>
+        <button type="button" aria-expanded={panelMovil === 'resultados'} aria-controls="panel-resultados"
+                className={panelMovil === 'resultados' ? 'activo' : ''} onClick={() => alternarPanel('resultados')}>
+          <Icono nombre="grafico" />Resultados
+        </button>
+      </div>
+
       <div className="visual-content">
         {/* PALETA DE NODOS (Izquierda) */}
-        <div className="visual-sidebar-left">
+        <div id="paleta-nodos" className={`visual-sidebar-left ${panelMovil === 'paleta' ? 'abierto' : ''}`}>
           <h3>Nodos Disponibles</h3>
           <div className="paleta-nodos">
             {TIPOS_NODO.map((nodo) => (
-              <div
+              <button
+                type="button"
                 key={nodo.tipo}
                 draggable
                 onDragStart={(e) => onDragStart(e, nodo.tipo)}
+                onClick={() => añadirAlTocar(nodo.tipo)}
                 className={`nodo-paleta familia-${nodo.familia}`}
               >
                 <Icono nombre={nodo.icono} />{nodo.etiqueta}
-              </div>
+              </button>
             ))}
           </div>
-          <p className="hint">Arrastra nodos al canvas</p>
+          <p className="hint">Pulsa un nodo para añadirlo, o arrástralo al lienzo</p>
         </div>
 
         {/* CANVAS REACT FLOW (Centro) */}
@@ -589,6 +628,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             nodeTypes={nodeTypes}
+            onInit={(instancia) => { flujo.current = instancia; }}
             fitView
           >
             <Background />
@@ -598,7 +638,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
         </div>
 
         {/* PANEL DE RESULTADOS (Derecha) */}
-        <div className="visual-sidebar-right">
+        <div id="panel-resultados" className={`visual-sidebar-right ${panelMovil === 'resultados' ? 'abierto' : ''}`}>
           <h3><Icono nombre="grafico" />Resultados</h3>
 
           {/* Progreso batch en tiempo real */}

@@ -116,6 +116,12 @@
 }
 
 .nodo-paleta {
+  /* Es un <button> (se toca para añadirlo, spec 010): sin el aspecto de botón. */
+  width: 100%;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
   padding: 10px 12px;
   background: var(--ual-gris);
   /* --color-familia lo fija la clase familia-* (Nodos.css), la misma que la
@@ -570,16 +576,64 @@
   }
 }
 
-@media (max-width: 768px) {
-  .visual-content {
-    flex-direction: column;
-  }
+/* Barra de paneles: solo existe en el móvil. */
+.barra-paneles-movil { display: none; }
 
+/* Móvil (spec 010): el lienzo ocupa todo el alto que queda, y la paleta y los
+   resultados se abren encima de él, de uno en uno, desde la barra de
+   paneles. Antes iban apilados con 200 px cada uno y al lienzo le quedaban
+   unos 200. */
+@media (max-width: 768px) {
+  .visual-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .toolbar-left { flex: 1 1 100%; gap: 6px; }
+  /* Cada botón, el ancho de su texto y en una línea: a partes iguales,
+     «Nuevo workflow» se partía en dos y estiraba la barra entera. */
+  .toolbar-left .btn { flex: 1 1 auto; justify-content: center; gap: 4px; padding: 8px 6px; margin: 0; white-space: nowrap; font-size: 13px; }
+  .toolbar-center { flex: 1 1 140px; min-width: 0; }
+  .workflow-select { width: 100%; max-width: none; }
+  .toolbar-right .btn { padding: 8px 10px; }
+
+  .barra-paneles-movil {
+    display: flex;
+    gap: 8px;
+    padding: 0 12px 8px;
+    background: var(--superficie);
+    border-bottom: 1px solid var(--linea);
+  }
+  .barra-paneles-movil button {
+    min-height: var(--toque);
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--ual-azul);
+    border-radius: var(--radio);
+    background: var(--superficie);
+    color: var(--ual-azul);
+    font-weight: 600;
+  }
+  .barra-paneles-movil button.activo { background: var(--ual-azul); color: #fff; }
+
+  .visual-content { position: relative; }
   .visual-sidebar-left,
   .visual-sidebar-right {
-    width: 100%;
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    width: auto;
+    max-height: 70%;
+    z-index: 10;
     border: none;
-    border-top: 1px solid var(--linea);
-    max-height: 200px;
+    border-bottom: 2px solid var(--ual-azul);
+    box-shadow: var(--sombra-menu);
   }
+  .visual-sidebar-left.abierto,
+  .visual-sidebar-right.abierto { display: block; }
 }

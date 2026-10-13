@@ -112,3 +112,14 @@ test('el ejemplo no exige los nodos opcionales Inicio y Descargar (R4)', () => {
   assert.ok(ejemplo.length > 200, 'no se encontró la sección del ejemplo');
   assert.doesNotMatch(ejemplo, /Añade el nodo (Inicio|Ejecutar|Descargar)/);
 });
+
+// ---------------------------------------------------------------------------
+// Spec 007: lo subido es privado o público, a elección de quien lo sube
+// ---------------------------------------------------------------------------
+
+test('el tutorial explica la pregunta de privado o público (spec 007)', () => {
+  assert.doesNotMatch(JSX, /biblioteca compartida/, 'ya no todo lo subido es compartido');
+  assert.match(JSX, /¿Quién puede ver este fichero\?/);
+  assert.match(JSX, /Privado/);
+  assert.match(JSX, /Público/);
+});

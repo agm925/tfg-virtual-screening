@@ -24,7 +24,7 @@ CONTENIDO_MOL2_DUMMY = b"@<TRIPOS>MOLECULE\ndummy\n1 0 0 0 0\nSMALL\nNO_CHARGES\
 def _subir(client, headers, nombre):
     return client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": (nombre, CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
         headers=headers,
     )

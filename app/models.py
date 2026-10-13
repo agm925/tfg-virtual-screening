@@ -251,5 +251,10 @@ class Archivo(Base):
     # entero cada vez que se lista: solo tiene sentido para un .sdf, que es
     # el único formato que puede contener más de un registro.
     num_moleculas = Column(Integer, nullable=True)
+    # Solo cuenta para lo subido (visibilidad=biblioteca): quien sube elige
+    # si lo ve todo el mundo o solo él, ni siquiera un admin (spec 007). Por
+    # defecto verdadero para que lo subido antes de la columna siga público,
+    # como era; la subida nueva siempre lo fija explícitamente.
+    es_publico = Column(Boolean, default=True, nullable=False)
 
     propietario = relationship("Usuario")

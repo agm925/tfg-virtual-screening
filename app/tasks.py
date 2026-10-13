@@ -12,7 +12,7 @@ from app.email_utils import (
 from app.workflow_executor import WorkflowExecutor, BatchWorkflowExecutor
 from app.models import Archivo, TipoArchivo, VisibilidadArchivo
 from app.logging_config import logger
-from app.formatos import corregir_extension, extension_salida
+from app.formatos import contar_moleculas_sdf, corregir_extension, extension_salida
 
 
 def _grafo_usa_archivo_ajeno(db, grafo_json, usuario_id):
@@ -60,6 +60,11 @@ def _registrar_resultados(db, nombres, usuario_id, ejecucion_id=None, peticion_i
         archivo.visibilidad = VisibilidadArchivo.resultado
         archivo.tipo = TipoArchivo.resultado
         archivo.tamano_bytes = os.path.getsize(ruta)
+        # Sin esto el visor 3D decia «Contando moleculas…» para siempre en
+        # cualquier resultado SDF: el numero solo se calculaba al subir un
+        # fichero, y aqui no habia nadie que lo contara (spec 008).
+        if nombre.lower().endswith(".sdf"):
+            archivo.num_moleculas = contar_moleculas_sdf(ruta)
         if ejecucion_id is not None:
             archivo.ejecucion_id = ejecucion_id
         if peticion_id is not None:

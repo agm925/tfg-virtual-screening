@@ -289,6 +289,47 @@ def backfill_tipo_archivo() -> None:
         db.close()
 
 
+def backfill_num_moleculas() -> None:
+    """
+    Rellena `archivos.num_moleculas` en los .sdf registrados sin el.
+
+    Son sobre todo resultados: hasta la spec 008, _registrar_resultados
+    (app/tasks.py) no los contaba, y el visor 3D decia «Contando moleculas…»
+    para siempre. El codigo nuevo ya cuenta al registrar; esto es solo para
+    lo que quedo registrado antes.
+
+    Es idempotente: solo toca filas con el recuento nulo cuyo fichero sigue
+    en disco. Una fila huerfana se queda nula y se vuelve a mirar en cada
+    arranque, que es barato: no hay fichero que leer.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app.formatos import contar_moleculas_sdf
+
+    directorio = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+
+    Sesion = sessionmaker(bind=engine)
+    db = Sesion()
+    try:
+        pendientes = db.query(models.Archivo).filter(
+            models.Archivo.num_moleculas.is_(None),
+            models.Archivo.nombre.ilike("%.sdf"),
+        ).all()
+        rellenados = 0
+        for archivo in pendientes:
+            ruta = os.path.join(directorio, archivo.nombre)
+            if not os.path.isfile(ruta):
+                continue
+            archivo.num_moleculas = contar_moleculas_sdf(ruta)
+            rellenados += 1
+            if rellenados % 500 == 0:
+                db.commit()
+        db.commit()
+        print(f"Moléculas contadas en {rellenados} SDF sin recuento.")
+    finally:
+        db.close()
+
+
 def main() -> None:
     esperar_base_de_datos()
     models.Base.metadata.create_all(bind=engine)
@@ -298,6 +339,7 @@ def main() -> None:
     migrar_rol_desarrollador()
     registrar_archivos_existentes()
     backfill_tipo_archivo()
+    backfill_num_moleculas()
 
 
 if __name__ == "__main__":

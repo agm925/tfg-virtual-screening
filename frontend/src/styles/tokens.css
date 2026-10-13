@@ -64,6 +64,13 @@
   --t-l:  21px;
   --t-xl: 28px;
 
+  /* --- Móvil (spec 010) --- */
+  /* Alto mínimo de lo que se toca con el dedo: por debajo, se falla el toque. */
+  --toque: 44px;
+  /* Letra mínima de los campos: con menos, Safari en iPhone hace zoom al
+     tocarlos y descoloca la página. */
+  --t-campo: 16px;
+
   /* --- Forma: esquinas casi rectas, como ual.es --- */
   --radio: 2px;
   --sombra-menu: 0 6px 18px rgba(13, 37, 49, 0.18);

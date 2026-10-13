@@ -20,7 +20,7 @@ SDF_DOS = b"mol1\n\n\n  0  0\nM  END\n$$$$\nmol2\n\n\n  0  0\nM  END\n$$$$\n"
 def _subir(client, usuario, nombre, contenido=SDF_DOS, tipo="base_de_datos"):
     respuesta = client.post(
         "/moleculas/subir",
-        data={"tipo": tipo},
+        data={"tipo": tipo, "es_publico": "true"},
         files={"archivo": (nombre, contenido, "application/octet-stream")},
         headers=usuario["headers"],
     )

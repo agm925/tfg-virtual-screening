@@ -12,8 +12,11 @@ donde se abre el fichero, no solo en la puerta por la que se descarga.
 
 Reglas (las mismas que aplicaba app/main.py):
   - resultado    -> solo su propietario o un admin.
-  - biblioteca   -> cualquier usuario autenticado puede leerla; solo su
-                    propietario o un admin puede borrarla.
+  - biblioteca   -> lo subido. Si es publica, cualquier usuario autenticado
+                    puede leerla y solo su propietario o un admin borrarla.
+                    Si es privada (es_publico=False, spec 007), solo su
+                    propietario: ni siquiera un admin, por decision del
+                    usuario.
   - sin registrar-> fichero anterior al registro de propiedad. Se trata como
                     biblioteca compartida; scripts/migrate.py los da de alta
                     en el primer arranque.
@@ -54,10 +57,19 @@ def comprobar_acceso_a_archivo(nombre_archivo: str, db: Session, usuario_id: int
     if archivo is None:
         return
 
+    es_propietario = archivo.propietario_id == usuario_id
+
+    # Antes que la excepcion del admin: privado significa solo el autor
+    # (spec 007). Los resultados no entran aqui; esos si los ve un admin.
+    if (archivo.visibilidad == models.VisibilidadArchivo.biblioteca
+            and not archivo.es_publico and not es_propietario):
+        raise AccesoDenegado(
+            "Este fichero es privado: solo lo puede usar quien lo subió.",
+            nombre_archivo,
+        )
+
     if usuario_es_admin:
         return
-
-    es_propietario = archivo.propietario_id == usuario_id
 
     if archivo.visibilidad == models.VisibilidadArchivo.resultado and not es_propietario:
         raise AccesoDenegado(
@@ -117,22 +129,37 @@ def solo_disponibles(consulta):
     )
 
 
+def filtro_visibles(usuario_id: int):
+    """
+    Los ficheros que un usuario ve al trabajar: lo subido y publico por
+    cualquiera y todo lo suyo (sus subidas privadas y sus resultados). Es la
+    misma regla para un admin, que tampoco ve lo privado de otros (spec 007).
+
+    Vive aqui para que Moleculas y el visor no puedan discrepar: antes cada
+    uno repetia la condicion, y la spec 007 la cambia.
+    """
+    archivo = models.Archivo
+    return or_(
+        and_(archivo.visibilidad == models.VisibilidadArchivo.biblioteca,
+             archivo.es_publico == True),  # noqa: E712
+        archivo.propietario_id == usuario_id,
+    )
+
+
 def archivos_para_visor(db: Session, usuario_id: int) -> list:
     """
     Los ficheros que el visor 3D ofrece a un usuario (spec 002, RF-2): los
-    subidos por cualquiera (la biblioteca compartida) y sus propios
-    resultados terminados. Nunca los resultados de otro.
+    subidos y publicos de cualquiera, los suyos y sus propios resultados
+    terminados. Nunca los resultados ni lo privado de otro.
 
     Se aplica la regla de un biologo tambien al administrador, a proposito:
     comprobar_acceso_a_archivo le deja leer cualquier fichero, pero la lista
     del visor es la misma para todos; los resultados ajenos los tiene en su
     panel de Administracion.
     """
-    visibles = or_(
-        models.Archivo.visibilidad == models.VisibilidadArchivo.biblioteca,
-        models.Archivo.propietario_id == usuario_id,
-    )
-    return solo_disponibles(db.query(models.Archivo).filter(visibles)).all()
+    return solo_disponibles(
+        db.query(models.Archivo).filter(filtro_visibles(usuario_id))
+    ).all()
 
 
 def nombres_de_archivo_del_grafo(grafo_json: Dict[str, Any]) -> Iterable[str]:

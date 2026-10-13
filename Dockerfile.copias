@@ -1,0 +1,11 @@
+# Copias de seguridad (spec 009). Parte de la imagen de Postgres para que
+# pg_dump y pg_restore sean de la misma version que la base: uno mas antiguo
+# se niega a volcar una base mas nueva. Solo se le anade python3; el script
+# usa unicamente la biblioteca estandar.
+FROM postgres:16
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/copias.py /copias.py
+ENTRYPOINT ["python3", "/copias.py"]
+CMD ["servicio"]

@@ -163,17 +163,17 @@ export default function Administracion({ usuario }) {
                 const esYo = u.id === usuario.id
                 return (
                   <tr key={u.id}>
-                    <td>
+                    <td data-label="Usuario">
                       <strong>{u.nombre}</strong>{esYo && <span className="texto-secundario"> (tú)</span>}
                       <div className="texto-secundario">{u.email}</div>
                     </td>
-                    <td><Insignia ok={u.rol === 'admin'} si="Administrador" no="Biólogo" claseSi="procesando" /></td>
-                    <td><Insignia ok={u.email_verificado} si="Verificado" no="Sin verificar" claseNo="pendiente" /></td>
-                    <td><Insignia ok={u.activo} si="Activo" no="Desactivado" /></td>
-                    <td className="col-cifra">
+                    <td data-label="Rol"><Insignia ok={u.rol === 'admin'} si="Administrador" no="Biólogo" claseSi="procesando" /></td>
+                    <td data-label="Verificación"><Insignia ok={u.email_verificado} si="Verificado" no="Sin verificar" claseNo="pendiente" /></td>
+                    <td data-label="Estado"><Insignia ok={u.activo} si="Activo" no="Desactivado" /></td>
+                    <td data-label="Trabajo" className="col-cifra">
                       {u.n_algoritmos} algoritmos · {u.n_peticiones} peticiones
                     </td>
-                    <td className="acciones-celda">
+                    <td data-label="Acciones" className="acciones-celda">
                       {!u.email_verificado && (
                         <button className="btn-descarga"
                           onClick={() => aplicar(`/admin/usuarios/${u.id}`, { email_verificado: true },
@@ -233,18 +233,18 @@ export default function Administracion({ usuario }) {
               <tbody>
                 {algoritmos.map(a => (
                   <tr key={a.id} className={a.activo ? '' : 'fila-inactiva'}>
-                    <td>
+                    <td data-label="Algoritmo">
                       <strong>{a.nombre}</strong>
                       <div className="texto-secundario">{a.descripcion}</div>
                     </td>
-                    <td className="celda-tipo">
+                    <td data-label="Tipo" className="celda-tipo">
                       {tipoNodo(a.tipo) && <Icono nombre={tipoNodo(a.tipo).icono} />}
                       {ETIQUETA_ALGORITMO[a.tipo] || a.tipo}
                     </td>
-                    <td className="col-fichero">{nombreFichero(a.ruta_archivo)}</td>
-                    <td><Insignia ok={a.es_publico} si="Público" no="Privado" claseSi="procesando" /></td>
-                    <td><Insignia ok={a.activo} si="Activo" no="Retirado" claseNo="error" /></td>
-                    <td className="acciones-celda">
+                    <td data-label="Fichero" className="col-fichero">{nombreFichero(a.ruta_archivo)}</td>
+                    <td data-label="Visibilidad"><Insignia ok={a.es_publico} si="Público" no="Privado" claseSi="procesando" /></td>
+                    <td data-label="Estado"><Insignia ok={a.activo} si="Activo" no="Retirado" claseNo="error" /></td>
+                    <td data-label="Acciones" className="acciones-celda">
                       <button className="btn-descarga"
                         onClick={() => aplicar(`/admin/algoritmos/${a.id}`, { es_publico: !a.es_publico },
                           `hacer ${a.es_publico ? 'privado' : 'público'} «${a.nombre}»`,
@@ -288,20 +288,20 @@ export default function Administracion({ usuario }) {
               <tbody>
                 {moleculas.map(m => (
                   <tr key={m.nombre}>
-                    <td className="col-fichero">{m.nombre}</td>
-                    <td>
+                    <td data-label="Fichero" className="col-fichero">{m.nombre}</td>
+                    <td data-label="Tipo">
                       {ETIQUETA_TIPO[m.tipo] || '—'}
                       {m.num_moleculas > 1 && <span className="texto-secundario"> ({m.num_moleculas} moléculas)</span>}
                     </td>
-                    <td className="texto-secundario">
+                    <td data-label="Propietario" className="texto-secundario">
                       {m.propietario_email || 'Sin propietario registrado'}
                     </td>
-                    <td>
+                    <td data-label="Visibilidad">
                       <Insignia ok={m.visibilidad === 'biblioteca'} si="Biblioteca" no="Resultado privado" claseSi="procesando" />
                     </td>
-                    <td className="col-cifra">{m.tamano_kb} KB</td>
-                    <td className="col-fecha">{formatFecha(m.fecha_creacion)}</td>
-                    <td className="acciones-celda">
+                    <td data-label="Tamaño" className="col-cifra">{m.tamano_kb} KB</td>
+                    <td data-label="Fecha" className="col-fecha">{formatFecha(m.fecha_creacion)}</td>
+                    <td data-label="Acciones" className="acciones-celda">
                       <button className="btn-borrar" onClick={() => borrarMolecula(m.nombre)}
                               aria-label={`Eliminar ${m.nombre}`}>
                         <Icono nombre="papelera" />Eliminar

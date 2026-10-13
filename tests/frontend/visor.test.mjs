@@ -15,7 +15,7 @@ import {
   ESTILOS, estiloInicial, estiloEfectivo,
   esFicheroDeMoleculas, recortar,
   claveVisor, serializar, restaurar, crearContadorDeBusquedas,
-  tieneLista, ponerEnHueco, llegaConLista,
+  tieneLista, ponerEnHueco, llegaConLista, detalleFichero,
 } from '../../frontend/src/utils/visor.js';
 
 // Congela un objeto entero: si una función lo modificara en vez de devolver
@@ -343,4 +343,23 @@ test('abrir desde fuera con B ya restaurado deja A activo (RF-4)', () => {
   // aplicara antes, el activo pasaría a B aunque B acabe ocupado.
   const restaurado = ponerEnHueco(estadoInicial(), 'B', RECEPTOR);
   assert.equal(abrirDesdeFuera(restaurado, CAFEINA).activo, 'A');
+});
+
+// --- Detalle del buscador (spec 008, R3) ---
+
+test('el detalle da el número de moléculas cuando se conoce', () => {
+  assert.equal(detalleFichero({ formato: 'sdf', grupo: 'resultado', num_moleculas: 3 }), '3 moléculas');
+  assert.equal(detalleFichero({ formato: 'sdf', grupo: 'resultado', num_moleculas: 1 }), '1 molécula');
+});
+
+test('sin número, el detalle da el formato y nunca «Contando…» (spec 008)', () => {
+  // Antes un resultado SDF sin recuento decía «Contando moléculas…» para
+  // siempre: nadie lo iba a contar.
+  assert.equal(detalleFichero({ formato: 'sdf', grupo: 'resultado', num_moleculas: null }), 'SDF');
+  assert.equal(detalleFichero({ formato: 'sdf', grupo: 'biblioteca', num_moleculas: null }), 'SDF');
+  assert.equal(detalleFichero({ formato: 'pdb', grupo: 'molecula', num_moleculas: null }), 'PDB');
+});
+
+test('una molécula suelta muestra su formato, no «1 molécula»', () => {
+  assert.equal(detalleFichero({ formato: 'sdf', grupo: 'molecula', num_moleculas: 1 }), 'SDF');
 });

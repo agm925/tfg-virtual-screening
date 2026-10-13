@@ -216,19 +216,19 @@ export default function RealizarPeticion({ usuario, abrirEnVisor }) {
             )}
             {peticiones.map(p => (
               <tr key={p.id}>
-                <td className="col-id">#{p.id}</td>
-                <td className="col-fecha">{formatFecha(p.fecha_creacion)}</td>
-                <td>{p.algoritmo_nombre}</td>
-                <td className="col-fichero">{p.ruta_mol_original}</td>
-                <td>
+                <td data-label="ID" className="col-id">#{p.id}</td>
+                <td data-label="Fecha" className="col-fecha">{formatFecha(p.fecha_creacion)}</td>
+                <td data-label="Algoritmo">{p.algoritmo_nombre}</td>
+                <td data-label="Molécula" className="col-fichero">{p.ruta_mol_original}</td>
+                <td data-label="Estado">
                   <span className={`badge ${claseEstado(p.estado)}`}>{textoEstado(p.estado)}</span>
                 </td>
-                <td className="col-cifra">
+                <td data-label="Cola" className="col-cifra">
                   {p.estado === 'PENDIENTE' && posiciones[p.id]
                     ? `Posición ${posiciones[p.id]}`
                     : p.estado === 'PROCESANDO' ? 'Ejecutando' : '—'}
                 </td>
-                <td className="acciones-celda">
+                <td data-label="Acciones" className="acciones-celda">
                   {p.estado === 'COMPLETADO' && (
                     /* El nombre sugerido es el del RESULTADO, no el de la entrada.
                        descargarConToken hace a.download = nombreSugerido, que pisa
@@ -278,16 +278,16 @@ export default function RealizarPeticion({ usuario, abrirEnVisor }) {
             )}
             {ejecuciones.map(e => (
               <tr key={e.id}>
-                <td className="col-id">#{e.id}</td>
-                <td className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
-                <td>{e.workflow_nombre}</td>
-                <td>
+                <td data-label="ID" className="col-id">#{e.id}</td>
+                <td data-label="Fecha" className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
+                <td data-label="Workflow">{e.workflow_nombre}</td>
+                <td data-label="Estado">
                   <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
                 </td>
-                <td className="col-cifra">
+                <td data-label="Duración" className="col-cifra">
                   {e.duracion_segundos != null ? `${e.duracion_segundos} s` : '—'}
                 </td>
-                <td>
+                <td data-label="Ficheros">
                   {e.archivos && e.archivos.length > 0 && e.archivos.map(f => (
                     <span key={f} className="fichero-acciones">
                       <button

@@ -130,7 +130,7 @@ def test_uploads_de_peticion_ajena_devuelve_403(
 def test_uploads_de_deposito_publico_accesible_por_cualquier_autenticado(client, usuario_autenticado):
     client.post(
         "/moleculas/subir",
-        data={"tipo": "molecula"},
+        data={"tipo": "molecula", "es_publico": "true"},
         files={"archivo": ("test_dummy_uploads_publico.mol2", CONTENIDO_MOL2_DUMMY, "chemical/x-mol2")},
         headers=usuario_autenticado["headers"],
     )

@@ -49,13 +49,17 @@
   margin: 0;
 }
 
+/* Flex con salto: los <code> van pegados, sin espacios entre ellos, y como
+   texto no había por dónde partir la línea; en un móvil se salía de la
+   pantalla (spec 010). */
 .formatos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
   margin: 0;
   font-size: var(--t-xs);
   color: var(--texto-2);
-}
-.formatos code {
-  margin-left: 6px;
 }
 
 /* Buscador y actualizar */

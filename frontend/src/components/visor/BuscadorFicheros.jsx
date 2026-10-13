@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../../api/client'
-import { crearContadorDeBusquedas } from '../../utils/visor'
+import { crearContadorDeBusquedas, detalleFichero } from '../../utils/visor'
 import { errorDeRespuesta, mensajeError } from '../../utils/mensajes'
 import Icono from '../Icono'
 
@@ -9,12 +9,6 @@ const GRUPOS = [
   { id: 'biblioteca', titulo: 'Bibliotecas' },
   { id: 'resultado', titulo: 'Resultados' },
 ]
-
-function detalle(f) {
-  if (f.formato === 'sdf' && f.grupo !== 'molecula' && f.num_moleculas === null) return 'Contando moléculas…'
-  if (f.num_moleculas > 1) return `${f.num_moleculas} moléculas`
-  return f.formato.toUpperCase()
-}
 
 // Buscador de ficheros del visor (RF-3): todos los que el usuario puede ver,
 // agrupados y con lo más reciente primero (el orden lo da el servidor), y
@@ -94,7 +88,7 @@ export default function BuscadorFicheros({ abierto, alElegir, irA }) {
                     title={f.nombre}
                   >
                     <span className="visor3d-item-nombre">{f.nombre}</span>
-                    <span className="visor3d-item-detalle">{detalle(f)}</span>
+                    <span className="visor3d-item-detalle">{detalleFichero(f)}</span>
                   </button>
                 </li>
               ))}

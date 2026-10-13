@@ -100,6 +100,10 @@ services:
       - ${SLURM_SSH_DIR:-./secrets/ssh}:/root/ssh_montado:ro
       # Solo el socket del sandbox. El banco no ve ninguno de los otros dos.
       - banco_sock:/sock
+      # El estado de las copias, para la página Sistema (spec 009). Solo el
+      # estado: las copias llevan las contraseñas cifradas y los ficheros
+      # privados de todos, y el backend no las necesita.
+      - copias_estado:/app/copias_estado:ro
     ports:
       # Solo desde la propia máquina (spec 004): el navegador llega a la API
       # por el frontend (/api/), y en el servidor RTX por el proxy de HPCA.
@@ -296,6 +300,41 @@ services:
       # `ssh -p 2222 tfg@localhost` mientras depuras.
       - "127.0.0.1:2222:22"
 
+  # --- Copias de seguridad (spec 009) ---
+  #
+  # Una al día a COPIA_HORA: la base con pg_dump y después uploads/ y
+  # algoritmos/, con enlaces duros a la copia anterior para que cada una solo
+  # ocupe lo nuevo. Se conservan la última y la del último domingo.
+  #   docker compose run --rm copias ahora
+  #   docker compose run --rm -v ./uploads:/restaurar/uploads   #     -v ./algoritmos:/restaurar/algoritmos copias restaurar <copia>
+  # (procedimiento completo en docs/specs/004-despliegue/despliegue.md).
+  #
+  # Están en la misma máquina: protegen de borrados y errores, no de que se
+  # rompa el disco. Llevarlas fuera queda como trabajo futuro.
+  copias:
+    build:
+      context: .
+      dockerfile: Dockerfile.copias
+    container_name: tfg_copias
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-tfg_user}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-tfg_password}
+      PGDATABASE: ${POSTGRES_DB:-tfg_virtual_screening}
+      COPIA_HORA: ${COPIA_HORA:-03:00}
+      # La hora de COPIA_HORA es la de aquí, no UTC.
+      TZ: ${TZ:-Europe/Madrid}
+    volumes:
+      # De solo lectura: un fallo del script no puede tocar los datos.
+      - ./uploads:/datos/uploads:ro
+      - ./algoritmos:/datos/algoritmos:ro
+      - ${COPIAS_DIR:-./copias}:/copias
+      - copias_estado:/estado
+    depends_on:
+      db:
+        condition: service_healthy
+
   frontend:
     build:
       context: .
@@ -314,3 +353,5 @@ volumes:
   slurmdb_data:
   # Solo contiene el socket Unix por el que el backend habla con el sandbox.
   banco_sock:
+  # Solo estado.json, el resultado de la última copia (spec 009).
+  copias_estado:

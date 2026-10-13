@@ -135,6 +135,47 @@
   .nav-destacado { margin: 8px 0 4px; align-self: flex-start; }
 }
 
+/* Solo en el menú del móvil (ver abajo). */
+.menu-usuario { display: none; }
+
+/* ===== MÓVIL (spec 010) =====
+   Por debajo de 640 px: la cabecera no pasa de unos 64 px, todo lo que se
+   toca mide al menos --toque de alto y los campos llevan --t-campo de letra.
+   En escritorio no cambia nada. */
+@media (max-width: 640px) {
+  .franja-ual { display: none; }
+  .navbar-contenido { padding-top: 8px; padding-bottom: 8px; }
+  .navbar-logo .logo-ual-escudo { height: 36px; }
+  .menu-usuario {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+    font-size: var(--t-s);
+  }
+  .menu-usuario button {
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    color: #fff;
+    padding: 0 14px;
+    border-radius: var(--radio);
+  }
+
+  button, select, .btn-enlace {
+    min-height: var(--toque);
+  }
+  .btn-enlace { display: inline-flex; align-items: center; }
+  /* Con `:root body` delante para ganar a reglas como `.formulario select`. */
+  :root body input:not([type=checkbox]):not([type=radio]):not([type=file]),
+  :root body select, :root body textarea {
+    font-size: var(--t-campo);
+  }
+}
+
 /* ===== CONTENIDO ===== */
 .contenido-principal {
   flex: 1;
@@ -317,6 +358,51 @@
 /* Algo desactivado o retirado: sigue en la tabla, pero apagado. */
 .tabla-peticiones .fila-inactiva td { color: var(--texto-2); }
 .celda-tipo { white-space: nowrap; }
+
+/* Tablas en el móvil (spec 010): cada fila pasa a ser una tarjeta con pares
+   «etiqueta: valor». Desplazar la tabla de lado dejaba los botones de cada
+   fila fuera de la pantalla. La etiqueta sale del data-label de cada celda,
+   que copia el título de su columna. */
+@media (max-width: 640px) {
+  .tabla-contenedor { background: none; border: none; overflow: visible; }
+  .tabla-peticiones, .tabla-peticiones tbody, .tabla-peticiones tr,
+  .tabla-peticiones td { display: block; width: 100%; min-width: 0; }
+  /* Fuera de la vista, pero no del lector de pantalla. */
+  .tabla-peticiones thead {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .tabla-peticiones tr {
+    background: var(--superficie);
+    border: 1px solid var(--linea);
+    border-radius: var(--radio);
+    padding: 8px 14px;
+    margin-bottom: 12px;
+  }
+  .tabla-peticiones td[data-label] {
+    display: grid;
+    grid-template-columns: 7.5em minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--linea);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .tabla-peticiones td[data-label]:last-child { border-bottom: none; }
+  .tabla-peticiones td[data-label]::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--texto-2);
+  }
+  /* Los nombres largos se parten en vez de cortarse con «…». */
+  .tabla-ficheros .col-fichero { max-width: none; overflow: visible; white-space: normal; }
+  /* Los botones, debajo y a lo ancho: es lo que más se toca. */
+  .tabla-peticiones td.acciones-celda { grid-template-columns: 1fr; }
+  .tabla-peticiones td.acciones-celda::before { display: none; }
+  .acciones-celda button { width: 100%; justify-content: center; margin: 0 0 6px; }
+  .fichero-acciones { flex-wrap: wrap; margin-bottom: 4px; }
+}
 
 /* ===== PESTAÑAS ===== */
 .pestanas {

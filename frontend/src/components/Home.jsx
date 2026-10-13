@@ -87,13 +87,13 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
             <tbody>
               {ejecuciones.map(e => (
                 <tr key={e.id}>
-                  <td className="col-id">#{e.id}</td>
-                  <td className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
-                  <td>{e.workflow_nombre}</td>
-                  <td>
+                  <td data-label="ID" className="col-id">#{e.id}</td>
+                  <td data-label="Fecha" className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
+                  <td data-label="Workflow">{e.workflow_nombre}</td>
+                  <td data-label="Estado">
                     <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
                   </td>
-                  <td>
+                  <td data-label="Ficheros">
                     {e.archivos?.length
                       ? e.archivos.map(f => (
                           <span key={f} className="fichero-acciones">

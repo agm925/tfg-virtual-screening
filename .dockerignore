@@ -28,3 +28,7 @@ CLAUDE.md
 MEMORY.md
 tests/
 *.stackdump
+
+# Copias de seguridad (spec 009): llevan las contraseñas cifradas y los
+# ficheros privados de todos los usuarios.
+copias/

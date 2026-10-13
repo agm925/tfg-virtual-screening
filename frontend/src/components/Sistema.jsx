@@ -3,6 +3,7 @@ import { apiFetch } from '../api/client'
 import Icono from './Icono'
 import { formatFecha } from '../utils/ficheros'
 import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
+import { avisoCopias, tamanoLegible } from '../utils/sistema'
 import '../styles/Sistema.css'
 
 const POLL_MS = 8000
@@ -61,8 +62,9 @@ export default function Sistema() {
     return <div className="seccion-wrapper"><h2>Estado del sistema</h2><p className="texto-secundario">Cargando…</p></div>
   }
 
-  const { servidor, cola, peticiones, workflows, usuarios } = estado
+  const { servidor, cola, peticiones, workflows, usuarios, copias } = estado
   const hayProcesos = cola.disponible && cola.workers_conectados > 0
+  const aviso = avisoCopias(copias)
 
   return (
     <div className="seccion-wrapper">
@@ -85,6 +87,12 @@ export default function Sistema() {
             ? 'La plataforma está atendiendo trabajos con normalidad.'
             : 'No hay ningún proceso de cálculo en marcha: los trabajos se quedarán en cola hasta que arranque alguno.'}
       </p>
+
+      {/* Spec 009: si nadie mira las copias, nadie se entera de que han
+          dejado de hacerse. */}
+      {aviso && (
+        <p className="estado-cola error-msg" role="status"><Icono nombre="aviso" />{aviso}</p>
+      )}
 
       <div className="paneles-sistema">
         <Panel titulo="Procesos de cálculo" icono="procesando">
@@ -119,6 +127,17 @@ export default function Sistema() {
         <Panel titulo="Usuarios" icono="ok">
           <Metrica label="Registrados" valor={usuarios.total} />
           <Metrica label="Con el correo verificado" valor={usuarios.verificados} estado="completado" />
+        </Panel>
+
+        <Panel titulo="Copias de seguridad" icono="guardar">
+          <Metrica label="Última copia" valor={copias?.ultima ? formatFecha(copias.ultima.fecha) : 'Ninguna'}
+                   estado={aviso ? 'error' : 'completado'} />
+          {copias?.ultima && (
+            <>
+              <Metrica label="Ficheros" valor={copias.ultima.ficheros} />
+              <Metrica label="Tamaño" valor={tamanoLegible(copias.ultima.bytes)} />
+            </>
+          )}
         </Panel>
       </div>
     </div>

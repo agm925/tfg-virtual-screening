@@ -3,7 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Que
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import engine, SessionLocal
-from app import models, paginas, permisos, schemas, visor
+from app import copias_estado, models, paginas, permisos, schemas, visor
 from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
@@ -115,7 +115,7 @@ def exigir_acceso_a_archivo(nombre_archivo: str, db: Session, usuario: models.Us
 
 def registrar_archivo(db: Session, nombre: str, propietario_id, visibilidad,
                       tipo=None, tamano_bytes=None, num_moleculas=None,
-                      ejecucion_id=None, peticion_id=None) -> None:
+                      ejecucion_id=None, peticion_id=None, es_publico=None) -> None:
     """Da de alta un fichero en el registro, o actualiza el que ya existiera."""
     archivo = _archivo_registrado(nombre, db)
     if archivo is None:
@@ -133,6 +133,8 @@ def registrar_archivo(db: Session, nombre: str, propietario_id, visibilidad,
         archivo.ejecucion_id = ejecucion_id
     if peticion_id is not None:
         archivo.peticion_id = peticion_id
+    if es_publico is not None:
+        archivo.es_publico = es_publico
 
 
 def borrar_archivos_registrados(db: Session, filtro) -> int:
@@ -771,6 +773,10 @@ def listar_algoritmos(
 async def subir_molecula(
     archivo: UploadFile = File(...),
     tipo: str = Form("molecula"),   # "molecula" | "base_de_datos"
+    # Sin valor por defecto, a proposito (spec 007): la interfaz pregunta en
+    # cada subida, y un cliente que no pregunte recibe un 422 en vez de
+    # publicar para todos algo que quiza era privado.
+    es_publico: bool = Form(...),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
@@ -781,9 +787,9 @@ async def subir_molecula(
     archivos"--, lo que en la práctica significaba que cualquiera en la red,
     sin cuenta, podía escribir ficheros en el servidor sin límite de tamaño ni
     de cantidad: bastaba para llenar el disco y dejar la plataforma inservible.
-    Sigue siendo un depósito compartido entre usuarios autenticados, que es lo
-    que hace posible reutilizar una base de datos subida por un compañero; lo
-    que deja de ser es público para cualquiera.
+    Lo público es un depósito compartido entre usuarios autenticados, que es
+    lo que hace posible reutilizar una base de datos subida por un compañero;
+    lo privado solo lo ve quien lo sube (spec 007, ver app/permisos.py).
     """
     nombre_fichero = nombre_archivo_seguro(archivo.filename)
     if not nombre_fichero:
@@ -845,6 +851,7 @@ async def subir_molecula(
         tipo=tipo_real,
         tamano_bytes=escritos,
         num_moleculas=num_moleculas,
+        es_publico=es_publico,
     )
     db.commit()
 
@@ -862,6 +869,7 @@ async def subir_molecula(
         "tipo":          tipo_real.value,
         "tamano_kb":     round(escritos / 1024, 1),
         "num_moleculas": num_moleculas,
+        "es_publico":    es_publico,
     }
 
 
@@ -903,8 +911,8 @@ def listar_moleculas(
     """
     Lista las moléculas visibles para el usuario, desde el registro `archivos`.
 
-    Devuelve la biblioteca compartida --que ve cualquier usuario autenticado--
-    más los ficheros privados del propio usuario. Los resultados de otros
+    Devuelve lo subido como público --que ve cualquier usuario autenticado--
+    más todo lo del propio usuario. Los resultados y lo privado de otros
     quedan fuera.
 
     Antes esto recorría el directorio entero con un `stat()` por fichero
@@ -925,12 +933,8 @@ def listar_moleculas(
 
     extensiones_molecula = (".mol2", ".sdf", ".pdbqt", ".mol", ".pdb")
 
-    visibles = or_(
-        models.Archivo.visibilidad == models.VisibilidadArchivo.biblioteca,
-        models.Archivo.propietario_id == usuario_objetivo,
-    )
     consulta = db.query(models.Archivo).filter(
-        visibles,
+        permisos.filtro_visibles(usuario_objetivo),
         or_(*[models.Archivo.nombre.ilike(f"%{ext}") for ext in extensiones_molecula]),
     )
 
@@ -952,6 +956,7 @@ def listar_moleculas(
                       else "molecula")),
             "num_moleculas": a.num_moleculas,
             "tamano_kb": round((a.tamano_bytes or 0) / 1024, 1),
+            "es_publico": a.es_publico,
         }
         for a in archivos
     ]
@@ -1516,6 +1521,9 @@ def estado_sistema(
             "total": total_usuarios,
             "verificados": usuarios_verificados,
         },
+        # Spec 009: si nadie mira las copias, nadie se entera de que han
+        # dejado de hacerse.
+        "copias": copias_estado.estado_actual(),
     }
 
 
@@ -1732,8 +1740,15 @@ def admin_listar_moleculas(
 
     Para borrarlos se usa el DELETE /moleculas/{nombre} que ya existe, que
     admite a cualquier admin (ver app/permisos.py).
+
+    Lo subido como privado por otro usuario no sale: privado significa solo
+    su autor, tambien frente al administrador (spec 007).
     """
-    consulta = db.query(models.Archivo)
+    consulta = db.query(models.Archivo).filter(or_(
+        models.Archivo.visibilidad != models.VisibilidadArchivo.biblioteca,
+        models.Archivo.es_publico == True,  # noqa: E712
+        models.Archivo.propietario_id == admin.id,
+    ))
     response.headers["X-Total-Count"] = str(consulta.count())
     archivos = (
         consulta.order_by(models.Archivo.fecha_creacion.desc())

@@ -3,6 +3,7 @@ import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
 import Icono from '../Icono';
+import PreguntaVisibilidad from '../PreguntaVisibilidad';
 import { errorDeRespuesta, mensajeError } from '../../utils/mensajes';
 
 const UploadNodoNode = ({ data, id }) => {
@@ -11,6 +12,10 @@ const UploadNodoNode = ({ data, id }) => {
   const [nombreSubido, setNombreSubido] = useState(data.nombre_archivo || null);
   // Error dentro del propio nodo, junto a lo que lo ha causado (antes, alert).
   const [error, setError] = useState(null);
+  const [preguntando, setPreguntando] = useState(false);
+  // Solo se sabe de lo subido en esta sesión del editor; al reabrir un
+  // workflow guardado no se pinta nada en vez de adivinar.
+  const [esPublico, setEsPublico] = useState(null);
 
   const EXTENSIONES = ['.mol2', '.sdf', '.mol', '.pdb', '.pdbqt', '.smi', '.xyz'];
 
@@ -40,12 +45,17 @@ const UploadNodoNode = ({ data, id }) => {
   //
   // El endpoint correcto es /moleculas/subir, que es justamente lo que este
   // nodo necesita: dejar el fichero disponible para los nodos siguientes.
-  const uploadMolecula = async () => {
+  //
+  // Antes de subir se pregunta quién podrá verlo, igual que en Moléculas
+  // (spec 007).
+  const uploadMolecula = async (publico) => {
+    setPreguntando(false);
     setCargando(true);
     setError(null);
     const formData = new FormData();
     formData.append('archivo', archivo);
     formData.append('tipo', 'molecula');
+    formData.append('es_publico', publico ? 'true' : 'false');
     try {
       const response = await apiFetch('/moleculas/subir', { method: 'POST', body: formData });
       if (!response.ok) throw await errorDeRespuesta(response);
@@ -55,6 +65,7 @@ const UploadNodoNode = ({ data, id }) => {
       // confirmación es la línea con el nombre subido.
       data.nombre_archivo = result.nombre;
       setNombreSubido(result.nombre);
+      setEsPublico(result.es_publico);
       setArchivo(null);
     } catch (err) {
       setError(mensajeError('subir la molécula', err));
@@ -69,12 +80,17 @@ const UploadNodoNode = ({ data, id }) => {
         <input type="file" accept=".mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz" onChange={handleFileChange}
                className="file-input" aria-label="Fichero de la molécula" />
         {nombreSubido && !archivo && (
-          <p className="file-name"><Icono nombre="ok" tamano={12} />Subida: {nombreSubido}</p>
+          <p className="file-name">
+            <Icono nombre="ok" tamano={12} />Subida: {nombreSubido}
+            {esPublico === false && ' (privada)'}
+          </p>
         )}
         {error && <p className="nodo-aviso" role="status">{error}</p>}
-        <button onClick={uploadMolecula} disabled={!archivo || cargando} className="upload-btn">
+        <button onClick={() => setPreguntando(true)} disabled={!archivo || cargando} className="upload-btn">
           {cargando ? 'Subiendo…' : 'Subir'}
         </button>
+        <PreguntaVisibilidad fichero={preguntando ? archivo?.name : null}
+                             alElegir={uploadMolecula} alCancelar={() => setPreguntando(false)} />
       </div>
       <Handle type="source" position={Position.Right} id="output" />
     </MarcoNodo>

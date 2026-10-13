@@ -224,9 +224,10 @@ export default function Tutorial() {
                 página <strong>Moléculas</strong> es el almacén de todos los ficheros moleculares.
               </p>
               <p>
-                Lo que subes forma una <strong>biblioteca compartida</strong>: lo ven todos los
-                usuarios, pero solo tú (o un administrador) puede borrarlo. Lo que generan tus
-                workflows, en cambio, es privado: solo lo ves tú.
+                Cada vez que subes un fichero eliges quién puede verlo. Si es
+                <strong> público</strong>, lo ven todos los usuarios, pero solo tú (o un
+                administrador) puede borrarlo. Si es <strong>privado</strong>, solo lo ves tú.
+                Lo que generan tus workflows también es privado.
               </p>
 
               <h3>Tipos de fichero que puedes subir</h3>
@@ -255,7 +256,10 @@ export default function Tutorial() {
                 <li>Ve a la página <strong>Moléculas</strong>.</li>
                 <li>Elige el panel adecuado: <em>«Molécula individual»</em> o <em>«Biblioteca»</em>.</li>
                 <li>Arrastra el fichero a la zona punteada, o haz clic en ella para buscarlo en tu equipo.</li>
-                <li>Pulsa <strong>«Subir»</strong>. El fichero aparece en las tablas de abajo en unos segundos.</li>
+                <li>Pulsa <strong>«Subir»</strong>. Se abre la pregunta <em>«¿Quién puede ver este fichero?»</em>:
+                  elige <strong>Privado</strong> (solo tú) o <strong>Público</strong> (todos los usuarios).
+                  No se puede cambiar después.</li>
+                <li>El fichero aparece en las tablas de abajo en unos segundos; los privados llevan la marca «privado».</li>
               </ol>
 
               <Aviso icono="matraz">
