@@ -49,3 +49,14 @@ export const ESTADOS_ACTIVOS = ['pendiente', 'procesando'];
 export function estaActivo(estado) {
   return ESTADOS_ACTIVOS.includes((estado || '').toLowerCase());
 }
+
+// El fichero que muestra el nodo «Elegir molécula» al cargarse (spec 012).
+// Antes, si el guardado ya no estaba en la lista (borrado, o un resultado que
+// se borró desde Resultados), se cambiaba en silencio por el primero: el
+// workflow dejaba de ser el que se guardó, y en modo consulta se enseñaba un
+// fichero que no era el que se usó. Ahora se mantiene y se marca (`falta`);
+// solo un nodo nuevo, sin fichero, empieza con el primero.
+export function seleccionInicial(guardado, lista) {
+  if (guardado) return { nombre: guardado, falta: !lista.some(m => m.nombre === guardado) };
+  return { nombre: lista[0]?.nombre ?? '', falta: false };
+}

@@ -771,6 +771,7 @@ def listar_ejecuciones_usuario(
             "id":                  e.id,
             "workflow_id":         e.workflow_id,
             "workflow_nombre":     e.workflow.nombre if e.workflow else "—",
+            "workflow_borrado":    bool(e.workflow and e.workflow.borrado_en),
             "estado":              e.estado,
             "fecha_ejecucion":     e.fecha_ejecucion.isoformat() if e.fecha_ejecucion else None,
             "duracion_segundos":   e.duracion_segundos,
@@ -1112,14 +1113,20 @@ def listar_workflows_usuario(
     """
     if usuario_id != usuario_actual.id and not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No tienes permiso para ver estos workflows")
-    consulta = db.query(models.Workflow).filter(models.Workflow.usuario_id == usuario_id)
+    consulta = db.query(models.Workflow).filter(
+        models.Workflow.usuario_id == usuario_id, models.Workflow.borrado_en.is_(None))
     response.headers["X-Total-Count"] = str(consulta.count())
     return consulta.order_by(models.Workflow.id.desc()).offset(pagina.offset).limit(pagina.limit).all()
 
 
 def _obtener_workflow_propio(workflow_id: int, db: Session, usuario_actual: models.Usuario) -> models.Workflow:
-    """Carga un workflow y comprueba que el usuario autenticado es su propietario o admin."""
-    workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    """
+    Carga un workflow y comprueba que el usuario autenticado es su propietario
+    o admin. Uno borrado no existe para el Constructor (spec 012): sus
+    ejecuciones se consultan por /workflows/ejecuciones/{id}.
+    """
+    workflow = db.query(models.Workflow).filter(
+        models.Workflow.id == workflow_id, models.Workflow.borrado_en.is_(None)).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow no encontrado")
     if workflow.usuario_id != usuario_actual.id and not es_admin(usuario_actual):
@@ -1169,37 +1176,18 @@ def borrar_workflow(
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
     """
-    Borra un workflow y todas sus ejecuciones. Solo el propietario o un admin.
+    Quita un workflow del Constructor. Solo el propietario o un admin.
+
+    Es un borrado lógico (spec 012): sus ejecuciones, sus ficheros y la copia
+    del grafo de cada una se quedan en Resultados, donde se pueden ver y
+    borrar una a una (DELETE /workflows/ejecuciones/{id}). Antes se los
+    llevaba todos por delante. Una ejecución que siga en marcha termina con
+    normalidad: ejecuta su copia.
     """
     workflow = _obtener_workflow_propio(workflow_id, db, usuario_actual)
-
-    # Borrar ejecuciones asociadas y los ficheros que produjeron
-    ids_ejecuciones = [
-        e.id for e in db.query(models.WorkflowExecution.id)
-        .filter(models.WorkflowExecution.workflow_id == workflow_id).all()
-    ]
-    borrados = 0
-    if ids_ejecuciones:
-        borrados = borrar_archivos_registrados(
-            db, models.Archivo.ejecucion_id.in_(ids_ejecuciones))
-        # El flush NO es opcional. borrar_archivos_registrados usa db.delete(),
-        # que solo MARCA las filas y las envía al vaciar la sesión; la línea de
-        # abajo usa Query.delete(), que emite su DELETE al instante. Sin este
-        # flush el borrado de workflow_executions se ejecutaba ANTES que el de
-        # archivos, y como archivos.ejecucion_id las referencia, PostgreSQL lo
-        # rechazaba: cualquier workflow que se hubiera ejecutado alguna vez
-        # devolvía un 500 al intentar borrarlo (ForeignKeyViolation en
-        # archivos_ejecucion_id_fkey). Los que nunca se ejecutaron sí se
-        # borraban, que es por lo que pasaba desapercibido.
-        db.flush()
-    db.query(models.WorkflowExecution).filter(models.WorkflowExecution.workflow_id == workflow_id).delete()
-    db.delete(workflow)
+    workflow.borrado_en = datetime.utcnow()
     db.commit()
-
-    return {
-        "mensaje": f"Workflow {workflow_id} eliminado correctamente",
-        "archivos_borrados": borrados,
-    }
+    return {"mensaje": f"Workflow {workflow_id} eliminado correctamente"}
 
 
 @app.post("/workflows/{workflow_id}/ejecutar")
@@ -1233,8 +1221,10 @@ def ejecutar_workflow(
             detail=f"El flujo usa '{e.nombre_archivo}', que no es tuyo: {e.mensaje}",
         )
 
-    # Auto-detectar modo batch: hay nodo selectDB con base de datos seleccionada
+    # La copia que se guarda en la ejecucion (spec 012) es lo que se ejecuta,
+    # asi que el modo se decide sobre ella.
     grafo    = workflow.grafo_json or {}
+    # Auto-detectar modo batch: hay nodo selectDB con base de datos seleccionada
     es_batch = any(
         nodo.get("type") == "selectDB" and nodo.get("data", {}).get("nombre_archivo")
         for nodo in grafo.get("nodes", [])
@@ -1244,6 +1234,7 @@ def ejecutar_workflow(
         workflow_id=workflow_id,
         usuario_id=usuario_id,
         estado="pendiente",
+        grafo_json=grafo,
     )
     db.add(ejecucion)
     db.commit()
@@ -1481,7 +1472,57 @@ def obtener_ejecucion(
     if ejecucion.usuario_id != usuario_actual.id and not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No tienes permiso para ver esta ejecución")
 
-    return ejecucion
+    respuesta = schemas.WorkflowExecutionRespuesta.model_validate(ejecucion)
+    workflow = ejecucion.workflow
+    respuesta.workflow_borrado = bool(workflow and workflow.borrado_en)
+    respuesta.copia_exacta = ejecucion.grafo_json is not None
+    if not respuesta.copia_exacta and workflow:
+        respuesta.grafo_json = workflow.grafo_json
+    return respuesta
+
+
+@app.delete("/workflows/ejecuciones/{ejecucion_id}")
+def borrar_ejecucion(
+    ejecucion_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+):
+    """
+    Borra los resultados de una ejecución desde Resultados (spec 012): sus
+    ficheros, su fila y con ella la copia del grafo. Solo su autor o un admin.
+    """
+    ejecucion = db.query(models.WorkflowExecution).filter(
+        models.WorkflowExecution.id == ejecucion_id).first()
+    if not ejecucion:
+        raise HTTPException(status_code=404, detail="Ejecución no encontrada")
+    if ejecucion.usuario_id != usuario_actual.id and not es_admin(usuario_actual):
+        raise HTTPException(status_code=403, detail="No tienes permiso para borrar esta ejecución")
+    # Con la tarea en marcha, sus ficheros se seguirían escribiendo y
+    # registrando contra una ejecución que ya no existe.
+    if ejecucion.estado in ("pendiente", "procesando"):
+        raise HTTPException(status_code=409,
+                            detail="Esta ejecución sigue en marcha. Cancélala antes de borrarla.")
+
+    workflow = ejecucion.workflow
+    borrados = borrar_archivos_registrados(db, models.Archivo.ejecucion_id == ejecucion_id)
+    # El flush NO es opcional: borrar_archivos_registrados solo marca las filas
+    # de `archivos`, que referencian la ejecución, y sin vaciarlas antes
+    # PostgreSQL rechaza borrarla (ForeignKeyViolation en
+    # archivos_ejecucion_id_fkey).
+    db.flush()
+    db.delete(ejecucion)
+    db.flush()
+    # Un workflow borrado solo se conservaba por sus resultados: con el último
+    # ya no lo necesita nadie.
+    if workflow and workflow.borrado_en and not db.query(models.WorkflowExecution).filter(
+            models.WorkflowExecution.workflow_id == workflow.id).first():
+        db.delete(workflow)
+    db.commit()
+
+    return {
+        "mensaje": f"Ejecución {ejecucion_id} eliminada correctamente",
+        "archivos_borrados": borrados,
+    }
 
 
 # --- MONITORIZACIÓN DEL SISTEMA (solo admin) ---
@@ -1531,7 +1572,7 @@ def estado_sistema(
     peticiones_completadas = db.query(models.Peticion).filter(models.Peticion.estado == "COMPLETADO").count()
     peticiones_error = db.query(models.Peticion).filter(models.Peticion.estado == "ERROR").count()
 
-    total_workflows = db.query(models.Workflow).count()
+    total_workflows = db.query(models.Workflow).filter(models.Workflow.borrado_en.is_(None)).count()
     total_ejecuciones = db.query(models.WorkflowExecution).count()
     ejecuciones_pendientes = db.query(models.WorkflowExecution).filter(
         models.WorkflowExecution.estado.in_(["pendiente", "procesando"])

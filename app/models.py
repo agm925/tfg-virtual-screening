@@ -150,6 +150,10 @@ class Workflow(Base):
     estado = Column(String, default="borrador", index=True)  # borrador, procesando, completado, fallido
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Borrado logico (spec 012): el workflow desaparece del Constructor, pero
+    # sus ejecuciones, sus ficheros y la copia del grafo de cada una siguen en
+    # Resultados. Eliminar la fila obligaria a borrarlos, porque la referencian.
+    borrado_en = Column(DateTime, nullable=True)
 
     # Relaciones
     usuario = relationship("Usuario", back_populates="workflows")
@@ -166,6 +170,11 @@ class WorkflowExecution(Base):
     estado = Column(String, default="pendiente", index=True)  # pendiente, procesando, completado, error, cancelado
     celery_task_id = Column(String, nullable=True)
     resultados_json = Column(JSON, nullable=True)
+    # Copia del grafo con el que se lanzo (spec 012). Es lo que ejecutan las
+    # tareas y lo que se ensena en «Ver workflow»: el workflow se puede editar
+    # despues, o incluso mientras corre un cribado largo. Nula en las
+    # ejecuciones anteriores a la copia.
+    grafo_json = Column(JSON, nullable=True)
     fecha_ejecucion = Column(DateTime, default=datetime.utcnow, index=True)
     duracion_segundos = Column(Integer, nullable=True)
 

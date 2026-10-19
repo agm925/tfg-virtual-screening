@@ -3,6 +3,7 @@ import { apiFetch, descargarConToken } from '../api/client'
 import { claseEstado, textoEstado, etiquetaFichero, formatFecha } from '../utils/ficheros'
 import { mensajeError } from '../utils/mensajes'
 import VerEn3D from './VerEn3D'
+import Icono from './Icono'
 
 // Cuántas ejecuciones recientes se enseñan aquí; el resto está en Resultados.
 const RECIENTES = 5;
@@ -11,7 +12,7 @@ const RECIENTES = 5;
 // último que ha lanzado, con sus ficheros a mano. Antes eran cuatro tarjetas
 // de presentación iguales para todos, y los resultados de un cribado no
 // aparecían en ninguna parte fuera del editor.
-export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnVisor }) {
+export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnVisor, verWorkflow }) {
   const [ejecuciones, setEjecuciones] = useState(null);   // null = cargando
   const [errorDescarga, setErrorDescarga] = useState(null);
 
@@ -82,6 +83,7 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
                 <th>Workflow</th>
                 <th>Estado</th>
                 <th>Ficheros</th>
+                <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -89,7 +91,10 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
                 <tr key={e.id}>
                   <td data-label="ID" className="col-id">#{e.id}</td>
                   <td data-label="Fecha" className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
-                  <td data-label="Workflow">{e.workflow_nombre}</td>
+                  <td data-label="Workflow">
+                    {e.workflow_nombre}
+                    {e.workflow_borrado && <span className="texto-secundario"> (borrado)</span>}
+                  </td>
                   <td data-label="Estado">
                     <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
                   </td>
@@ -108,6 +113,11 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
                           </span>
                         ))
                       : <span className="col-cifra">—</span>}
+                  </td>
+                  <td data-label="Acciones">
+                    <button className="btn-descarga" onClick={() => verWorkflow(e)}>
+                      <Icono nombre="nodos" />Ver workflow
+                    </button>
                   </td>
                 </tr>
               ))}

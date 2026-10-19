@@ -31,6 +31,8 @@ import { getToken } from '../api/client';
 import { mensajeError } from '../utils/mensajes';
 import { claveEditor } from '../utils/almacenamiento';
 import { aCoordenadasDelLienzo, posicionNuevoNodo } from '../utils/lienzo';
+import { huella, vistaDeEjecucion } from '../utils/ejecucion';
+import { SoloLectura } from '../utils/soloLectura';
 import '../styles/Nodos.css';
 
 const I_REPRODUCIR = <Icono nombre="reproducir" />;
@@ -99,13 +101,6 @@ const grafoGuardable = (nodes, edges) => ({
 
 const GRAFO_VACIO = { nodes: [], edges: [] };
 
-// JSON con las claves ordenadas: los nodos rellenan `data` en el orden en que
-// se montan, y el mismo grafo no puede parecer distinto por eso.
-const huella = (valor) => JSON.stringify(valor, (_, v) =>
-  v && typeof v === 'object' && !Array.isArray(v)
-    ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
-    : v);
-
 const resumenWorkflow = (wf) => wf && { id: wf.id, nombre: wf.nombre, descripcion: wf.descripcion };
 
 const MENSAJE_SIN_GUARDAR =
@@ -116,12 +111,22 @@ const MENSAJE_SIN_GUARDAR =
 const siguienteNodoId = (nodos) =>
   Math.max(-1, ...(nodos || []).map(n => Number(String(n.id).split('_').pop()) || 0)) + 1;
 
+// «Ver workflow» desde Resultados o Inicio (spec 012): lo que se dice sobre el
+// lienzo segun lo que se esta viendo (utils/ejecucion.js, vistaDeEjecucion).
+const TEXTO_VISTA = {
+  consulta: (n) => `Estás viendo el workflow tal como se ejecutó en la ejecución nº ${n}. Desde entonces lo has cambiado.`,
+  borrado: (n) => `Este workflow está borrado: lo ves tal como se ejecutó en la ejecución nº ${n}.`,
+  'sin-copia': () => 'Esta ejecución es anterior a que se guardara el workflow de cada ejecución: se muestra la versión actual, que puede no ser la que dio estos resultados.',
+};
+
 // `salidaRef`: App.jsx la consulta antes de cambiar de pagina o cerrar
 // sesion; aqui se deja en ella la funcion que pregunta si hay cambios.
-const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRef, abrirEnVisor }) => {
+// `llegada`: {workflow_id, ejecucion_id, workflow_nombre} de un «Ver
+// workflow» de otra pagina (spec 012), que se consume una vez (`alLlegar`).
+const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRef, abrirEnVisor, llegada, alLlegar }) => {
   // El borrador se lee una vez, como estado inicial. Si se llega desde "Nuevo
-  // workflow" se empieza uno nuevo, no el borrador.
-  const [borrador] = useState(() => (crearAlAbrir ? null : leerBorrador(usuario)));
+  // workflow" se empieza uno nuevo, y desde «Ver workflow» lo que se pidio.
+  const [borrador] = useState(() => (crearAlAbrir || llegada ? null : leerBorrador(usuario)));
   const [nodes, setNodes, onNodesChange] = useNodesState(conPosicion(borrador?.grafo?.nodes));
   const [edges, setEdges, onEdgesChange] = useEdgesState(borrador?.grafo?.edges || []);
   const [workflows, setWorkflows] = useState([]);
@@ -131,6 +136,11 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   const [estadoEjecucion,  setEstadoEjecucion]  = useState(null); // 'pendiente'|'procesando'|null
   const [batchProgreso,    setBatchProgreso]     = useState(null); // { actual, total, molecula_actual }
   const [nodoId, setNodoId] = useState(() => siguienteNodoId(borrador?.grafo?.nodes));
+  // {tipo: 'consulta'|'borrado'|'sin-copia', ejecucionId} cuando se ve el
+  // workflow de una ejecucion que no es la version actual editable (spec 012).
+  // En 'consulta' y 'borrado' no se puede cambiar nada: es lo que se ejecuto.
+  const [vistaEjecucion, setVistaEjecucion] = useState(borrador?.vista || null);
+  const soloLectura = vistaEjecucion?.tipo === 'consulta' || vistaEjecucion?.tipo === 'borrado';
   const esperaRef = useRef(null); // AbortController de la espera en curso
   // Aviso en la propia pagina { tipo: 'exito'|'error', texto }. Antes eran
   // alert(), que bloquean la pantalla y enseñaban el err.message tal cual.
@@ -154,6 +164,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     crearWorkflow,
     actualizarWorkflow,
     obtenerWorkflows,
+    obtenerWorkflow,
     ejecutarWorkflow,
     esperarEjecucion,
     obtenerEjecucion,
@@ -176,6 +187,8 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   const borradorRef = useRef(borrador || { grafo: GRAFO_VACIO, workflowActual: null, ejecucionId: null });
   const actualRef = useRef({ nodes, edges });
   useEffect(() => { actualRef.current = { nodes, edges }; }, [nodes, edges]);
+  const soloLecturaRef = useRef(soloLectura);
+  useEffect(() => { soloLecturaRef.current = soloLectura; }, [soloLectura]);
 
   const escribirBorrador = (cambios) => {
     borradorRef.current = { ...borradorRef.current, ...cambios };
@@ -196,6 +209,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     });
 
   const hayCambios = () => {
+    // En modo consulta no se puede cambiar nada que guardar; si un nodo
+    // completa sus `data` al montarse (el nombre de su algoritmo), no cuenta.
+    if (soloLecturaRef.current) return false;
     const { nodes: n, edges: e } = actualRef.current;
     return huella(grafoGuardable(n, e)) !== huella(borradorRef.current.grafo);
   };
@@ -203,6 +219,22 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   // Antes de perder lo que hay en el lienzo (otra pagina, otro workflow,
   // cerrar sesion): true si no hay cambios o si el usuario acepta perderlos.
   const confirmarDescarte = () => !hayCambios() || window.confirm(MENSAJE_SIN_GUARDAR);
+
+  const ponerVista = (vista) => {
+    setVistaEjecucion(vista);
+    escribirBorrador({ vista });
+  };
+
+  // Pone un grafo en el lienzo como ultima version guardada.
+  const mostrarGrafo = (grafo, workflow, ejecucionId) => {
+    setWorkflowActual(workflow);
+    const nodos = conPosicion(grafo.nodes);
+    setNodes(nodos);
+    setEdges(grafo.edges || []);
+    setNodoId(siguienteNodoId(grafo.nodes));
+    setResultsPanel(null);
+    marcarGuardado(grafoGuardable(nodos, grafo.edges || []), workflow, ejecucionId);
+  };
 
   useEffect(() => {
     if (!salidaRef) return;
@@ -261,6 +293,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
 
   const onDrop = (event) => {
     event.preventDefault();
+    if (soloLectura) return;
     const tipo = event.dataTransfer.getData('tipo');
     const caja = event.currentTarget.getBoundingClientRect();
     // Con el desplazamiento y el zoom del lienzo: antes se tomaba el punto de
@@ -309,6 +342,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       });
 
       cortarEspera();
+      ponerVista(null);
       setWorkflowActual(nuevoWf);
       setNodes([]);
       setEdges([]);
@@ -359,13 +393,8 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   const cargarWorkflow = (workflow) => {
     if (!confirmarDescarte()) return;
     cortarEspera();
-    setWorkflowActual(workflow);
-    const grafo = workflow.grafo_json || GRAFO_VACIO;
-    const nodos = conPosicion(grafo.nodes);
-    setNodes(nodos);
-    setEdges(grafo.edges || []);
-    setResultsPanel(null);
-    marcarGuardado(grafoGuardable(nodos, grafo.edges || []), workflow, null);
+    ponerVista(null);
+    mostrarGrafo(workflow.grafo_json || GRAFO_VACIO, workflow, null);
   };
 
 
@@ -425,6 +454,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     }
 
     setAviso(null);
+    ponerVista(null);   // los resultados nuevos ya son de esta version
     setEjecutando(true);
     setEstadoEjecucion('pendiente');
     setResultsPanel(null);
@@ -490,6 +520,56 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     }
   };
 
+  // «Ver workflow» (spec 012): el grafo que dio los resultados de una
+  // ejecucion, con esos resultados en el panel. No se pregunta por cambios
+  // sin guardar: se llega desde otra pagina, y al salir de aqui ya se pregunto.
+  const abrirEjecucion = async ({ workflow_id, ejecucion_id, workflow_nombre }) => {
+    cortarEspera();
+    setAviso(null);
+    setPanelMovil('resultados');   // en el móvil, lo que se ha venido a ver
+    let ejecucion;
+    let actual = null;
+    try {
+      ejecucion = await obtenerEjecucion(ejecucion_id);
+      if (!ejecucion.workflow_borrado) actual = await obtenerWorkflow(workflow_id);
+    } catch (err) {
+      ponerVista(null);
+      mostrarGrafo(GRAFO_VACIO, null, null);
+      avisar('error', mensajeError('abrir el workflow de esta ejecución', err));
+      return;
+    }
+    const tipo = vistaDeEjecucion(ejecucion, actual);
+    const conCopia = tipo === 'consulta' || tipo === 'borrado';
+    mostrarGrafo((conCopia ? ejecucion.grafo_json : actual.grafo_json) || GRAFO_VACIO,
+                 actual || { id: workflow_id, nombre: workflow_nombre }, ejecucion_id);
+    ponerVista(tipo === 'actual' ? null : { tipo, ejecucionId: ejecucion_id });
+    if (estaActivo(ejecucion.estado)) {
+      seguirEjecucion(ejecucion_id);
+    } else {
+      setResultsPanel(ejecucion.resultados_json || {});
+      marcarNodos(ejecucion.resultados_json);
+    }
+  };
+
+  const abrirVersionActual = async () => {
+    try {
+      cargarWorkflow(await obtenerWorkflow(workflowActual.id));
+    } catch (err) {
+      avisar('error', mensajeError('abrir la versión actual', err));
+    }
+  };
+
+  // Como crearAlAbrir: la referencia evita atenderla dos veces cuando React
+  // ejecuta el efecto por duplicado (StrictMode, en desarrollo).
+  const llegadaAtendida = useRef(false);
+  useEffect(() => {
+    if (!llegada || llegadaAtendida.current) return;
+    llegadaAtendida.current = true;
+    alLlegar?.();
+    abrirEjecucion(llegada);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [llegada]);
+
   useEffect(() => {
     // Consultar al servidor al montar es justo para lo que sirve un efecto; el
     // aviso salta por el setCargando que obtenerEjecucion hace al empezar, un
@@ -505,6 +585,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   const limpiar = () => {
     if (window.confirm("¿Limpiar todos los nodos?")) {
       cortarEspera();
+      ponerVista(null);
       setNodes([]);
       setEdges([]);
       setWorkflowActual(null);
@@ -533,7 +614,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
           <button onClick={crearNuevo} className="btn btn-primary">
             <Icono nombre="mas" />Nuevo workflow
           </button>
-          <button onClick={guardarWorkflow} className="btn btn-secondary" disabled={!workflowActual}>
+          <button onClick={guardarWorkflow} className="btn btn-secondary" disabled={!workflowActual || soloLectura}>
             <Icono nombre="guardar" />Guardar
           </button>
           <button onClick={limpiar} className="btn btn-danger">
@@ -563,7 +644,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
           <button
             onClick={ejecutar}
             className="btn btn-success"
-            disabled={ejecutando || nodes.length === 0}
+            disabled={ejecutando || nodes.length === 0 || soloLectura}
           >
             {!ejecutando && <>{I_REPRODUCIR}Ejecutar workflow</>}
             {ejecutando && estadoEjecucion === 'pendiente'  && <>{I_RELOJ}En cola…</>}
@@ -578,7 +659,8 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       {/* Solo en el móvil (ver visualBuilder.css). */}
       <div className="barra-paneles-movil">
         <button type="button" aria-expanded={panelMovil === 'paleta'} aria-controls="paleta-nodos"
-                className={panelMovil === 'paleta' ? 'activo' : ''} onClick={() => alternarPanel('paleta')}>
+                className={panelMovil === 'paleta' ? 'activo' : ''} onClick={() => alternarPanel('paleta')}
+                disabled={soloLectura}>
           <Icono nombre="mas" />Añadir nodo
         </button>
         <button type="button" aria-expanded={panelMovil === 'resultados'} aria-controls="panel-resultados"
@@ -596,7 +678,8 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
               <button
                 type="button"
                 key={nodo.tipo}
-                draggable
+                draggable={!soloLectura}
+                disabled={soloLectura}
                 onDragStart={(e) => onDragStart(e, nodo.tipo)}
                 onClick={() => añadirAlTocar(nodo.tipo)}
                 className={`nodo-paleta familia-${nodo.familia}`}
@@ -621,20 +704,48 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
               </button>
             </div>
           )}
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            nodeTypes={nodeTypes}
-            onInit={(instancia) => { flujo.current = instancia; }}
-            fitView
-          >
-            <Background />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
+          {vistaEjecucion && (
+            <div className="vista-ejecucion" role="status">
+              <Icono nombre={soloLectura ? 'candado' : 'aviso'} />
+              <span>
+                {TEXTO_VISTA[vistaEjecucion.tipo](vistaEjecucion.ejecucionId)}
+                {vistaEjecucion.tipo === 'consulta' && (
+                  <> <button className="btn-enlace" onClick={abrirVersionActual}>Abrir la versión actual</button></>
+                )}
+              </span>
+              {/* Sin copia es solo un aviso, y se puede quitar; el modo
+                  consulta dura hasta cargar otro workflow. */}
+              {!soloLectura && (
+                <button className="aviso-cerrar" onClick={() => ponerVista(null)} aria-label="Cerrar aviso">
+                  <Icono nombre="cerrar" tamano={14} />
+                </button>
+              )}
+            </div>
+          )}
+          <SoloLectura.Provider value={soloLectura}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              nodeTypes={nodeTypes}
+              onInit={(instancia) => { flujo.current = instancia; }}
+              // Modo consulta (spec 012): se puede mover y ampliar el lienzo,
+              // pero no los nodos ni sus conexiones.
+              nodesDraggable={!soloLectura}
+              nodesConnectable={!soloLectura}
+              elementsSelectable={!soloLectura}
+              deleteKeyCode={soloLectura ? null : 'Backspace'}
+              fitView
+            >
+              <Background />
+              {/* El candado de los controles volveria a dejar mover los
+                  nodos: en modo consulta no se ofrece. */}
+              <Controls showInteractive={!soloLectura} />
+              <MiniMap />
+            </ReactFlow>
+          </SoloLectura.Provider>
         </div>
 
         {/* PANEL DE RESULTADOS (Derecha) */}

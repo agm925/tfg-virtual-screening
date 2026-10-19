@@ -96,69 +96,6 @@ def test_borrar_workflow_ajeno_devuelve_403_y_propio_funciona(
     assert client.get(f"/workflows/{workflow_id}", headers=headers).status_code == 404
 
 
-def test_borrar_workflow_ya_ejecutado_se_lleva_sus_ficheros(
-    client, db_session, usuario_autenticado
-):
-    """
-    Borrar un workflow QUE SE HA EJECUTADO, que es el caso que fallaba.
-
-    El test de arriba borra uno recien creado, sin ninguna ejecucion, asi que
-    `ids_ejecuciones` sale vacio y no se llega a la parte rota. Con una
-    ejecucion que dejo ficheros, borrar_archivos_registrados() marcaba las
-    filas de `archivos` con db.delete() --que solo las encola hasta vaciar la
-    sesion-- y la linea siguiente las intentaba dejar huerfanas con un
-    Query.delete() que se ejecuta al instante: PostgreSQL rechazaba el borrado
-    de workflow_executions por la clave ajena archivos_ejecucion_id_fkey y el
-    endpoint devolvia un 500. Es decir: ningun workflow realmente usado se
-    podia borrar.
-    """
-    import os
-
-    from app import models
-
-    headers = usuario_autenticado["headers"]
-    workflow_id = _crear_workflow(client, headers)
-
-    ejecucion = models.WorkflowExecution(
-        workflow_id=workflow_id,
-        usuario_id=usuario_autenticado["usuario"]["id"],
-        estado="completado",
-    )
-    db_session.add(ejecucion)
-    db_session.commit()
-    db_session.refresh(ejecucion)
-    # El id, a una variable suelta: tras el borrado el objeto queda obsoleto y
-    # leerle un atributo dispararia un refresco contra una fila que ya no esta.
-    ejecucion_id = ejecucion.id
-
-    # Un fichero de salida real, registrado contra esa ejecucion: es la fila
-    # que sostiene la clave ajena.
-    nombre = f"test_dummy_salida_wf{workflow_id}.sdf"
-    with open(os.path.join("uploads", nombre), "wb") as f:
-        f.write(b"resultado\n$$$$\n")
-    db_session.add(models.Archivo(
-        nombre=nombre,
-        visibilidad=models.VisibilidadArchivo.resultado,
-        tipo=models.TipoArchivo.resultado,
-        propietario_id=usuario_autenticado["usuario"]["id"],
-        ejecucion_id=ejecucion_id,
-    ))
-    db_session.commit()
-
-    respuesta = client.delete(f"/workflows/{workflow_id}", headers=headers)
-    assert respuesta.status_code == 200, respuesta.text
-    assert respuesta.json()["archivos_borrados"] == 1
-
-    # Y no queda nada suelto: ni el workflow, ni su ejecucion, ni el fichero.
-    assert client.get(f"/workflows/{workflow_id}", headers=headers).status_code == 404
-    db_session.expire_all()
-    assert db_session.query(models.WorkflowExecution).filter(
-        models.WorkflowExecution.id == ejecucion_id).first() is None
-    assert db_session.query(models.Archivo).filter(
-        models.Archivo.nombre == nombre).first() is None
-    assert not os.path.exists(os.path.join("uploads", nombre))
-
-
 def test_ejecutar_workflow_sin_selectdb_es_modo_normal(client, mock_celery, usuario_autenticado):
     headers = usuario_autenticado["headers"]
     workflow_id = _crear_workflow(client, headers)

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
+import { seleccionInicial } from '../../utils/ficheros';
 
 // `tipo` lo verifica el backend contra el contenido real del fichero al
 // subirlo (GET /moleculas), no es lo que declaró quien lo subió: antes el
@@ -21,6 +22,7 @@ const SelectMolNodoNode = ({ data, id }) => {
   const [moleculas, setMoleculas] = useState([]);
   const [seleccionada, setSeleccionada] = useState(data.nombre_archivo || '');
   const [cargando, setCargando] = useState(true);
+  const [falta, setFalta] = useState(false);   // el fichero guardado ya no existe
   const [error, setError] = useState(null);
 
   useEffect(() => { cargarMoleculas(); }, []);
@@ -32,17 +34,15 @@ const SelectMolNodoNode = ({ data, id }) => {
       if (!resp.ok) throw new Error();
       const lista = await resp.json();
       setMoleculas(lista);
-      if (data.nombre_archivo && lista.find(m => m.nombre === data.nombre_archivo)) {
-        setSeleccionada(data.nombre_archivo);
-      } else if (lista.length > 0) {
-        setSeleccionada(lista[0].nombre);
-        data.nombre_archivo = lista[0].nombre;
-      }
+      const inicial = seleccionInicial(data.nombre_archivo, lista);
+      setSeleccionada(inicial.nombre);
+      setFalta(inicial.falta);
+      if (inicial.nombre) data.nombre_archivo = inicial.nombre;
     } catch { setError('No se pudo cargar la lista de moléculas'); }
     finally { setCargando(false); }
   };
 
-  const handleCambio = (nombre) => { setSeleccionada(nombre); data.nombre_archivo = nombre; };
+  const handleCambio = (nombre) => { setSeleccionada(nombre); setFalta(false); data.nombre_archivo = nombre; };
 
   return (
     <MarcoNodo id={id} tipo="selectMol" data={data}>
@@ -51,7 +51,7 @@ const SelectMolNodoNode = ({ data, id }) => {
           <p className="nodo-nota">Cargando moléculas…</p>
         ) : error ? (
           <p className="nodo-aviso">{error}</p>
-        ) : moleculas.length === 0 ? (
+        ) : moleculas.length === 0 && !falta ? (
           <>
             <p className="nodo-aviso">Todavía no tienes ninguna molécula.</p>
             <p className="nodo-nota">Súbela desde la página Moléculas o con el nodo Subir molécula.</p>
@@ -60,6 +60,7 @@ const SelectMolNodoNode = ({ data, id }) => {
           <>
             <select className="select-input" value={seleccionada} onChange={e => handleCambio(e.target.value)}
                     aria-label="Molécula">
+              {falta && <option value={seleccionada}>{seleccionada} (ya no existe)</option>}
               {GRUPOS.map(([tipo, titulo]) => {
                 // Un tipo desconocido cae con las moléculas, como antes caía
                 // en su icono.
@@ -77,6 +78,7 @@ const SelectMolNodoNode = ({ data, id }) => {
                 );
               })}
             </select>
+            {falta && <p className="nodo-aviso">Esta molécula ya no está disponible: elige otra.</p>}
             <p className="nodo-nota">
               {moleculas.length} fichero{moleculas.length !== 1 ? 's' : ''} ·{' '}
               <button type="button" className="nodo-enlace" onClick={cargarMoleculas}>actualizar</button>

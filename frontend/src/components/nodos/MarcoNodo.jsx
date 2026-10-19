@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { useReactFlow } from 'reactflow';
 import { tipoNodo } from '../../utils/tiposNodo';
 import Icono from '../Icono';
+import { SoloLectura } from '../../utils/soloLectura';
 import '../../styles/Nodos.css';
 
 // Lo comun a los nueve nodos: el marco con el color de su familia, la
@@ -16,6 +17,7 @@ const MarcoNodo = ({ id, tipo, data, children }) => {
   const { setNodes, setEdges } = useReactFlow();
   const { etiqueta, familia, icono, descripcion } = tipoNodo(tipo);
   const estado = data?.error ? 'error' : data?.ejecutado ? 'ejecutado' : '';
+  const soloLectura = useContext(SoloLectura);
 
   const eliminar = (e) => {
     e.stopPropagation();
@@ -27,10 +29,12 @@ const MarcoNodo = ({ id, tipo, data, children }) => {
     <div className={`nodo familia-${familia} ${estado}`}>
       <div className="nodo-header">
         <Icono nombre={icono} />{etiqueta}
-        <button className="nodo-btn-borrar" onClick={eliminar}
-                title="Eliminar nodo" aria-label={`Eliminar nodo ${etiqueta}`}>
-          <Icono nombre="cerrar" tamano={12} />
-        </button>
+        {!soloLectura && (
+          <button className="nodo-btn-borrar" onClick={eliminar}
+                  title="Eliminar nodo" aria-label={`Eliminar nodo ${etiqueta}`}>
+            <Icono nombre="cerrar" tamano={12} />
+          </button>
+        )}
       </div>
       {estado === 'ejecutado' && (
         <p className="nodo-estado ok" role="status"><Icono nombre="ok" tamano={14} />Terminado</p>
@@ -39,7 +43,12 @@ const MarcoNodo = ({ id, tipo, data, children }) => {
         <p className="nodo-estado error" role="status"><Icono nombre="error" tamano={14} />Ha fallado</p>
       )}
       <p className="nodo-desc">{descripcion}</p>
-      {children}
+      {/* En modo consulta (spec 012) el navegador desactiva todos los campos
+          del nodo, también con el teclado, sin que cada nodo tenga que
+          saberlo. */}
+      <fieldset className="nodo-campos" disabled={soloLectura}>
+        {children}
+      </fieldset>
     </div>
   );
 };

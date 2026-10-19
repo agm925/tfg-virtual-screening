@@ -305,6 +305,9 @@
 /* Un fichero y su «Ver en 3D» (Inicio, Resultados): juntos aunque la celda
    parta la línea, para que no se lea el botón como del fichero siguiente. */
 .fichero-acciones { display: inline-flex; flex-wrap: nowrap; }
+/* «Ver workflow» y «Borrar» o «Cancelar» de una ejecución (spec 012): juntos
+   en su columna también cuando, en el móvil, no caben en una línea. */
+.acciones-ejecucion { display: inline-flex; flex-wrap: wrap; }
 .btn-borrar { background: var(--superficie); color: var(--ual-rojo); border-color: var(--ual-rojo); margin: 0 6px 4px 0; }
 .btn-borrar:hover { background: var(--ual-rojo); color: #fff; }
 

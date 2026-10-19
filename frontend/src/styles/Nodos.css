@@ -230,3 +230,7 @@
 @keyframes latido {
   50% { border-color: var(--proceso); }
 }
+
+/* Envoltorio de los campos del nodo (MarcoNodo): sin el aspecto propio de un
+   fieldset, solo sirve para desactivarlos todos en modo consulta (spec 012). */
+.nodo-campos { border: 0; margin: 0; padding: 0; min-width: 0; }

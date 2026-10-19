@@ -209,6 +209,33 @@
   margin: 0;
 }
 
+/* «Ver workflow» (spec 012): que se esta viendo el workflow de una ejecucion
+   y no la version actual. Bajo el titulo, para no tapar el aviso. */
+.vista-ejecucion {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  width: max-content;
+  max-width: min(640px, calc(100% - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-left: 3px solid var(--ual-azul);
+  border-radius: var(--radio);
+  font-size: var(--t-s);
+  line-height: 1.5;
+}
+
+.vista-ejecucion > .icono {
+  margin-top: 0.2em;
+  color: var(--ual-azul);
+}
+
 /* Sidebar derecha - Resultados */
 .visual-sidebar-right {
   width: 280px;
@@ -636,4 +663,7 @@
   }
   .visual-sidebar-left.abierto,
   .visual-sidebar-right.abierto { display: block; }
+  /* El aviso de «Ver workflow» bajo los paneles: con el de resultados
+     abierto, lo que se ha venido a ver son los resultados. */
+  .vista-ejecucion { z-index: 9; }
 }

@@ -33,6 +33,10 @@ function App() {
   // anterior, el visor lo consume una sola vez al montarse: si se quedara
   // puesto, volver al visor desde el menú lo colocaría otra vez en A.
   const [ficheroParaVisor, setFicheroParaVisor] = useState(null);
+  // «Ver workflow» de Resultados e Inicio (spec 012): {workflow_id,
+  // ejecucion_id}. Lo consume el constructor una sola vez, igual que el
+  // visor con ficheroParaVisor.
+  const [ejecucionParaConstructor, setEjecucionParaConstructor] = useState(null);
 
   // El editor deja aqui una funcion que, si hay cambios sin guardar, pregunta
   // si se pueden perder (VisualBuilder, confirmarDescarte). Se consulta antes
@@ -59,6 +63,19 @@ function App() {
   const salir = () => {
     if (paginaActual === 'visual' && !puedeSalirDelEditor()) return;
     cerrarSesion();
+  };
+
+  // Se llega desde Resultados o Inicio, nunca desde el propio constructor, así
+  // que no hay cambios sin guardar que preguntar: al salir de él ya se hizo.
+  const verWorkflow = (ejecucion) => {
+    // El nombre va también: si el workflow está borrado, el constructor no
+    // puede pedirlo.
+    setEjecucionParaConstructor({
+      workflow_id: ejecucion.workflow_id,
+      ejecucion_id: ejecucion.id,
+      workflow_nombre: ejecucion.workflow_nombre,
+    });
+    setPaginaActual('visual');
   };
 
   const nuevoWorkflow = () => {
@@ -127,7 +144,7 @@ function App() {
         cerrarSesion={salir}
       />
       <main className="contenido-principal">
-        {paginaActual === 'home'      && <Home usuario={usuario} setPaginaActual={irA} nuevoWorkflow={nuevoWorkflow} abrirEnVisor={abrirEnVisor} />}
+        {paginaActual === 'home'      && <Home usuario={usuario} setPaginaActual={irA} nuevoWorkflow={nuevoWorkflow} abrirEnVisor={abrirEnVisor} verWorkflow={verWorkflow} />}
         {paginaActual === 'algoritmos' && <Algoritmos />}
         {paginaActual === 'moleculas'  && <Moleculas abrirEnVisor={abrirEnVisor} />}
         {paginaActual === 'visor'      && (
@@ -139,7 +156,7 @@ function App() {
             alLlegar={() => setFicheroParaVisor(null)}
           />
         )}
-        {paginaActual === 'peticiones' && <RealizarPeticion key={usuario.id} usuario={usuario} abrirEnVisor={abrirEnVisor} />}
+        {paginaActual === 'peticiones' && <RealizarPeticion key={usuario.id} usuario={usuario} abrirEnVisor={abrirEnVisor} verWorkflow={verWorkflow} />}
         {paginaActual === 'visual'    && (
           <VisualBuilder
             key={usuario.id}
@@ -148,6 +165,8 @@ function App() {
             alCrearAlAbrir={() => setNuevoWorkflowPedido(false)}
             salidaRef={salidaEditorRef}
             abrirEnVisor={abrirEnVisor}
+            llegada={ejecucionParaConstructor}
+            alLlegar={() => setEjecucionParaConstructor(null)}
           />
         )}
         {paginaActual === 'tutorial'  && <Tutorial />}

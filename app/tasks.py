@@ -15,6 +15,16 @@ from app.logging_config import logger
 from app.formatos import contar_moleculas_sdf, corregir_extension, extension_salida
 
 
+def _grafo_de(ejecucion, workflow):
+    """
+    El grafo que hay que ejecutar: la copia que se guardo al lanzar (spec 012),
+    no el del workflow, que se puede editar mientras la tarea espera en la cola
+    o mientras corre un cribado largo. Sin copia (ejecuciones encoladas antes
+    de que existiera), el del workflow.
+    """
+    return ejecucion.grafo_json if ejecucion.grafo_json is not None else workflow.grafo_json
+
+
 def _grafo_usa_archivo_ajeno(db, grafo_json, usuario_id):
     """
     Devuelve el mensaje de error si el grafo referencia un fichero de uploads/
@@ -181,7 +191,7 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         if not workflow or not ejecucion:
             return {"exito": False, "error": "Workflow o ejecución no encontrados"}
 
-        motivo = _grafo_usa_archivo_ajeno(db, workflow.grafo_json, usuario_id)
+        motivo = _grafo_usa_archivo_ajeno(db, _grafo_de(ejecucion, workflow), usuario_id)
         if motivo:
             ejecucion.estado = "error"
             ejecucion.resultados_json = {"estado": "error", "exito": False, "errores": [motivo]}
@@ -202,7 +212,7 @@ def ejecutar_workflow_async(self, workflow_id: int, usuario_id: int, ejecucion_i
         db.commit()
 
         # 2. Ejecutar
-        executor = WorkflowExecutor(workflow.grafo_json, usuario_id,
+        executor = WorkflowExecutor(_grafo_de(ejecucion, workflow), usuario_id,
                                     ejecucion_id=ejecucion.id)
         with vigilar_cancelacion(debe_parar):
             resultado = executor.ejecutar()
@@ -438,7 +448,7 @@ def consolidar_batch(self, resultados_por_bloque: list, workflow_id: int,
         cliente = _redis()
         cancelado = cliente is not None and cliente.exists(_clave_cancelacion(ejecucion_id))
 
-        executor = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
+        executor = BatchWorkflowExecutor(_grafo_de(ejecucion, workflow), usuario_id,
                                          ejecucion_id=ejecucion_id)
         resultado = executor.consolidar(
             planos, nombre_bd, total_moleculas, time.time() - inicio_ts,
@@ -530,7 +540,7 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
         if not workflow or not ejecucion:
             return {"exito": False, "error": "Workflow o ejecución no encontrados"}
 
-        motivo = _grafo_usa_archivo_ajeno(db, workflow.grafo_json, usuario_id)
+        motivo = _grafo_usa_archivo_ajeno(db, _grafo_de(ejecucion, workflow), usuario_id)
         if motivo:
             ejecucion.estado = "error"
             ejecucion.resultados_json = {"estado": "error", "exito": False, "errores": [motivo]}
@@ -540,7 +550,7 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
             })
             return {"exito": False, "error": motivo}
 
-        executor = BatchWorkflowExecutor(workflow.grafo_json, usuario_id,
+        executor = BatchWorkflowExecutor(_grafo_de(ejecucion, workflow), usuario_id,
                                          ejecucion_id=ejecucion_id)
         nombre_bd, ruta_sdf = executor.localizar_base_de_datos()
 
@@ -581,7 +591,7 @@ def ejecutar_workflow_batch_async(self, workflow_id: int, usuario_id: int, ejecu
             cliente.delete(_clave_progreso(ejecucion_id))
             cliente.delete(_clave_cancelacion(ejecucion_id))
 
-        grafo = workflow.grafo_json
+        grafo = _grafo_de(ejecucion, workflow)
         tarea = chord(
             (procesar_bloque_batch.s(grafo, usuario_id, ejecucion_id, bloque)
              for bloque in bloques),

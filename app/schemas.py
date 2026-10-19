@@ -143,6 +143,11 @@ class WorkflowExecutionRespuesta(BaseModel):
     resultados_json: Optional[Dict[str, Any]]
     fecha_ejecucion: datetime
     duracion_segundos: Optional[int]
+    # Spec 012: el grafo que dio estos resultados. Es la copia de la ejecucion
+    # o, si es anterior a la copia, el del workflow (copia_exacta=False).
+    grafo_json: Optional[Dict[str, Any]] = None
+    copia_exacta: bool = False
+    workflow_borrado: bool = False
 
     class Config:
         from_attributes = True

@@ -5,12 +5,13 @@ import {
 } from '../utils/ficheros'
 import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
 import VerEn3D from './VerEn3D'
+import Icono from './Icono'
 
 const POLL_MS = 4000;
 
 // ── Componente principal ─────────────────────────────────────────────────────
 
-export default function RealizarPeticion({ usuario, abrirEnVisor }) {
+export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow }) {
   // — estado peticiones algoritmo —
   const [peticiones,   setPeticiones]   = useState([]);
   const [algoritmos,   setAlgoritmos]   = useState([]);
@@ -120,6 +121,19 @@ export default function RealizarPeticion({ usuario, abrirEnVisor }) {
       cargarDatos();
     } catch (err) {
       setAvisoTablas(mensajeError('cancelar la ejecución', err));
+    }
+  };
+
+  // ── Borrar los resultados de una ejecución (spec 012) ────────────────────
+  const borrarEjecucion = async (id) => {
+    if (!confirm(`Se borrarán los resultados de la ejecución nº ${id} y sus ficheros. No se puede deshacer.`)) return;
+    setAvisoTablas(null);
+    try {
+      const resp = await apiFetch(`/workflows/ejecuciones/${id}`, { method: 'DELETE' });
+      if (!resp.ok) throw await errorDeRespuesta(resp);
+      cargarDatos();
+    } catch (err) {
+      setAvisoTablas(mensajeError('borrar la ejecución', err));
     }
   };
 
@@ -268,11 +282,12 @@ export default function RealizarPeticion({ usuario, abrirEnVisor }) {
               <th>Estado</th>
               <th>Duración</th>
               <th>Ficheros</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {ejecuciones.length === 0 && (
-              <tr><td colSpan="6" className="tabla-vacia">
+              <tr><td colSpan="7" className="tabla-vacia">
                 Aún no has ejecutado ningún workflow. Créalo en el Constructor.
               </td></tr>
             )}
@@ -280,7 +295,10 @@ export default function RealizarPeticion({ usuario, abrirEnVisor }) {
               <tr key={e.id}>
                 <td data-label="ID" className="col-id">#{e.id}</td>
                 <td data-label="Fecha" className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
-                <td data-label="Workflow">{e.workflow_nombre}</td>
+                <td data-label="Workflow">
+                  {e.workflow_nombre}
+                  {e.workflow_borrado && <span className="texto-secundario"> (borrado)</span>}
+                </td>
                 <td data-label="Estado">
                   <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
                 </td>
@@ -300,12 +318,25 @@ export default function RealizarPeticion({ usuario, abrirEnVisor }) {
                       <VerEn3D fichero={f} abrirEnVisor={abrirEnVisor} />
                     </span>
                   ))}
-                  {estaActivo(e.estado) && (
-                    <button onClick={() => cancelarEjecucion(e.id)} className="btn-borrar">
-                      Cancelar ejecución
+                  {!e.archivos?.length && <span className="col-cifra">—</span>}
+                </td>
+                <td data-label="Acciones">
+                  <span className="acciones-ejecucion">
+                    <button onClick={() => verWorkflow(e)} className="btn-descarga">
+                      <Icono nombre="nodos" />Ver workflow
                     </button>
-                  )}
-                  {!e.archivos?.length && !estaActivo(e.estado) && <span className="col-cifra">—</span>}
+                    {/* En marcha no se puede borrar (el backend responde 409):
+                        primero se cancela. */}
+                    {estaActivo(e.estado) ? (
+                      <button onClick={() => cancelarEjecucion(e.id)} className="btn-borrar">
+                        Cancelar ejecución
+                      </button>
+                    ) : (
+                      <button onClick={() => borrarEjecucion(e.id)} className="btn-borrar">
+                        <Icono nombre="papelera" />Borrar
+                      </button>
+                    )}
+                  </span>
                 </td>
               </tr>
             ))}
