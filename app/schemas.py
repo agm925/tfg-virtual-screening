@@ -58,6 +58,17 @@ class UsuarioLogin(BaseModel):
     password_hash: str = Field(min_length=1, max_length=128)  # min_length=1: no bloquear el rate limit con un 422 antes de contar el intento
 
 
+class SolicitudRestablecer(BaseModel):
+    """POST /recuperar-contrasena (spec 011)."""
+    email: EmailStr
+
+
+class NuevaContrasena(BaseModel):
+    """POST /restablecer-contrasena (spec 011). Mismas reglas que el registro."""
+    token: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
+
+
 class UsuarioSesion(BaseModel):
     id: int
     nombre: str

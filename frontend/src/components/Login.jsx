@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { apiFetch } from '../api/client'
 import LogoUAL from './LogoUAL'
+import RecordarContrasena from './RecordarContrasena'
+import NuevaContrasena from './NuevaContrasena'
 import { textoDetalle } from '../utils/mensajes'
 
 // El backend ya explica en español la cuenta sin confirmar o desactivada
@@ -11,13 +13,14 @@ function mensajeDeError(resp, data, esRegistro) {
   return textoDetalle(data.detail) || 'No se pudo completar la operación. Inténtalo de nuevo.';
 }
 
-export default function Login({ alLoguear }) {
+export default function Login({ alLoguear, tokenRestablecer, alTerminarRestablecer }) {
   const [esRegistro,        setEsRegistro]        = useState(false);
   const [email,             setEmail]             = useState('');
   const [password_hash,     setPassword]          = useState('');
   const [nombre,            setNombre]            = useState('');
   const [error,             setError]             = useState('');
   const [pendienteVerificar, setPendienteVerificar] = useState(false);
+  const [recordarAbierto,   setRecordarAbierto]   = useState(false);
 
   const manejarSubmit = async (e) => {
     e.preventDefault();
@@ -50,7 +53,13 @@ export default function Login({ alLoguear }) {
         <div className="login-card">
           <LogoUAL className="login-logo" claseTexto="login-logo-texto" />
 
-          {pendienteVerificar ? (
+          {tokenRestablecer ? (
+            <NuevaContrasena
+              token={tokenRestablecer}
+              alTerminar={() => alTerminarRestablecer(true)}
+              alPedirOtro={() => { alTerminarRestablecer(false); setRecordarAbierto(true); }}
+            />
+          ) : pendienteVerificar ? (
             <>
               <h1>Confirma tu correo</h1>
               <p className="texto-secundario">
@@ -84,6 +93,12 @@ export default function Login({ alLoguear }) {
                 <input id="login-password" type="password"
                        autoComplete={esRegistro ? 'new-password' : 'current-password'}
                        onChange={e => setPassword(e.target.value)} required />
+                {!esRegistro && (
+                  <button type="button" className="btn-enlace login-olvido"
+                          onClick={() => setRecordarAbierto(true)}>
+                    ¿Has olvidado tu contraseña?
+                  </button>
+                )}
                 <button type="submit" className="btn-primary">
                   {esRegistro ? 'Crear cuenta' : 'Iniciar sesión'}
                 </button>
@@ -101,6 +116,11 @@ export default function Login({ alLoguear }) {
           )}
         </div>
       </main>
+      <RecordarContrasena
+        abierto={recordarAbierto}
+        emailInicial={email}
+        alCerrar={() => setRecordarAbierto(false)}
+      />
       <p className="login-pie">Universidad de Almería</p>
     </div>
   );

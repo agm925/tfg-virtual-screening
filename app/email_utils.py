@@ -90,6 +90,31 @@ def correo_verificacion(nombre: str, email: str, token: str) -> None:
     )
 
 
+def correo_restablecer(nombre: str, email: str, token: str) -> bool:
+    """
+    Enlace para elegir una contraseña nueva (spec 011). Devuelve si ha salido:
+    a diferencia de los avisos, aqui el usuario espera el correo, y no se le
+    puede decir que se ha enviado si no es verdad.
+    """
+    # El token va en el fragmento (#) y no en la consulta (?): el navegador no
+    # lo manda al servidor, asi que no queda en los registros de acceso de
+    # nginx ni del proxy del RTX, ni sale en la cabecera Referer.
+    enlace = f"{PUBLIC_URL}/#restablecer={token}"
+    return enviar_correo(
+        destinatario=email,
+        asunto=_asunto(f"Restablece tu contraseña — {NOMBRE}"),
+        cuerpo_html=_plantilla(
+            "Restablece tu contraseña",
+            [f"Hola, {_e(nombre)}:",
+             f"Hemos recibido una solicitud para cambiar la contraseña de tu cuenta de {NOMBRE}. "
+             "Para elegir una nueva, pulsa el botón. El enlace caduca en 1 hora y solo sirve una vez.",
+             "Si no lo has pedido tú, ignora este correo: tu contraseña no cambia."],
+            boton=("Elegir contraseña nueva", enlace),
+            enlace_visible=enlace,
+        ),
+    )
+
+
 def enviar_correo(destinatario: str, asunto: str, cuerpo_html: str) -> bool:
     """
     Envía un correo HTML por SMTP con TLS.

@@ -90,7 +90,7 @@ def correos_enviados(monkeypatch):
     enviados = []
 
     def _enviar_correo_falso(destinatario: str, asunto: str, cuerpo_html: str) -> bool:
-        enviados.append({"destinatario": destinatario, "asunto": asunto})
+        enviados.append({"destinatario": destinatario, "asunto": asunto, "cuerpo_html": cuerpo_html})
         return True
 
     monkeypatch.setattr("app.email_utils.enviar_correo", _enviar_correo_falso)

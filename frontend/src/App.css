@@ -477,6 +477,8 @@
 .login-form { display: flex; flex-direction: column; gap: 6px; }
 .login-form label { font-size: var(--t-xs); font-weight: 600; margin-top: 6px; }
 .login-form .btn-primary { margin-top: 16px; }
+/* «¿Has olvidado tu contraseña?» (spec 011), bajo el campo de la contraseña. */
+.login-olvido { align-self: flex-end; margin-top: 4px; font-size: var(--t-s); }
 .login-alterno { margin-top: 20px; font-size: var(--t-s); color: var(--texto-2); }
 .login-pie { text-align: center; color: var(--texto-2); font-size: var(--t-xs); padding: 16px; }
 

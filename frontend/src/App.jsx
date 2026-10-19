@@ -12,10 +12,18 @@ import Sistema from './components/Sistema'
 import Administracion from './components/Administracion'
 import { getToken, setToken, tokenValido, alExpirarSesion } from './api/client'
 import { CLAVE_USUARIO, olvidarSesion } from './utils/almacenamiento'
+import { tomarTokenDeRestablecer } from './utils/restablecer'
 import './App.css'
+
+// El token del enlace de «¿Has olvidado tu contraseña?» (spec 011). Se toma
+// aquí, una sola vez al cargar, y no en un efecto ni en un useState: en modo
+// estricto React los ejecuta dos veces, y la segunda ya no lo encontraría
+// porque la primera lo quita de la dirección.
+const tokenDelEnlace = tomarTokenDeRestablecer();
 
 function App() {
   const [usuario, setUsuario] = useState(null);
+  const [tokenRestablecer, setTokenRestablecer] = useState(tokenDelEnlace);
   const [paginaActual, setPaginaActual] = useState('home');
   // "Nuevo workflow" (cabecera e Inicio) abre el constructor Y crea uno. Se
   // pasa como aviso que el constructor consume una sola vez: si se quedara
@@ -90,7 +98,24 @@ function App() {
     localStorage.setItem(CLAVE_USUARIO, JSON.stringify(datos.usuario));
   };
 
-  if (!usuario) return <Login alLoguear={alLoguear} />;
+  // Con la contraseña ya cambiada, la sesión que hubiera en este navegador
+  // ha dejado de valer (app/auth.py): se cierra aquí en vez de esperar al 401.
+  const terminarRestablecer = (cambiada) => {
+    setTokenRestablecer(null);
+    if (cambiada) cerrarSesion();
+  };
+
+  // El enlace se atiende aunque haya una sesión abierta (R6): quien lo abre
+  // quiere cambiar la contraseña, no entrar con la que haya guardada.
+  if (tokenRestablecer || !usuario) {
+    return (
+      <Login
+        alLoguear={alLoguear}
+        tokenRestablecer={tokenRestablecer}
+        alTerminarRestablecer={terminarRestablecer}
+      />
+    );
+  }
 
   return (
     <div className={`app-wrapper ${paginaActual === 'visual' ? 'pantalla-completa' : ''}`}>

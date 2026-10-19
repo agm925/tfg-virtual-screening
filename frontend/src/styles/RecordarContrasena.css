@@ -1,0 +1,28 @@
+/* Diálogo «¿Has olvidado tu contraseña?» (spec 011). Mismo marco que el de
+   PreguntaVisibilidad.css; los campos son los de .login-form (App.css). */
+.recordar-contrasena {
+  width: min(420px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--linea);
+  border-top: 3px solid var(--ual-azul);
+  border-radius: var(--radio);
+  background: var(--superficie);
+  color: var(--ual-texto);
+  font-family: var(--fuente);
+  box-shadow: var(--sombra-menu);
+}
+.recordar-contrasena::backdrop { background: rgba(13, 37, 49, 0.45); }
+
+.recordar-contrasena h3 { margin: 0 0 8px; font-size: var(--t-l); }
+.recordar-contrasena p { margin: 0 0 12px; line-height: 1.5; }
+
+.recordar-contrasena-botones {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+/* .login-form .btn-primary lleva margen arriba para separarse de los campos;
+   aquí ya lo pone la fila de botones. */
+.recordar-contrasena .recordar-contrasena-botones .btn-primary { margin-top: 0; }

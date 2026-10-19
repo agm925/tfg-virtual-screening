@@ -20,14 +20,20 @@ from app.logging_config import logger
 MAX_INTENTOS_LOGIN = 5
 VENTANA_BLOQUEO_SEGUNDOS = 60
 
+# «¿Has olvidado tu contraseña?» (spec 011). Aqui no se cuentan fallos sino
+# solicitudes: cada una manda un correo, y sin limite cualquiera podria
+# llenarle el buzon a otro pidiendo enlaces en bucle.
+MAX_SOLICITUDES_RESTABLECER = 3
+VENTANA_RESTABLECER_SEGUNDOS = 15 * 60
+
 _redis = redis.from_url(REDIS_URL, decode_responses=True)
 
 
-def _clave(email: str) -> str:
-    return f"login_intentos:{email.strip().lower()}"
+def _clave(email: str, prefijo: str = "login_intentos") -> str:
+    return f"{prefijo}:{email.strip().lower()}"
 
 
-def _leer_intentos(email: str):
+def _leer_intentos(email: str, prefijo: str = "login_intentos"):
     """
     Devuelve (intentos, segundos_restantes), o None si Redis no responde.
 
@@ -40,7 +46,7 @@ def _leer_intentos(email: str):
     Perder temporalmente el limitador es mucho menos grave que perder el login.
     """
     try:
-        clave = _clave(email)
+        clave = _clave(email, prefijo)
         intentos = _redis.get(clave)
         if intentos is None:
             return 0, 0
@@ -48,6 +54,18 @@ def _leer_intentos(email: str):
     except RedisError as e:
         logger.warning("rate_limit_indisponible", extra={"error": str(e)})
         return None
+
+
+def _sumar_intento(email: str, prefijo: str, ventana_segundos: int) -> None:
+    """El primer intento abre una ventana durante la que se acumulan los
+    siguientes. Si Redis no responde, no se contabiliza (ver _leer_intentos)."""
+    try:
+        clave = _clave(email, prefijo)
+        intentos = _redis.incr(clave)
+        if intentos == 1:
+            _redis.expire(clave, ventana_segundos)
+    except RedisError as e:
+        logger.warning("rate_limit_indisponible", extra={"error": str(e)})
 
 
 def verificar_no_bloqueado(email: str) -> None:
@@ -73,16 +91,8 @@ def verificar_no_bloqueado(email: str) -> None:
 
 
 def registrar_intento_fallido(email: str) -> None:
-    """Incrementa el contador de fallos; el primer fallo abre una ventana de
-    VENTANA_BLOQUEO_SEGUNDOS durante la que se acumulan los siguientes.
-    Si Redis no responde, no se contabiliza (ver _leer_intentos)."""
-    try:
-        clave = _clave(email)
-        intentos = _redis.incr(clave)
-        if intentos == 1:
-            _redis.expire(clave, VENTANA_BLOQUEO_SEGUNDOS)
-    except RedisError as e:
-        logger.warning("rate_limit_indisponible", extra={"error": str(e)})
+    """Incrementa el contador de fallos de login."""
+    _sumar_intento(email, "login_intentos", VENTANA_BLOQUEO_SEGUNDOS)
 
 
 def limpiar_intentos(email: str) -> None:
@@ -91,3 +101,27 @@ def limpiar_intentos(email: str) -> None:
         _redis.delete(_clave(email))
     except RedisError as e:
         logger.warning("rate_limit_indisponible", extra={"error": str(e)})
+
+
+def contar_solicitud_restablecer(email: str) -> None:
+    """
+    Lanza 429 si ese correo ya ha pedido MAX_SOLICITUDES_RESTABLECER enlaces
+    en la ventana actual; si no, cuenta esta. Se cuenta tambien cuando el
+    correo no tiene cuenta: si no, el limite no frenaria a quien prueba
+    correos para ver cuales existen.
+    """
+    estado = _leer_intentos(email, "restablecer")
+    if estado is not None:
+        solicitudes, segundos_restantes = estado
+        if solicitudes >= MAX_SOLICITUDES_RESTABLECER:
+            logger.warning("restablecer_bloqueado_por_rate_limit", extra={"email": email})
+            minutos = -(-segundos_restantes // 60)  # hacia arriba: nunca «0 minutos»
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"Has pedido demasiados enlaces para este correo. "
+                    f"Vuelve a intentarlo dentro de {minutos} min."
+                ),
+                headers={"Retry-After": str(segundos_restantes)},
+            )
+    _sumar_intento(email, "restablecer", VENTANA_RESTABLECER_SEGUNDOS)

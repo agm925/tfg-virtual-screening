@@ -50,6 +50,14 @@ class Usuario(Base):
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     email_verificado = Column(Boolean, default=False, nullable=False)
     token_verificacion = Column(String, nullable=True)
+    # «¿Has olvidado tu contraseña?» (spec 011). Se guarda el SHA-256 del
+    # token, no el token: las copias diarias de la base (spec 009) no deben
+    # contener enlaces que funcionen.
+    token_restablecer = Column(String, nullable=True, index=True)
+    token_restablecer_expira = Column(DateTime, nullable=True)
+    # Los JWT emitidos antes de esta fecha dejan de valer (ver app/auth.py):
+    # cambiar la contraseña cierra las sesiones abiertas con la anterior.
+    password_cambiada_en = Column(DateTime, nullable=True)
     # Desactivacion en lugar de borrado. Un usuario tiene peticiones, workflows
     # y ficheros colgando de el por clave foranea, y sus moleculas pueden estar
     # en la biblioteca compartida, referenciadas por nombre desde los grafos de

@@ -9,9 +9,10 @@ import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from app.tasks import (FICHEROS_DEL_CRIBADO, ejecutar_peticion_async,
                        ejecutar_workflow_async, ejecutar_workflow_batch_async)
-from app.email_utils import correo_verificacion
+from app.email_utils import correo_verificacion, correo_restablecer
 from app.auth import (
-    hash_password, verify_password, crear_access_token,
+    hash_password, verify_password, crear_access_token, crear_token_restablecer,
+    usuario_por_token_restablecer, restablecer_password,
     obtener_usuario_actual, requiere_rol, es_admin,
 )
 from app.celery_app import celery_app
@@ -19,7 +20,10 @@ from app.config import (
     CORS_ORIGINS, EXECUTION_MODE, WORKER_CONCURRENCY,
     MAX_ALGORITMO_BYTES, MAX_SUBIDA_BYTES, TAMANO_TROZO_SUBIDA,
 )
-from app.rate_limit import verificar_no_bloqueado, registrar_intento_fallido, limpiar_intentos
+from app.rate_limit import (
+    verificar_no_bloqueado, registrar_intento_fallido, limpiar_intentos,
+    contar_solicitud_restablecer,
+)
 from app.logging_config import logger, configurar_logging
 from app.banco_pruebas import probar_algoritmo
 from app.formatos import EXTENSIONES_ENTRADA_ALGORITMO, contar_moleculas_sdf
@@ -312,6 +316,51 @@ def verificar_email(token: str, db: Session = Depends(get_db)):
     usuario.token_verificacion = None
     db.commit()
     return HTMLResponse(content=paginas.pagina_cuenta_confirmada())
+
+
+@app.post("/recuperar-contrasena")
+def recuperar_contrasena(datos: schemas.SolicitudRestablecer, db: Session = Depends(get_db)):
+    """
+    Envía el enlace para elegir una contraseña nueva (spec 011). Decir que el
+    correo no tiene cuenta permite averiguar cuáles la tienen; es una decisión
+    consciente --/registro ya lo revela-- y el límite por correo lo frena.
+    """
+    contar_solicitud_restablecer(datos.email)
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == datos.email).first()
+    # Una cuenta desactivada se trata como inexistente: con una contraseña
+    # nueva tampoco podría entrar, y así no se revela que está desactivada.
+    if not usuario or not usuario.activo:
+        raise HTTPException(status_code=404, detail="No existe ningún usuario con ese correo.")
+
+    token = crear_token_restablecer(usuario)
+    db.commit()
+
+    if not correo_restablecer(usuario.nombre, usuario.email, token):
+        raise HTTPException(status_code=503, detail="No se ha podido enviar el correo. Inténtalo más tarde.")
+
+    logger.info("restablecer_enlace_enviado", extra={"usuario_id": usuario.id})
+    return {"mensaje": "Te hemos enviado un enlace para elegir una contraseña nueva."}
+
+
+@app.post("/restablecer-contrasena")
+def restablecer_contrasena(datos: schemas.NuevaContrasena, db: Session = Depends(get_db)):
+    """
+    Cambia la contraseña con el token del enlace (spec 011). Solo esta
+    petición gasta el token: abrir el enlace es cargar la aplicación, así que
+    el análisis previo de enlaces de algunos correos no lo invalida.
+    """
+    usuario = usuario_por_token_restablecer(db, datos.token)
+    if usuario is None:
+        raise HTTPException(status_code=400, detail="El enlace no es válido o ha caducado. Pide uno nuevo.")
+
+    restablecer_password(usuario, datos.password)
+    db.commit()
+    # Si se bloqueó probando contraseñas, que pueda entrar ya con la nueva.
+    limpiar_intentos(usuario.email)
+
+    logger.info("restablecer_contrasena_cambiada", extra={"usuario_id": usuario.id})
+    return {"mensaje": "Contraseña cambiada. Ya puedes iniciar sesión."}
 
 
 @app.post("/algoritmos", response_model=schemas.AlgoritmoRespuesta)
