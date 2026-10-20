@@ -7,6 +7,8 @@
 // Ninguna función modifica el estado que recibe: devuelven uno nuevo, que es
 // lo que React necesita para saber que algo ha cambiado.
 
+import { IDIOMA_POR_DEFECTO, traductor } from './idioma.js';
+
 export const HUECOS = ['A', 'B'];
 
 function comprobarHueco(hueco) {
@@ -65,16 +67,17 @@ export function modoDisponible(estado) {
 }
 
 // Los cuatro estilos de representación de la spec (RF-9), con el nombre que
-// ve el usuario. Una sola lista para el selector y para las comprobaciones.
+// ve el usuario (clave de los diccionarios, spec 014). Una sola lista para el
+// selector y para las comprobaciones.
 export const ESTILOS = [
-  { valor: 'varillas', etiqueta: 'Varillas' },
-  { valor: 'esferas', etiqueta: 'Esferas' },
-  { valor: 'cintas', etiqueta: 'Cintas' },
-  { valor: 'superficie', etiqueta: 'Superficie' },
+  { valor: 'varillas', etiqueta: 'visor.varillas' },
+  { valor: 'esferas', etiqueta: 'visor.esferas' },
+  { valor: 'cintas', etiqueta: 'visor.cintas' },
+  { valor: 'superficie', etiqueta: 'visor.superficie' },
 ];
 
-export const AVISO_CINTAS = 'Las cintas solo representan cadenas de proteína, y el fichero no declara '
-  + 'esta molécula como proteína: se dibuja en varillas.';
+// Clave del aviso; lo traduce quien lo enseña.
+export const AVISO_CINTAS = 'visor.aviso_cintas';
 
 // El de por defecto: cintas si el fichero declara una proteína (lo decide el
 // servidor, `es_proteina`), varillas en cualquier otro caso.
@@ -199,9 +202,9 @@ export function tieneLista(fichero) {
 // formato: antes decía «Contando moléculas…», y en un resultado nadie lo iba
 // a contar, así que se quedaba así para siempre (spec 008). Una molécula
 // suelta también da su formato, que dice más que «1 molécula».
-export function detalleFichero(f) {
-  if (f.num_moleculas > 1) return `${f.num_moleculas} moléculas`;
-  if (f.num_moleculas === 1 && f.grupo !== 'molecula') return '1 molécula';
+export function detalleFichero(f, t = traductor(IDIOMA_POR_DEFECTO)) {
+  if (f.num_moleculas > 1) return t('visor.n_moleculas', { n: f.num_moleculas });
+  if (f.num_moleculas === 1 && f.grupo !== 'molecula') return t('visor.una_molecula');
   return f.formato.toUpperCase();
 }
 

@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
+import { useIdioma } from '../../hooks/useIdioma';
 
 const SelectDBNodoNode = ({ data, id }) => {
+  const { t } = useIdioma();
   const [bases,       setBases]       = useState([]);
   const [seleccionada, setSeleccionada] = useState(data.nombre_archivo || '');
   const [cargando,    setCargando]    = useState(true);
@@ -26,7 +28,7 @@ const SelectDBNodoNode = ({ data, id }) => {
       const elegida  = guardada || sdfs[0];
       if (elegida) aplicarCambio(elegida.nombre);
     } catch {
-      setError('No se pudo cargar la lista de bibliotecas');
+      setError(t('nodos.error_bibliotecas'));
     } finally {
       setCargando(false);
     }
@@ -41,13 +43,13 @@ const SelectDBNodoNode = ({ data, id }) => {
     <MarcoNodo id={id} tipo="selectDB" data={data}>
       <div className="nodo-body">
         {cargando ? (
-          <p className="nodo-nota">Cargando bibliotecas…</p>
+          <p className="nodo-nota">{t('nodos.cargando_bibliotecas')}</p>
         ) : error ? (
           <p className="nodo-aviso">{error}</p>
         ) : bases.length === 0 ? (
           <>
-            <p className="nodo-aviso">Todavía no tienes ninguna biblioteca.</p>
-            <p className="nodo-nota">Sube un fichero SDF desde la página Moléculas.</p>
+            <p className="nodo-aviso">{t('nodos.sin_bibliotecas')}</p>
+            <p className="nodo-nota">{t('nodos.sube_sdf')}</p>
           </>
         ) : (
           <>
@@ -55,18 +57,20 @@ const SelectDBNodoNode = ({ data, id }) => {
               className="select-input"
               value={seleccionada}
               onChange={e => aplicarCambio(e.target.value)}
-              aria-label="Biblioteca"
+              aria-label={t('moleculas.biblioteca')}
             >
               {bases.map(m => (
                 <option key={m.nombre} value={m.nombre}>
                   {m.nombre}
-                  {m.num_moleculas != null ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
+                  {m.num_moleculas != null
+                    ? ` ${t(m.num_moleculas === 1 ? 'nodos.detalle_1' : 'nodos.detalle_n', { n: m.num_moleculas, kb: m.tamano_kb })}`
+                    : ` (${m.tamano_kb} KB)`}
                 </option>
               ))}
             </select>
             <p className="nodo-nota">
-              {bases.length} biblioteca{bases.length !== 1 ? 's' : ''} ·{' '}
-              <button type="button" className="nodo-enlace" onClick={cargarBases}>actualizar</button>
+              {t(bases.length === 1 ? 'nodos.una_biblioteca' : 'nodos.n_bibliotecas', { n: bases.length })} ·{' '}
+              <button type="button" className="nodo-enlace" onClick={cargarBases}>{t('nodos.actualizar')}</button>
             </p>
           </>
         )}

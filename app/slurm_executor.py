@@ -69,6 +69,11 @@ _caido_hasta = 0.0
 _MAX_TAREAS_ARRAY = 1000
 
 
+def _es_opcion(argumento) -> bool:
+    """Una opcion de linea de comandos entre los ficheros, y no un fichero."""
+    return str(argumento).startswith("-") and not os.path.exists(argumento)
+
+
 class SlurmExecutor:
     """
     Envía la ejecución de un algoritmo al clúster bullx como un job SLURM.
@@ -244,6 +249,13 @@ class SlurmExecutor:
         # existan se asumen ficheros de salida que generará el propio script.
         remote_archivos = []
         for archivo in archivos:
+            # La opcion con que un algoritmo recibe la salida (`-o salida`,
+            # spec 013) va entre los ficheros, justo delante de la salida. No
+            # es un fichero: viaja literal, como las de `flags`. Las rutas de la
+            # plataforma nunca empiezan por "-" (son uploads/... o temporales).
+            if _es_opcion(archivo):
+                remote_archivos.append(archivo)
+                continue
             remote_path = posixpath.join(remote_dir, os.path.basename(archivo))
             if os.path.exists(archivo):
                 sftp.put(archivo, remote_path)
@@ -328,6 +340,8 @@ class SlurmExecutor:
             # Descargar de vuelta a su ruta local original los ficheros que existan en remoto
             # (incluye las salidas que el algoritmo haya generado en el directorio del job)
             for archivo, remote_path in zip(archivos, remote_archivos):
+                if _es_opcion(archivo):
+                    continue
                 if self._existe_remoto(sftp, remote_path):
                     directorio_local = os.path.dirname(archivo)
                     if directorio_local:
@@ -540,6 +554,8 @@ class SlurmExecutor:
             }
 
         for archivo, remote_path in zip(tarea["archivos"], tarea["remote_archivos"]):
+            if _es_opcion(archivo):
+                continue
             if self._existe_remoto(sftp, remote_path):
                 directorio_local = os.path.dirname(archivo)
                 if directorio_local:

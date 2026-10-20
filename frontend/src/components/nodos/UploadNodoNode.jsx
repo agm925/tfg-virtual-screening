@@ -4,9 +4,12 @@ import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
 import Icono from '../Icono';
 import PreguntaVisibilidad from '../PreguntaVisibilidad';
+import SelectorFichero from '../SelectorFichero';
 import { errorDeRespuesta, mensajeError } from '../../utils/mensajes';
+import { useIdioma } from '../../hooks/useIdioma';
 
 const UploadNodoNode = ({ data, id }) => {
+  const { t } = useIdioma();
   const [archivo, setArchivo] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [nombreSubido, setNombreSubido] = useState(data.nombre_archivo || null);
@@ -19,9 +22,7 @@ const UploadNodoNode = ({ data, id }) => {
 
   const EXTENSIONES = ['.mol2', '.sdf', '.mol', '.pdb', '.pdbqt', '.smi', '.xyz'];
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const handleFileChange = (file) => {
     setError(null);
     const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
     if (EXTENSIONES.includes(ext)) {
@@ -31,7 +32,7 @@ const UploadNodoNode = ({ data, id }) => {
       setArchivo(file);
     } else {
       setArchivo(null);
-      setError(`Ese formato no se admite. Usa uno de estos: ${EXTENSIONES.join(', ')}.`);
+      setError(t('nodos.formato_no_admitido', { formatos: EXTENSIONES.join(', ') }));
     }
   };
 
@@ -68,7 +69,7 @@ const UploadNodoNode = ({ data, id }) => {
       setEsPublico(result.es_publico);
       setArchivo(null);
     } catch (err) {
-      setError(mensajeError('subir la molécula', err));
+      setError(mensajeError(t('accion.subir_molecula'), err, t));
     } finally {
       setCargando(false);
     }
@@ -77,17 +78,17 @@ const UploadNodoNode = ({ data, id }) => {
   return (
     <MarcoNodo id={id} tipo="upload" data={data}>
       <div className="nodo-body">
-        <input type="file" accept=".mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz" onChange={handleFileChange}
-               className="file-input" aria-label="Fichero de la molécula" />
+        <SelectorFichero id={`subir-${id}`} accept=".mol2,.sdf,.mol,.pdb,.pdbqt,.smi,.xyz"
+                         fichero={archivo} alElegir={handleFileChange} className="en-nodo" />
         {nombreSubido && !archivo && (
           <p className="file-name">
-            <Icono nombre="ok" tamano={12} />Subida: {nombreSubido}
-            {esPublico === false && ' (privada)'}
+            <Icono nombre="ok" tamano={12} />{t('nodos.subida', { nombre: nombreSubido })}
+            {esPublico === false && ` ${t('nodos.privada')}`}
           </p>
         )}
         {error && <p className="nodo-aviso" role="status">{error}</p>}
         <button onClick={() => setPreguntando(true)} disabled={!archivo || cargando} className="upload-btn">
-          {cargando ? 'Subiendo…' : 'Subir'}
+          {cargando ? t('moleculas.subiendo') : t('moleculas.subir')}
         </button>
         <PreguntaVisibilidad fichero={preguntando ? archivo?.name : null}
                              alElegir={uploadMolecula} alCancelar={() => setPreguntando(false)} />

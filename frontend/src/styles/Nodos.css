@@ -124,7 +124,6 @@
 }
 
 /* Inputs y selects */
-.file-input,
 .select-input,
 .select-algo {
   width: 100%;
@@ -137,7 +136,6 @@
   box-sizing: border-box;
 }
 
-.file-input:focus,
 .select-input:focus,
 .select-algo:focus {
   outline: none;
@@ -234,3 +232,15 @@
 /* Envoltorio de los campos del nodo (MarcoNodo): sin el aspecto propio de un
    fieldset, solo sirve para desactivarlos todos en modo consulta (spec 012). */
 .nodo-campos { border: 0; margin: 0; padding: 0; min-width: 0; }
+
+/* Conectores de un algoritmo con interfaz (spec 013, ConectoresInterfaz): uno
+   por fila, con su nombre al lado. La fila llega hasta el borde del nodo
+   (compensa el relleno de .nodo-body) para que el punto quede en el borde. */
+.nodo-entradas { display: flex; flex-direction: column; gap: 6px; }
+.nodo-entrada {
+  position: relative;
+  margin-left: -12px;
+  padding-left: 14px;
+  font-size: var(--t-xs);
+  color: var(--texto-2);
+}

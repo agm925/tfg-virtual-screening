@@ -98,3 +98,64 @@
 @media (max-width: 900px) {
   .seccion-wrapper.algoritmos-pagina { padding-left: 16px; padding-right: 16px; }
 }
+
+/* Cómo se llama al script (spec 013): entradas, salida y opciones. */
+.interfaz-algoritmo {
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  margin: 8px 0;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.interfaz-algoritmo legend {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  padding: 0 4px;
+}
+.interfaz-titulo {
+  margin: 10px 0 0;
+  font-size: var(--t-s);
+  font-weight: 600;
+}
+.interfaz-algoritmo .texto-secundario { margin: 0 0 4px; font-size: var(--t-s); }
+
+/* Una entrada u opción por fila; en el móvil, el nombre ocupa la línea. */
+.fila-interfaz {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.fila-interfaz input:not(.campo-opcion) { flex: 1 1 180px; min-width: 0; }
+.fila-interfaz select { flex: 0 0 auto; }
+.fila-numero {
+  width: 1.5em;
+  text-align: right;
+  color: var(--texto-2);
+  font-size: var(--t-s);
+}
+.campo-opcion { width: 9em; font-family: var(--fuente-mono, monospace); }
+
+.interfaz-algoritmo .btn-anadir { align-self: flex-start; margin-top: 4px; }
+
+.opciones-salida {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.formulario .opciones-salida label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 400;
+}
+
+.vista-previa-llamada {
+  margin: 12px 0 0;
+  font-size: var(--t-s);
+  overflow-wrap: anywhere;
+}

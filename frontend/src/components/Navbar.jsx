@@ -1,16 +1,19 @@
 import { useState } from 'react'
 import LogoUAL from './LogoUAL'
+import SelectorIdioma from './SelectorIdioma'
+import { useIdioma } from '../hooks/useIdioma'
 
 // Las secciones, agrupadas por lo que hace el usuario: trabajar (lanzar y
 // recoger cribados), preparar lo que usan (moléculas y algoritmos) y aprender.
+// `texto` es la clave de su nombre en los diccionarios (spec 014).
 const ENLACES = [
-  { id: 'home',       label: 'Inicio' },
-  { id: 'visual',     label: 'Constructor' },
-  { id: 'peticiones', label: 'Resultados' },
-  { id: 'moleculas',  label: 'Moléculas' },
-  { id: 'visor',      label: 'Visor 3D' },
-  { id: 'algoritmos', label: 'Algoritmos' },
-  { id: 'tutorial',   label: 'Tutorial' },
+  { id: 'home',       texto: 'cabecera.inicio' },
+  { id: 'visual',     texto: 'cabecera.constructor' },
+  { id: 'peticiones', texto: 'cabecera.resultados' },
+  { id: 'moleculas',  texto: 'cabecera.moleculas' },
+  { id: 'visor',      texto: 'cabecera.visor' },
+  { id: 'algoritmos', texto: 'cabecera.algoritmos' },
+  { id: 'tutorial',   texto: 'cabecera.tutorial' },
 ];
 
 // Solo visibles para admin. El resto de la plataforma está abierta a cualquier
@@ -18,11 +21,12 @@ const ENLACES = [
 // administración de la propia plataforma. El backend rechaza con 403 a un
 // biólogo igualmente; ocultar los enlaces es solo para no ofrecerlos rotos.
 const ENLACES_ADMIN = [
-  { id: 'administracion', label: 'Administración' },
-  { id: 'sistema',        label: 'Sistema' },
+  { id: 'administracion', texto: 'cabecera.administracion' },
+  { id: 'sistema',        texto: 'cabecera.sistema' },
 ];
 
 export default function Navbar({ usuario, paginaActual, setPaginaActual, nuevoWorkflow, cerrarSesion }) {
+  const { t } = useIdioma();
   const [menuAbierto, setMenuAbierto] = useState(false);
   const enlaces = usuario.rol === 'admin' ? [...ENLACES, ...ENLACES_ADMIN] : ENLACES;
 
@@ -35,29 +39,33 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, nuevoWo
     <header>
       <div className="franja-ual">
         <div className="franja-ual-contenido">
-          <span className="franja-ual-tfg">Universidad de Almería</span>
+          <span className="franja-ual-tfg">{t('cabecera.universidad')}</span>
           <div className="franja-usuario">
+            <SelectorIdioma />
             <span>{usuario.nombre}</span>
-            <button onClick={cerrarSesion}>Cerrar sesión</button>
+            <button onClick={cerrarSesion}>{t('cabecera.cerrar_sesion')}</button>
           </div>
         </div>
       </div>
 
-      <nav className="navbar" aria-label="Secciones de la plataforma">
+      <nav className="navbar" aria-label={t('cabecera.secciones')}>
         <div className="navbar-contenido">
-          <button className="navbar-marca" onClick={() => ir('home')} aria-label="Ir al inicio">
+          <button className="navbar-marca" onClick={() => ir('home')} aria-label={t('cabecera.ir_inicio')}>
             <LogoUAL className="navbar-logo" claseTexto="navbar-logo-texto" />
             <span className="navbar-separador" aria-hidden="true" />
-            <span className="navbar-app">Cribado virtual</span>
+            <span className="navbar-app">{t('cabecera.app')}</span>
           </button>
 
+          {/* En el móvil la franja se oculta: el idioma pasa aquí, junto a
+              «Menú», para cambiarlo sin abrir el menú (spec 014, R3). */}
+          <SelectorIdioma className="en-barra" />
           <button
             className="nav-menu-boton"
             aria-expanded={menuAbierto}
             aria-controls="navbar-links"
             onClick={() => setMenuAbierto(!menuAbierto)}
           >
-            Menú
+            {t('cabecera.menu')}
           </button>
 
           <div id="navbar-links" className={`navbar-links ${menuAbierto ? 'abierto' : ''}`}>
@@ -68,7 +76,7 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, nuevoWo
                 aria-current={paginaActual === e.id ? 'page' : undefined}
                 onClick={() => ir(e.id)}
               >
-                {e.label}
+                {t(e.texto)}
               </button>
             ))}
             {/* En el móvil la franja de arriba se oculta para que la cabecera
@@ -76,12 +84,12 @@ export default function Navbar({ usuario, paginaActual, setPaginaActual, nuevoWo
                 aquí, dentro del menú. */}
             <div className="menu-usuario">
               <span>{usuario.nombre}</span>
-              <button onClick={cerrarSesion}>Cerrar sesión</button>
+              <button onClick={cerrarSesion}>{t('cabecera.cerrar_sesion')}</button>
             </div>
             {/* En el constructor sobra: el editor tiene su propio botón. */}
             {paginaActual !== 'visual' && (
               <button className="nav-destacado" onClick={() => { nuevoWorkflow(); setMenuAbierto(false); }}>
-                Nuevo workflow
+                {t('cabecera.nuevo_workflow')}
               </button>
             )}
           </div>

@@ -42,6 +42,61 @@
 }
 .franja-usuario button:hover { background: #fff; color: var(--ual-noche); }
 
+/* ===== SELECTOR DE FICHEROS (SelectorFichero.jsx, spec 014) =====
+   Botón propio y el nombre del fichero elegido: el del navegador sale en el
+   idioma del sistema. */
+.selector-fichero { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.selector-fichero .btn-secundario { margin-top: 0; display: inline-flex; align-items: center; gap: 6px; }
+.selector-fichero-nombre {
+  color: var(--texto-2);
+  font-size: var(--t-s);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Dentro de un nodo del Constructor, al tamaño de sus campos. */
+.selector-fichero.en-nodo { gap: 6px; }
+.selector-fichero.en-nodo .btn-secundario { padding: 4px 8px; font-size: 12px; }
+.selector-fichero.en-nodo .selector-fichero-nombre { font-size: 12px; max-width: 100%; }
+
+/* ===== SELECTOR DE IDIOMA (spec 014) =====
+   «ES | EN» con la bandera del idioma activo. Hereda el color de donde está
+   (blanco en la cabecera, texto en el acceso); el activo va en negrita y
+   subrayado, no solo en otro color. */
+.selector-idioma { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); }
+.selector-idioma-bandera {
+  width: 21px;
+  height: 14px;
+  border-radius: var(--radio);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+.selector-idioma-opcion { display: inline-flex; align-items: center; gap: 4px; }
+.selector-idioma-separador { opacity: 0.6; }
+:root body .selector-idioma button {
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 2px 4px;
+  font: inherit;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+  cursor: pointer;
+}
+:root body .selector-idioma button:hover { opacity: 1; text-decoration: underline; background: none; color: inherit; }
+:root body .selector-idioma button[aria-pressed="true"] {
+  opacity: 1;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--ual-cian);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  cursor: default;
+}
+/* La copia de la barra solo se ve en el móvil, donde la franja se oculta. */
+.selector-idioma.en-barra { display: none; }
+
 .navbar {
   background: var(--ual-azul);
   color: #fff;
@@ -70,6 +125,9 @@
 /* Escudo + nombre de la universidad (LogoUAL.jsx). */
 .logo-ual { display: inline-flex; align-items: center; gap: 12px; }
 .logo-ual-escudo { display: block; width: auto; }
+/* Cada línea del nombre entera: en inglés «of Almería» es más ancha que
+   «University» y, al estrecharse la cabecera, se partía en tres líneas. */
+.logo-ual-texto { white-space: nowrap; }
 .navbar-logo .logo-ual-escudo { height: 48px; }
 .navbar-logo-texto {
   font-weight: 700;
@@ -144,6 +202,16 @@
    En escritorio no cambia nada. */
 @media (max-width: 640px) {
   .franja-ual { display: none; }
+  /* Junto a «Menú», siempre a la vista (spec 014, R3). Botones de --toque de
+     ancho para poder pulsarlos con el dedo. */
+  .selector-idioma.en-barra { display: inline-flex; gap: 2px; margin-left: auto; font-size: var(--t-s); }
+  .selector-idioma.en-barra .selector-idioma-opcion { gap: 0; }
+  .selector-idioma.en-barra + .nav-menu-boton { margin-left: 0; padding: 0 8px; }
+  /* Marca, idioma y «Menú» tienen que caber en una fila a 375 px: con el
+     hueco de 12 px «Menú» bajaba a una segunda línea, y en español la marca
+     («Universidad de Almería») es más ancha que en inglés. */
+  .navbar-contenido { column-gap: 4px; }
+  :root body .selector-idioma button { min-width: var(--toque); }
   .navbar-contenido { padding-top: 8px; padding-bottom: 8px; }
   .navbar-logo .logo-ual-escudo { height: 36px; }
   .menu-usuario {
@@ -456,6 +524,9 @@
 /* ===== ACCESO ===== */
 .login-pagina { min-height: 100vh; display: flex; flex-direction: column; background: var(--ual-gris); }
 .login-franja { height: 8px; background: var(--ual-azul); }
+/* El idioma, arriba a la derecha sobre el fondo gris (spec 014). En el móvil
+   va en su propia fila, encima de la tarjeta, para no tapar el logo. */
+.login-idioma { align-self: flex-end; margin: 12px 24px 0; color: var(--ual-texto); }
 .login-wrapper { flex: 1; display: flex; justify-content: center; align-items: center; padding: 32px 16px; }
 .login-card {
   background: var(--superficie);

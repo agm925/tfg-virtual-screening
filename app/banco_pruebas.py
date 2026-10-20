@@ -61,6 +61,8 @@ peor que rechazar, porque reintroduciría el problema justo cuando nadie mira.
 """
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -99,6 +101,129 @@ EXTENSION_PRUEBA = {
     "comparacion":  ".json",
     "docking":      ".sdf",
 }
+
+
+# --- Interfaz declarada (spec 013) -------------------------------------------
+#
+# Hasta la spec 013 la forma de llamar a un algoritmo iba fija por tipo
+# (INVOCACIONES). El script con el que se encontro el problema se usa como
+# `entrada -o salida --all`, y el banco lo llamaba `entrada salida`: argparse
+# rechazaba el segundo posicional y el algoritmo no se podia subir. Ahora el
+# autor declara su interfaz: sus entradas de fichero, como recibe la salida y
+# sus opciones de si/no. Sin interfaz, la llamada de siempre.
+#
+# La validacion vive aqui, sin pydantic, para que la usen igual el backend al
+# subir y el servicio `banco`, que no se fia de quien le llama.
+
+MAX_ENTRADAS = 6
+MAX_OPCIONES = 6
+MAX_NOMBRE = 40
+CLASES_ENTRADA = ("molecula", "proteina")
+# Una opcion de linea de comandos y nada mas: ni espacios ni ;, que en una
+# lista de argumentos no harian dano, pero si en un mensaje o en un log.
+PATRON_OPCION = re.compile(r"^--?[A-Za-z][A-Za-z0-9_-]{0,30}$")
+
+# Ligandos de referencia por orden de entrada. ligando_a y ligando_b son la
+# misma molecula en dos conformaciones, que es lo que necesitan las
+# comparaciones tipo RMSD; los demas son moleculas distintas
+# (scripts/generar_referencias.py).
+LIGANDOS = [os.path.join(REFERENCIA, f"ligando_{letra}.sdf") for letra in "abcdef"]
+
+# Las entradas de hoy de cada tipo, con los nombres que se ensenan al autor.
+# Una interfaz igual a esta se guarda como null: se llama como siempre.
+ENTRADAS_POR_DEFECTO = {
+    "preprocesado": [{"nombre": "Molécula", "clase": "molecula"}],
+    "alineacion":   [{"nombre": "Molécula", "clase": "molecula"}],
+    "comparacion":  [{"nombre": "Molécula 1", "clase": "molecula"},
+                     {"nombre": "Molécula 2", "clase": "molecula"}],
+    "docking":      [{"nombre": "Ligando", "clase": "molecula"},
+                     {"nombre": "Receptor", "clase": "proteina"}],
+}
+
+
+def _nombre_valido(valor, que: str) -> str:
+    if not isinstance(valor, str):
+        raise ValueError(f"{que}: falta el nombre.")
+    nombre = valor.strip()
+    if not nombre:
+        raise ValueError(f"{que}: el nombre no puede estar vacío.")
+    if len(nombre) > MAX_NOMBRE:
+        raise ValueError(f"{que}: el nombre no puede pasar de {MAX_NOMBRE} caracteres.")
+    if re.search(r"[\x00-\x1f\x7f]", nombre):
+        raise ValueError(f"{que}: el nombre no puede llevar saltos de línea ni caracteres de control.")
+    return nombre
+
+
+def _opcion_valida(valor, que: str) -> str:
+    if not isinstance(valor, str) or not PATRON_OPCION.match(valor):
+        raise ValueError(f"{que}: «{valor}» no es una opción válida (por ejemplo -o o --all).")
+    return valor
+
+
+def validar_interfaz(interfaz) -> dict:
+    """
+    Comprueba la interfaz que declara el autor y la devuelve normalizada
+    ({entradas, opcion_salida, opciones}). Lanza ValueError con el motivo en
+    lenguaje llano.
+    """
+    if not isinstance(interfaz, dict):
+        raise ValueError("La interfaz del algoritmo no tiene el formato esperado.")
+    sobrantes = set(interfaz) - {"entradas", "opcion_salida", "opciones"}
+    if sobrantes:
+        raise ValueError(f"La interfaz lleva campos que no se conocen: {', '.join(sorted(sobrantes))}.")
+
+    entradas = interfaz.get("entradas")
+    if not isinstance(entradas, list) or not 1 <= len(entradas) <= MAX_ENTRADAS:
+        raise ValueError(f"El algoritmo debe tener entre 1 y {MAX_ENTRADAS} entradas.")
+    normalizadas = []
+    for i, entrada in enumerate(entradas, start=1):
+        if not isinstance(entrada, dict) or entrada.get("clase") not in CLASES_ENTRADA:
+            raise ValueError(f"Entrada {i}: la clase debe ser molécula o proteína.")
+        normalizadas.append({"nombre": _nombre_valido(entrada.get("nombre"), f"Entrada {i}"),
+                             "clase": entrada["clase"]})
+
+    opcion_salida = interfaz.get("opcion_salida")
+    if opcion_salida is not None:
+        opcion_salida = _opcion_valida(opcion_salida, "Salida")
+
+    opciones = interfaz.get("opciones") or []
+    if not isinstance(opciones, list) or len(opciones) > MAX_OPCIONES:
+        raise ValueError(f"El algoritmo puede tener como mucho {MAX_OPCIONES} opciones.")
+    vistas = {opcion_salida}
+    normalizadas_op = []
+    for i, opcion in enumerate(opciones, start=1):
+        if not isinstance(opcion, dict):
+            raise ValueError(f"Opción {i}: no tiene el formato esperado.")
+        valor = _opcion_valida(opcion.get("opcion"), f"Opción {i}")
+        if valor in vistas:
+            raise ValueError(f"Opción {i}: «{valor}» está repetida.")
+        vistas.add(valor)
+        normalizadas_op.append({"opcion": valor, "nombre": _nombre_valido(opcion.get("nombre"), f"Opción {i}")})
+
+    return {"entradas": normalizadas, "opcion_salida": opcion_salida, "opciones": normalizadas_op}
+
+
+def es_interfaz_por_defecto(tipo: str, interfaz: dict) -> bool:
+    """
+    Si se llama igual que hoy a los de su tipo: mismas clases de entrada, la
+    salida al final y sin opciones. Entonces se guarda null y se ejecuta por
+    el camino de siempre (los nombres solo cambiarian etiquetas).
+    """
+    por_defecto = ENTRADAS_POR_DEFECTO.get(tipo)
+    return (por_defecto is not None
+            and [e["clase"] for e in interfaz["entradas"]] == [e["clase"] for e in por_defecto]
+            and interfaz["opcion_salida"] is None
+            and not interfaz["opciones"])
+
+
+def llamada_legible(nombre_script: str, nombres_entradas, opcion_salida, nombre_salida, opciones) -> str:
+    """La llamada como la vera el autor: con los nombres de sus entradas, no con rutas."""
+    partes = [nombre_script, *nombres_entradas]
+    if opcion_salida:
+        partes.append(opcion_salida)
+    partes.append(nombre_salida)
+    partes.extend(opciones)
+    return " ".join(partes)
 
 
 class ResultadoPrueba:
@@ -207,7 +332,7 @@ def _entorno_minimo() -> dict:
     return entorno
 
 
-def probar_algoritmo(ruta_script: str, tipo: str) -> ResultadoPrueba:
+def probar_algoritmo(ruta_script: str, tipo: str, interfaz: dict = None) -> ResultadoPrueba:
     """
     Comprueba un algoritmo, ejecutándolo donde toque.
 
@@ -217,11 +342,11 @@ def probar_algoritmo(ruta_script: str, tipo: str) -> ResultadoPrueba:
     local, uso del módulo como biblioteca-- se ejecuta en este mismo proceso.
     """
     if BANCO_SOCKET or BANCO_URL:
-        return _probar_en_servicio_aislado(ruta_script, tipo)
-    return probar_en_proceso(ruta_script, tipo)
+        return _probar_en_servicio_aislado(ruta_script, tipo, interfaz)
+    return probar_en_proceso(ruta_script, tipo, interfaz)
 
 
-def _probar_en_servicio_aislado(ruta_script: str, tipo: str) -> ResultadoPrueba:
+def _probar_en_servicio_aislado(ruta_script: str, tipo: str, interfaz: dict = None) -> ResultadoPrueba:
     """Envía el script al contenedor del banco y traduce su respuesta."""
     import httpx
 
@@ -245,7 +370,7 @@ def _probar_en_servicio_aislado(ruta_script: str, tipo: str) -> ResultadoPrueba:
             with httpx.Client(transport=transporte, timeout=TIMEOUT_PRUEBA + 60) as cliente:
                 respuesta = cliente.post(
                     url,
-                    data={"tipo": tipo},
+                    data={"tipo": tipo, **({"interfaz": json.dumps(interfaz)} if interfaz else {})},
                     files={"archivo": (os.path.basename(ruta_script), f, "text/x-python")},
                 )
     except Exception as e:  # noqa: BLE001
@@ -269,7 +394,7 @@ def _probar_en_servicio_aislado(ruta_script: str, tipo: str) -> ResultadoPrueba:
     return ResultadoPrueba.desde_dict(respuesta.json())
 
 
-def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
+def probar_en_proceso(ruta_script: str, tipo: str, interfaz: dict = None) -> ResultadoPrueba:
     """
     Ejecuta un algoritmo contra las moléculas de referencia y comprueba que
     hace lo que su autor declara.
@@ -278,6 +403,11 @@ def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
     contenedor del banco, que está aislado a propósito; fuera de él, quien lo
     llame debe saber que está ejecutando código no verificado con sus propios
     privilegios.
+
+    Con `interfaz` (spec 013) se le llama como dice su autor; sin ella, como
+    a todos los de su tipo. Si declara opciones se ejecuta dos veces, sin
+    ninguna y con todas: un algoritmo que falla con una opción que ofrece
+    fallaría igual dentro de un cribado.
 
     No lanza excepciones: devuelve siempre un ResultadoPrueba, para que quien
     lo llame pueda dar al usuario un mensaje claro.
@@ -288,8 +418,14 @@ def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
     if tipo not in INVOCACIONES:
         resultado.motivo = f"Tipo de algoritmo desconocido: '{tipo}'."
         return resultado
+    if interfaz is not None:
+        try:
+            interfaz = validar_interfaz(interfaz)
+        except ValueError as e:
+            resultado.motivo = str(e)
+            return resultado
 
-    for referencia in INVOCACIONES[tipo]:
+    for referencia in [*LIGANDOS, RECEPTOR]:
         if not os.path.exists(referencia):
             resultado.motivo = (
                 "Faltan las moléculas de referencia del banco de pruebas "
@@ -298,9 +434,51 @@ def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
             )
             return resultado
 
+    opciones = [o["opcion"] for o in interfaz["opciones"]] if interfaz else []
+    # Primero sin opciones: es la pasada que se observa (formato, puntuación).
+    pasadas = [[], opciones] if opciones else [[]]
+    for marcadas in pasadas:
+        pasada = _una_pasada(ruta_script, tipo, interfaz, marcadas)
+        if not pasada.valido:
+            if marcadas:
+                pasada.motivo = f"Con las opciones {' '.join(marcadas)} marcadas: {pasada.motivo}"
+            return pasada
+        if not marcadas:
+            resultado = pasada
+    return resultado
+
+
+def _una_pasada(ruta_script: str, tipo: str, interfaz, opciones_marcadas) -> ResultadoPrueba:
+    """Una ejecución del algoritmo, con las opciones dadas, y lo que se observa de ella."""
+    resultado = ResultadoPrueba()
+
     with tempfile.TemporaryDirectory(prefix="banco_") as tmp:
         salida = os.path.join(tmp, "salida" + EXTENSION_PRUEBA[tipo])
-        argumentos = list(INVOCACIONES[tipo]) + [salida]
+        if interfaz:
+            # Las entradas en un subdirectorio: la salida se busca entre los
+            # ficheros del temporal, y una copia del receptor no puede pasar
+            # por lo que escribió el algoritmo.
+            dir_entradas = os.path.join(tmp, "entradas")
+            os.mkdir(dir_entradas)
+            archivos, ligandos = [], iter(LIGANDOS)
+            for i, entrada in enumerate(interfaz["entradas"], start=1):
+                if entrada["clase"] == "molecula":
+                    archivos.append(next(ligandos))
+                else:
+                    # Cada proteína con su propio fichero: dos entradas no
+                    # reciben la misma ruta.
+                    copia = os.path.join(dir_entradas, f"receptor_{i}.pdbqt")
+                    shutil.copyfile(RECEPTOR, copia)
+                    archivos.append(copia)
+            nombres = [e["nombre"] for e in interfaz["entradas"]]
+            opcion_salida = interfaz["opcion_salida"]
+        else:
+            archivos = list(INVOCACIONES[tipo])
+            nombres = [e["nombre"] for e in ENTRADAS_POR_DEFECTO[tipo]]
+            opcion_salida = None
+        argumentos = [*archivos, *([opcion_salida] if opcion_salida else []), salida, *opciones_marcadas]
+        llamada = llamada_legible(os.path.basename(ruta_script), nombres, opcion_salida,
+                                  os.path.basename(salida), opciones_marcadas)
 
         try:
             proceso = subprocess.run(
@@ -328,9 +506,12 @@ def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
         resultado.log = (proceso.stdout or "")[:4000]
 
         if proceso.returncode != 0:
+            # La llamada que se hizo, con los nombres de las entradas: si no
+            # coincide con la que espera el script (otro número de entradas,
+            # la salida con -o...), es lo primero que el autor tiene que ver.
             resultado.motivo = (
                 "El algoritmo terminó con error al ejecutarlo sobre las "
-                "moléculas de referencia."
+                f"moléculas de referencia. Se ejecutó así: {llamada}"
             )
             resultado.detalle = (proceso.stderr or proceso.stdout or "")[-2000:]
             return resultado
@@ -342,8 +523,8 @@ def probar_en_proceso(ruta_script: str, tipo: str) -> ResultadoPrueba:
         if not producidos:
             resultado.motivo = (
                 "El algoritmo terminó correctamente pero no escribió ningún "
-                "fichero de salida. Comprueba que usa el último argumento de "
-                "la línea de comandos como ruta de salida."
+                "fichero de salida. Comprueba que escribe la salida en la ruta "
+                f"que recibe. Se ejecutó así: {llamada}"
             )
             return resultado
 

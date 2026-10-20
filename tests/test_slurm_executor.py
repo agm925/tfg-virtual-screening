@@ -796,3 +796,29 @@ def test_cancelar_un_lote_retira_el_array_entero(ejecutor_lote, tmp_path):
 
     assert [r["exito"] for r in resultados] == [False, False, False]
     assert "scancel " + FakeSSHArray.JOB_ID in ssh.comandos
+
+
+# ---------------------------------------------------------------------------
+# Spec 013: la opcion con que un algoritmo recibe la salida (`-o salida`)
+# ---------------------------------------------------------------------------
+
+def test_la_opcion_de_salida_viaja_literal_justo_delante_de_la_salida(ejecutor, tmp_path):
+    """
+    Va dentro de `archivos`, justo antes de la salida, para que la salida siga
+    siendo el ultimo fichero (lo que descargar, lo que mira el cribado). No es
+    un fichero: no se sube ni se convierte en ruta remota.
+    """
+    ejec, _, sftp = ejecutor()
+    entrada = tmp_path / "ligando.sdf"
+    entrada.write_bytes(b"molecula")
+    salida = tmp_path / "sinH.sdf"
+
+    resultado = ejec.ejecutar_algoritmo(
+        str(tmp_path / "clean_hidrogens.py"), str(entrada), "-o", str(salida), flags=["--all"])
+    assert resultado["exito"], resultado
+
+    argumentos = _argumentos_enviados(sftp)
+    assert argumentos[-3] == "-o"
+    assert argumentos[-2].startswith("/remoto/jobs/job_") and argumentos[-2].endswith("/sinH.sdf")
+    assert argumentos[-1] == "--all"
+    assert not any(remoto.endswith("/-o") for remoto in sftp.subidos)

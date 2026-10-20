@@ -3,6 +3,7 @@ import { apiFetch } from '../../api/client'
 import { crearContadorDeBusquedas } from '../../utils/visor'
 import { errorDeRespuesta, mensajeError } from '../../utils/mensajes'
 import Icono from '../Icono'
+import { useIdioma } from '../../hooks/useIdioma'
 
 const BLOQUE = 50
 // Si el primer bloque tarda más que esto, es que el servidor está
@@ -12,6 +13,7 @@ const AVISO_PREPARANDO_MS = 1000
 // La lista de moléculas de un SDF (RF-6): por nombre o posición, de 50 en 50
 // al desplazarse, sin traer nunca el fichero entero.
 export default function ListaMoleculas({ fichero, alElegir }) {
+  const { t } = useIdioma()
   const [consulta, setConsulta] = useState('')
   const [moleculas, setMoleculas] = useState([])
   const [pagina, setPagina] = useState(null)        // { total, hay_mas, fuera_de_rango } de la última respuesta
@@ -41,7 +43,7 @@ export default function ListaMoleculas({ fichero, alElegir }) {
     } catch (err) {
       if (!contador.current.esVigente(idBusqueda)) return
       // Lo ya cargado se conserva; solo se reintenta el bloque que falló.
-      setError({ texto: mensajeError('cargar la lista de moléculas', err), offset })
+      setError({ texto: mensajeError(t('accion.cargar_moleculas'), err, t), offset })
     } finally {
       clearTimeout(avisoLento)
       if (contador.current.esVigente(idBusqueda)) {
@@ -71,30 +73,30 @@ export default function ListaMoleculas({ fichero, alElegir }) {
   }
 
   return (
-    <section className="visor3d-moleculas" aria-label={`Moléculas de ${fichero}`}>
-      <h4>Moléculas de {fichero}</h4>
-      <label htmlFor="visor-buscar-molecula" className="visor3d-etiqueta">Nombre o número</label>
+    <section className="visor3d-moleculas" aria-label={t('visor.moleculas_de', { fichero })}>
+      <h4>{t('visor.moleculas_de', { fichero })}</h4>
+      <label htmlFor="visor-buscar-molecula" className="visor3d-etiqueta">{t('visor.nombre_o_numero')}</label>
       <input
         id="visor-buscar-molecula"
         type="search"
         className="visor3d-campo"
-        placeholder="Por ejemplo, CHEMBL25 o 25"
+        placeholder={t('visor.ejemplo_molecula')}
         value={consulta}
         onChange={e => setConsulta(e.target.value)}
       />
 
       {preparando && (
         <p className="texto-secundario" role="status">
-          Preparando la biblioteca… La primera vez que se abre tarda un poco más.
+          {t('visor.preparando')}
         </p>
       )}
       {pagina?.fuera_de_rango && (
         <p className="texto-secundario" role="status">
-          No hay ninguna molécula en esa posición: esta biblioteca tiene {pagina.total}.
+          {t('visor.fuera_de_rango', { total: pagina.total })}
         </p>
       )}
       {pagina && moleculas.length === 0 && !pagina.fuera_de_rango && (
-        <p className="texto-secundario" role="status">Ninguna molécula coincide con «{consulta}».</p>
+        <p className="texto-secundario" role="status">{t('visor.ninguna_molecula', { consulta })}</p>
       )}
 
       <ul className="visor3d-lista" onScroll={alDesplazar}>
@@ -102,7 +104,7 @@ export default function ListaMoleculas({ fichero, alElegir }) {
           <li key={m.posicion}>
             <button className="visor3d-item" onClick={() => alElegir(m.posicion)}>
               <span className="visor3d-item-nombre">{m.nombre}</span>
-              <span className="visor3d-item-detalle">nº {m.posicion}</span>
+              <span className="visor3d-item-detalle">{t('visor.numero', { n: m.posicion })}</span>
             </button>
           </li>
         ))}
@@ -112,13 +114,13 @@ export default function ListaMoleculas({ fichero, alElegir }) {
         <div className="error-msg" role="status">
           {error.texto}{' '}
           <button className="btn-enlace"
-                  onClick={() => cargar(error.offset, busquedaActual.current)}>Reintentar</button>
+                  onClick={() => cargar(error.offset, busquedaActual.current)}>{t('comun.reintentar')}</button>
         </div>
       )}
-      {cargando && !preparando && <p className="texto-secundario">Cargando…</p>}
+      {cargando && !preparando && <p className="texto-secundario">{t('comun.cargando')}</p>}
       {pagina?.hay_mas && !cargando && !error && (
         <button className="btn-secundario visor3d-mas" onClick={cargarMas}>
-          <Icono nombre="bajar" />Cargar más
+          <Icono nombre="bajar" />{t('visor.cargar_mas')}
         </button>
       )}
     </section>

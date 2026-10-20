@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useIdioma } from '../hooks/useIdioma'
 
 // Escudo de la Universidad de Almería junto a su nombre, como en la cabecera
 // de ual.es. El escudo es un disco blanco con el sello en azul, así que sirve
@@ -13,6 +14,7 @@ import { useState } from 'react'
 const ESCUDO = `${import.meta.env.BASE_URL}ual/escudo-ual.png`;
 
 export default function LogoUAL({ className = '', claseTexto = '' }) {
+  const { t } = useIdioma();
   const [sinImagen, setSinImagen] = useState(false);
 
   return (
@@ -26,7 +28,7 @@ export default function LogoUAL({ className = '', claseTexto = '' }) {
         />
       )}
       <span className={`logo-ual-texto ${claseTexto}`}>
-        Universidad<br />de Almería
+        {t('logo.linea_1')}<br />{t('logo.linea_2')}
       </span>
     </span>
   );

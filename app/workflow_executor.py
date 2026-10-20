@@ -18,8 +18,16 @@ from app.logging_config import logger
 
 
 def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
+    """La ruta del script de un algoritmo, comprobando que se pueda usar (ver datos_algoritmo)."""
+    return datos_algoritmo(nombre_base, usuario_id)["ruta"]
+
+
+def datos_algoritmo(nombre_base: str, usuario_id: int = None) -> dict:
     """
-    Devuelve la ruta del script de un algoritmo, comprobando que se pueda usar.
+    La ruta del script de un algoritmo, comprobando que se pueda usar, y lo que
+    consta de el en la base: su interfaz (spec 013), el formato de su salida y
+    la clave de su puntuacion. Se leen de la base y no del grafo: el grafo lo
+    manda el cliente, y la interfaz decide con que argumentos se ejecuta.
 
     Los nodos del grafo referencian el algoritmo por el nombre de su fichero,
     no por su id en la base de datos, asi que un workflow GUARDADO sigue
@@ -62,6 +70,7 @@ def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
     from app import models
 
     db = SessionLocal()
+    datos = {"ruta": ruta_algoritmo, "interfaz": None, "formato_salida": None, "clave_score": None}
     try:
         registro = (
             db.query(models.Algoritmo)
@@ -82,10 +91,23 @@ def resolver_algoritmo(nombre_base: str, usuario_id: int = None) -> str:
                 raise ValueError(
                     f"El algoritmo '{registro.nombre}' es privado de otro usuario."
                 )
+        if registro is not None:
+            datos.update(interfaz=registro.interfaz, formato_salida=registro.formato_salida,
+                         clave_score=registro.clave_score)
     finally:
         db.close()
 
-    return ruta_algoritmo
+    return datos
+
+
+# Tipo de nodo -> tipo de su resultado, el que miran el cribado y el panel.
+TIPO_RESULTADO = {
+    "algoritmo":    "alineacion",
+    "alineacion":   "alineacion",
+    "comparacion":  "comparacion",
+    "preprocesado": "preprocesado",
+    "docking":      "docking",
+}
 
 
 class WorkflowExecutor:
@@ -122,6 +144,7 @@ class WorkflowExecutor:
         self.conexiones    = workflow_json.get("edges", [])
         self.resultados    = {}
         self.mapeo_archivos = {}  # { nodo_id: ruta_archivo }
+        self._cache_algoritmos = {}  # nombre -> datos_algoritmo (ver _algoritmo)
         self.errores       = []
         self.inicio        = None
         self.fin           = None
@@ -169,6 +192,16 @@ class WorkflowExecutor:
                 f"El workflow contiene un ciclo entre los nodos: {nodos_en_ciclo}"
             )
         return orden
+
+    def _algoritmo(self, nombre_base: str) -> dict:
+        """
+        datos_algoritmo con cache por ejecucion: el nodo pasa primero por la
+        comprobacion de la interfaz (ejecutar_nodo) y despues, si no la tiene,
+        por el camino de siempre, y no hace falta preguntar dos veces.
+        """
+        if nombre_base not in self._cache_algoritmos:
+            self._cache_algoritmos[nombre_base] = datos_algoritmo(nombre_base, self.usuario_id)
+        return self._cache_algoritmos[nombre_base]
 
     def obtener_nodo_por_id(self, nodo_id: str) -> Dict[str, Any]:
         for nodo in self.nodos:
@@ -221,7 +254,7 @@ class WorkflowExecutor:
             if not archivo_entrada:
                 raise ValueError(f"Nodo {nodo_id}: sin entrada de molécula")
 
-            ruta_algoritmo = resolver_algoritmo(algoritmo_nombre, self.usuario_id)
+            ruta_algoritmo = self._algoritmo(algoritmo_nombre)["ruta"]
 
             base, ext  = os.path.splitext(os.path.basename(archivo_entrada))
             # alinear3D y alinearMCS siempre fuerzan la salida a .sdf internamente
@@ -278,7 +311,7 @@ class WorkflowExecutor:
             if not archivo_mol1 or not archivo_mol2:
                 raise ValueError(f"Nodo {nodo_id}: faltan las dos moléculas de entrada")
 
-            ruta_algoritmo = resolver_algoritmo(ruta_script, self.usuario_id)
+            ruta_algoritmo = self._algoritmo(ruta_script)["ruta"]
 
             # Los algoritmos de comparación que producen molécula (alinear3D, alinearMCS)
             # usan extensión .sdf; los de métricas (tanimoto, rmsd) usan .json
@@ -335,7 +368,7 @@ class WorkflowExecutor:
             if not archivo_entrada:
                 raise ValueError(f"Nodo {nodo_id}: sin entrada de molécula")
 
-            ruta_algoritmo = resolver_algoritmo(algoritmo_nombre, self.usuario_id)
+            ruta_algoritmo = self._algoritmo(algoritmo_nombre)["ruta"]
 
             # filtroLipinski produce JSON; filtroObabel filtra y devuelve molécula; el resto produce molécula
             nombre_base = algoritmo_nombre.lower()
@@ -410,7 +443,7 @@ class WorkflowExecutor:
             if not archivo_ligando or not archivo_receptor:
                 raise ValueError(f"Nodo {nodo_id}: se necesitan ligando y receptor")
 
-            ruta_algoritmo = resolver_algoritmo(algoritmo_nombre, self.usuario_id)
+            ruta_algoritmo = self._algoritmo(algoritmo_nombre)["ruta"]
 
             nombre_salida = f"docking_{nodo_id}{self.token}.sdf"
             ruta_salida   = os.path.join("uploads", nombre_salida)
@@ -468,6 +501,70 @@ class WorkflowExecutor:
             return True
         except Exception as e:
             self.errores.append(f"Error en nodo DOCKING {nodo_id}: {e}")
+            return False
+
+    def ejecutar_nodo_con_interfaz(self, nodo_id: str, nodo: Dict[str, Any], nombre: str) -> bool:
+        """
+        Un algoritmo con interfaz (spec 013): sus entradas en orden, por los
+        conectores entrada_0..N-1; la salida, donde diga (al final o tras su
+        opcion, p. ej. `-o`), y detras las opciones marcadas en el nodo que la
+        interfaz declare. Cualquier otra se ignora: el grafo lo manda el
+        cliente, y no puede colar argumentos en la llamada.
+        """
+        tipo = TIPO_RESULTADO[nodo.get("type")]
+        try:
+            algoritmo = self._algoritmo(nombre)
+            interfaz = algoritmo["interfaz"]
+
+            entradas = []
+            for i, entrada in enumerate(interfaz["entradas"]):
+                _, archivo = self.obtener_entrada_nodo(nodo_id, f"entrada_{i}")
+                if not archivo:
+                    raise ValueError(f"Nodo {nodo_id}: falta la entrada «{entrada['nombre']}»")
+                entradas.append(archivo)
+
+            marcadas = set(nodo.get("data", {}).get("opciones_marcadas") or [])
+            opciones = [o["opcion"] for o in interfaz.get("opciones") or [] if o["opcion"] in marcadas]
+
+            # La extension con la que lo probo el banco: .json si devuelve un
+            # JSON, y si no .sdf, que escribe cualquier algoritmo de moleculas
+            # (no todos saben escribir .mol2).
+            ext = ".json" if algoritmo["formato_salida"] == "json" else ".sdf"
+            moleculas = [a for a, e in zip(entradas, interfaz["entradas"]) if e["clase"] == "molecula"]
+            base = os.path.splitext(os.path.basename((moleculas or entradas)[0]))[0]
+            ruta_salida = os.path.join("uploads", f"{base}_{nombre}_{nodo_id}{self.token}{ext}")
+
+            opcion_salida = [interfaz["opcion_salida"]] if interfaz.get("opcion_salida") else []
+            resultado = ejecutar_algoritmo(algoritmo["ruta"], *entradas, *opcion_salida, ruta_salida,
+                                           flags=opciones)
+            if not resultado.get("exito"):
+                raise ValueError(f"Error ejecutando {nombre}: {resultado.get('error')}")
+
+            resultado_json = {}
+            if ext == ".json" and os.path.exists(ruta_salida):
+                with open(ruta_salida, "r", encoding="utf-8") as f:
+                    resultado_json = json.load(f)
+
+            self.mapeo_archivos[nodo_id] = ruta_salida
+            self.archivos_generados.append(os.path.basename(ruta_salida))
+            # Las mismas claves que los nodos de siempre de su tipo: el
+            # cribado en lote (_extraer_score, _describir_salida) lo trata igual.
+            self.resultados[nodo_id] = {
+                "tipo":            tipo,
+                "algoritmo":       nombre,
+                "clave_score":     algoritmo["clave_score"],
+                "archivo_entrada": entradas[0],
+                "archivos_entrada": entradas,
+                "archivo_salida":  ruta_salida,
+                "resultado_json":  resultado_json,
+                "log":             resultado.get("log"),
+                "estado":          "exito",
+            }
+            if tipo == "docking":
+                self.resultados[nodo_id].update(archivo_poses=ruta_salida, energias=resultado_json)
+            return True
+        except Exception as e:
+            self.errores.append(f"Error en nodo {nodo_id}: {e}")
             return False
 
     def ejecutar_nodo_descargar(self, nodo_id: str, nodo: Dict[str, Any]) -> bool:
@@ -546,6 +643,17 @@ class WorkflowExecutor:
             # selectMol proporciona un archivo de molécula de la biblioteca
             if tipo_nodo == "selectMol":
                 return self._ejecutar_nodo_select_mol(nodo_id, nodo)
+
+            # Un algoritmo con interfaz declarada (spec 013) se llama como dice
+            # ella, sea cual sea su tipo; sin interfaz, por el camino de
+            # siempre, con sus casos especiales por nombre.
+            if tipo_nodo in TIPO_RESULTADO:
+                datos = nodo.get("data", {})
+                nombre = datos.get("algoritmo_ruta") or datos.get("algoritmo_nombre")
+                if nombre:
+                    nombre = nombre[:-3] if nombre.endswith(".py") else nombre
+                    if self._algoritmo(nombre)["interfaz"]:
+                        return self.ejecutar_nodo_con_interfaz(nodo_id, nodo, nombre)
 
             if tipo_nodo == "upload":
                 return self.ejecutar_nodo_upload(nodo_id, nodo)

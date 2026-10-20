@@ -29,6 +29,9 @@ import { TIPOS_NODO } from '../utils/tiposNodo';
 import { estaActivo } from '../utils/ficheros';
 import { getToken } from '../api/client';
 import { mensajeError } from '../utils/mensajes';
+import { textoEstado } from '../utils/ficheros';
+import { useIdioma } from '../hooks/useIdioma';
+import TextoConFormato from './TextoConFormato';
 import { claveEditor } from '../utils/almacenamiento';
 import { aCoordenadasDelLienzo, posicionNuevoNodo } from '../utils/lienzo';
 import { huella, vistaDeEjecucion } from '../utils/ejecucion';
@@ -103,20 +106,18 @@ const GRAFO_VACIO = { nodes: [], edges: [] };
 
 const resumenWorkflow = (wf) => wf && { id: wf.id, nombre: wf.nombre, descripcion: wf.descripcion };
 
-const MENSAJE_SIN_GUARDAR =
-  'Tienes cambios sin guardar en este workflow. Si sigues, se perderán.\n\n¿Seguro que quieres continuar sin guardar?';
-
 // Los ids de nodo son tipo_<n>: los nuevos siguen al mayor ya usado, para no
 // chocar con los de un borrador restaurado.
 const siguienteNodoId = (nodos) =>
   Math.max(-1, ...(nodos || []).map(n => Number(String(n.id).split('_').pop()) || 0)) + 1;
 
 // «Ver workflow» desde Resultados o Inicio (spec 012): lo que se dice sobre el
-// lienzo segun lo que se esta viendo (utils/ejecucion.js, vistaDeEjecucion).
+// lienzo segun lo que se esta viendo (utils/ejecucion.js, vistaDeEjecucion):
+// la clave de su texto en los diccionarios.
 const TEXTO_VISTA = {
-  consulta: (n) => `Estás viendo el workflow tal como se ejecutó en la ejecución nº ${n}. Desde entonces lo has cambiado.`,
-  borrado: (n) => `Este workflow está borrado: lo ves tal como se ejecutó en la ejecución nº ${n}.`,
-  'sin-copia': () => 'Esta ejecución es anterior a que se guardara el workflow de cada ejecución: se muestra la versión actual, que puede no ser la que dio estos resultados.',
+  consulta: 'constructor.vista_consulta',
+  borrado: 'constructor.vista_borrado',
+  'sin-copia': 'constructor.vista_sin_copia',
 };
 
 // `salidaRef`: App.jsx la consulta antes de cambiar de pagina o cerrar
@@ -124,6 +125,7 @@ const TEXTO_VISTA = {
 // `llegada`: {workflow_id, ejecucion_id, workflow_nombre} de un «Ver
 // workflow» de otra pagina (spec 012), que se consume una vez (`alLlegar`).
 const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRef, abrirEnVisor, llegada, alLlegar }) => {
+  const { t } = useIdioma();
   // El borrador se lee una vez, como estado inicial. Si se llega desde "Nuevo
   // workflow" se empieza uno nuevo, y desde «Ver workflow» lo que se pidio.
   const [borrador] = useState(() => (crearAlAbrir || llegada ? null : leerBorrador(usuario)));
@@ -218,7 +220,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
 
   // Antes de perder lo que hay en el lienzo (otra pagina, otro workflow,
   // cerrar sesion): true si no hay cambios o si el usuario acepta perderlos.
-  const confirmarDescarte = () => !hayCambios() || window.confirm(MENSAJE_SIN_GUARDAR);
+  const confirmarDescarte = () => !hayCambios() || window.confirm(t('constructor.sin_guardar'));
 
   const ponerVista = (vista) => {
     setVistaEjecucion(vista);
@@ -331,7 +333,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   // Crear nuevo workflow
   const crearNuevo = async () => {
     if (!confirmarDescarte()) return;
-    const nombre = prompt("Nombre del workflow:");
+    const nombre = prompt(t('constructor.nombre_workflow'));
     if (!nombre) return;
 
     try {
@@ -350,7 +352,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       marcarGuardado(GRAFO_VACIO, nuevoWf, null);
       cargarWorkflows();
     } catch (err) {
-      avisar('error', mensajeError('crear el workflow', err));
+      avisar('error', mensajeError(t('accion.crear_workflow'), err, t));
     }
   };
 
@@ -370,7 +372,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   // Guardar workflow actual
   const guardarWorkflow = async () => {
     if (!workflowActual) {
-      avisar('error', 'Todavía no hay ningún workflow que guardar: créalo con «Nuevo workflow».');
+      avisar('error', t('constructor.nada_que_guardar'));
       return;
     }
 
@@ -382,10 +384,10 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
         grafo_json: grafo,
       });
       marcarGuardado(grafo, workflowActual);
-      avisar('exito', 'Workflow guardado.');
+      avisar('exito', t('constructor.guardado'));
       cargarWorkflows();
     } catch (err) {
-      avisar('error', mensajeError('guardar el workflow', err));
+      avisar('error', mensajeError(t('accion.guardar_workflow'), err, t));
     }
   };
 
@@ -435,7 +437,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       // Cortada a proposito (otro workflow, o se ha salido del editor): no es
       // un error y no hay nada que pintar.
       if (err.name === 'AbortError') return;
-      avisar('error', mensajeError('ejecutar el workflow', err));
+      avisar('error', mensajeError(t('accion.ejecutar_workflow'), err, t));
     } finally {
       if (esperaRef.current === espera) {
         esperaRef.current = null;
@@ -449,7 +451,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
   // Ejecutar workflow — encola en Celery y hace polling hasta que termina
   const ejecutar = async () => {
     if (nodes.length === 0) {
-      avisar('error', 'Añade al menos un nodo al lienzo antes de ejecutar.');
+      avisar('error', t('constructor.sin_nodos'));
       return;
     }
 
@@ -473,7 +475,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       // Auto-crear workflow si no existe
       let wf = workflowActual;
       if (!wf) {
-        const nombre = prompt("Nombre del workflow (se creará automáticamente):") || "Workflow sin nombre";
+        const nombre = prompt(t('constructor.nombre_workflow_auto')) || t('constructor.sin_nombre');
         wf = await crearWorkflow({
           nombre,
           descripcion: "Workflow visual",
@@ -495,7 +497,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       ({ ejecucion_id: nuevaEjecucion } = await ejecutarWorkflow(wf.id));
       escribirBorrador({ ejecucionId: nuevaEjecucion });
     } catch (err) {
-      avisar('error', mensajeError('ejecutar el workflow', err));
+      avisar('error', mensajeError(t('accion.ejecutar_workflow'), err, t));
       setEjecutando(false);
       setEstadoEjecucion(null);
       return;
@@ -535,7 +537,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     } catch (err) {
       ponerVista(null);
       mostrarGrafo(GRAFO_VACIO, null, null);
-      avisar('error', mensajeError('abrir el workflow de esta ejecución', err));
+      avisar('error', mensajeError(t('accion.abrir_workflow_ejecucion'), err, t));
       return;
     }
     const tipo = vistaDeEjecucion(ejecucion, actual);
@@ -555,7 +557,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
     try {
       cargarWorkflow(await obtenerWorkflow(workflowActual.id));
     } catch (err) {
-      avisar('error', mensajeError('abrir la versión actual', err));
+      avisar('error', mensajeError(t('accion.abrir_version_actual'), err, t));
     }
   };
 
@@ -583,7 +585,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
 
   // Limpiar canvas
   const limpiar = () => {
-    if (window.confirm("¿Limpiar todos los nodos?")) {
+    if (window.confirm(t('constructor.confirmar_limpiar'))) {
       cortarEspera();
       ponerVista(null);
       setNodes([]);
@@ -612,13 +614,13 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
       <div className="visual-toolbar">
         <div className="toolbar-left">
           <button onClick={crearNuevo} className="btn btn-primary">
-            <Icono nombre="mas" />Nuevo workflow
+            <Icono nombre="mas" />{t('cabecera.nuevo_workflow')}
           </button>
           <button onClick={guardarWorkflow} className="btn btn-secondary" disabled={!workflowActual || soloLectura}>
-            <Icono nombre="guardar" />Guardar
+            <Icono nombre="guardar" />{t('constructor.guardar')}
           </button>
           <button onClick={limpiar} className="btn btn-danger">
-            <Icono nombre="papelera" />Limpiar
+            <Icono nombre="papelera" />{t('constructor.limpiar')}
           </button>
         </div>
 
@@ -631,7 +633,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
               e.target.value = '';
             }}
           >
-            <option value="">Cargar workflow...</option>
+            <option value="">{t('constructor.cargar_workflow')}</option>
             {workflows.map((wf, idx) => (
               <option key={wf.id} value={idx}>
                 {wf.nombre}
@@ -646,12 +648,12 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
             className="btn btn-success"
             disabled={ejecutando || nodes.length === 0 || soloLectura}
           >
-            {!ejecutando && <>{I_REPRODUCIR}Ejecutar workflow</>}
-            {ejecutando && estadoEjecucion === 'pendiente'  && <>{I_RELOJ}En cola…</>}
+            {!ejecutando && <>{I_REPRODUCIR}{t('constructor.ejecutar')}</>}
+            {ejecutando && estadoEjecucion === 'pendiente'  && <>{I_RELOJ}{t('constructor.en_cola')}</>}
             {ejecutando && estadoEjecucion === 'procesando' && batchProgreso
-              && <>{I_PROCESANDO}{batchProgreso.actual}/{batchProgreso.total} moléculas…</>}
-            {ejecutando && estadoEjecucion === 'procesando' && !batchProgreso && <>{I_PROCESANDO}Procesando…</>}
-            {ejecutando && !estadoEjecucion                 && <>{I_RELOJ}Encolando…</>}
+              && <>{I_PROCESANDO}{t('constructor.progreso_corto', { actual: batchProgreso.actual, total: batchProgreso.total })}</>}
+            {ejecutando && estadoEjecucion === 'procesando' && !batchProgreso && <>{I_PROCESANDO}{t('constructor.procesando')}</>}
+            {ejecutando && !estadoEjecucion                 && <>{I_RELOJ}{t('constructor.encolando')}</>}
           </button>
         </div>
       </div>
@@ -661,18 +663,18 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
         <button type="button" aria-expanded={panelMovil === 'paleta'} aria-controls="paleta-nodos"
                 className={panelMovil === 'paleta' ? 'activo' : ''} onClick={() => alternarPanel('paleta')}
                 disabled={soloLectura}>
-          <Icono nombre="mas" />Añadir nodo
+          <Icono nombre="mas" />{t('constructor.anadir_nodo')}
         </button>
         <button type="button" aria-expanded={panelMovil === 'resultados'} aria-controls="panel-resultados"
                 className={panelMovil === 'resultados' ? 'activo' : ''} onClick={() => alternarPanel('resultados')}>
-          <Icono nombre="grafico" />Resultados
+          <Icono nombre="grafico" />{t('cabecera.resultados')}
         </button>
       </div>
 
       <div className="visual-content">
         {/* PALETA DE NODOS (Izquierda) */}
         <div id="paleta-nodos" className={`visual-sidebar-left ${panelMovil === 'paleta' ? 'abierto' : ''}`}>
-          <h3>Nodos Disponibles</h3>
+          <h3>{t('constructor.nodos_disponibles')}</h3>
           <div className="paleta-nodos">
             {TIPOS_NODO.map((nodo) => (
               <button
@@ -684,11 +686,11 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                 onClick={() => añadirAlTocar(nodo.tipo)}
                 className={`nodo-paleta familia-${nodo.familia}`}
               >
-                <Icono nombre={nodo.icono} />{nodo.etiqueta}
+                <Icono nombre={nodo.icono} />{t(nodo.etiqueta)}
               </button>
             ))}
           </div>
-          <p className="hint">Pulsa un nodo para añadirlo, o arrástralo al lienzo</p>
+          <p className="hint">{t('constructor.pista_paleta')}</p>
         </div>
 
         {/* CANVAS REACT FLOW (Centro) */}
@@ -699,7 +701,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
             <div className={`aviso-editor ${aviso.tipo === 'error' ? 'error-msg' : 'exito-msg'}`} role="status">
               <Icono nombre={aviso.tipo === 'error' ? 'aviso' : 'ok'} />
               <span>{aviso.texto}</span>
-              <button className="aviso-cerrar" onClick={() => setAviso(null)} aria-label="Cerrar aviso">
+              <button className="aviso-cerrar" onClick={() => setAviso(null)} aria-label={t('constructor.cerrar_aviso')}>
                 <Icono nombre="cerrar" tamano={14} />
               </button>
             </div>
@@ -708,15 +710,15 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
             <div className="vista-ejecucion" role="status">
               <Icono nombre={soloLectura ? 'candado' : 'aviso'} />
               <span>
-                {TEXTO_VISTA[vistaEjecucion.tipo](vistaEjecucion.ejecucionId)}
+                {t(TEXTO_VISTA[vistaEjecucion.tipo], { n: vistaEjecucion.ejecucionId })}
                 {vistaEjecucion.tipo === 'consulta' && (
-                  <> <button className="btn-enlace" onClick={abrirVersionActual}>Abrir la versión actual</button></>
+                  <> <button className="btn-enlace" onClick={abrirVersionActual}>{t('constructor.abrir_version_actual')}</button></>
                 )}
               </span>
               {/* Sin copia es solo un aviso, y se puede quitar; el modo
                   consulta dura hasta cargar otro workflow. */}
               {!soloLectura && (
-                <button className="aviso-cerrar" onClick={() => ponerVista(null)} aria-label="Cerrar aviso">
+                <button className="aviso-cerrar" onClick={() => ponerVista(null)} aria-label={t('constructor.cerrar_aviso')}>
                   <Icono nombre="cerrar" tamano={14} />
                 </button>
               )}
@@ -750,13 +752,13 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
 
         {/* PANEL DE RESULTADOS (Derecha) */}
         <div id="panel-resultados" className={`visual-sidebar-right ${panelMovil === 'resultados' ? 'abierto' : ''}`}>
-          <h3><Icono nombre="grafico" />Resultados</h3>
+          <h3><Icono nombre="grafico" />{t('cabecera.resultados')}</h3>
 
           {/* Progreso batch en tiempo real */}
           {ejecutando && batchProgreso && (
             <div className="batch-progress">
               <p className="batch-progress-label">
-                <Icono nombre="procesando" />Procesando molécula <strong>{batchProgreso.actual}</strong> de <strong>{batchProgreso.total}</strong>
+                <Icono nombre="procesando" /><TextoConFormato texto={t('constructor.progreso', { actual: `**${batchProgreso.actual}**`, total: `**${batchProgreso.total}**` })} />
               </p>
               <div className="batch-progress-bar">
                 <div
@@ -777,9 +779,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
               {resultsPanel.modo === 'batch' ? (
                 <div className="batch-results">
                   <div className="batch-summary">
-                    <span className="batch-stat ok"><Icono nombre="ok" />{resultsPanel.total_exito} procesadas</span>
+                    <span className="batch-stat ok"><Icono nombre="ok" />{t('constructor.procesadas', { n: resultsPanel.total_exito })}</span>
                     {resultsPanel.total_error > 0 && (
-                      <span className="batch-stat err"><Icono nombre="error" />{resultsPanel.total_error} errores</span>
+                      <span className="batch-stat err"><Icono nombre="error" />{t('constructor.errores_n', { n: resultsPanel.total_error })}</span>
                     )}
                     {/* Registros del SDF que RDKit no pudo leer, y que por
                         tanto NO se han cribado. Se enseña aunque sea una
@@ -789,9 +791,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                     {resultsPanel.moleculas_descartadas > 0 && (
                       <span
                         className="batch-stat err"
-                        title={`El fichero tiene ${resultsPanel.registros_en_fichero} registros, pero ${resultsPanel.moleculas_descartadas} no se pudieron leer y han quedado fuera del cribado`}
+                        title={t('constructor.descartadas_titulo', { registros: resultsPanel.registros_en_fichero, descartadas: resultsPanel.moleculas_descartadas })}
                       >
-                        <Icono nombre="aviso" />{resultsPanel.moleculas_descartadas} sin leer
+                        <Icono nombre="aviso" />{t('constructor.sin_leer', { n: resultsPanel.moleculas_descartadas })}
                       </span>
                     )}
                     <span className="batch-stat bd"><Icono nombre="biblioteca" />{resultsPanel.base_de_datos}</span>
@@ -803,10 +805,10 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                   {resultsPanel.modo_resultado === 'transformacion' && (
                     <div className="batch-summary">
                       <span className="batch-stat ok">
-                        <Icono nombre="matraz" />{resultsPanel.total_en_fichero ?? 0} moléculas en el fichero
+                        <Icono nombre="matraz" />{t('constructor.en_fichero', { n: resultsPanel.total_en_fichero ?? 0 })}
                       </span>
                       {resultsPanel.no_cumplen > 0 && (
-                        <span className="batch-stat err"><Icono nombre="filtro" />{resultsPanel.no_cumplen} no cumplen el filtro</span>
+                        <span className="batch-stat err"><Icono nombre="filtro" />{t('constructor.no_cumplen', { n: resultsPanel.no_cumplen })}</span>
                       )}
                     </div>
                   )}
@@ -820,9 +822,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                       <button
                         onClick={() => descargarResultado(resultsPanel.moleculas_resultado)}
                         className="btn-csv-download"
-                        title="Las moléculas resultantes, con las propiedades calculadas como campos del SDF"
+                        title={t('constructor.moleculas_titulo')}
                       >
-                        <Icono nombre="bajar" />Descargar moléculas ({resultsPanel.moleculas_resultado.split('.').pop().toUpperCase()})
+                        <Icono nombre="bajar" />{t('constructor.descargar_moleculas', { formato: resultsPanel.moleculas_resultado.split('.').pop().toUpperCase() })}
                       </button>
                       <VerEn3D fichero={resultsPanel.moleculas_resultado} abrirEnVisor={abrirEnVisor} className="btn-ver3d" />
                     </div>
@@ -833,7 +835,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                       onClick={() => descargarResultado(resultsPanel.csv_propiedades)}
                       className="btn-csv-download"
                     >
-                      <Icono nombre="bajar" />Descargar propiedades CSV
+                      <Icono nombre="bajar" />{t('constructor.descargar_propiedades')}
                     </button>
                   )}
 
@@ -842,7 +844,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                       onClick={() => descargarResultado(resultsPanel.csv_ranking)}
                       className="btn-csv-download"
                     >
-                      <Icono nombre="bajar" />Descargar ranking CSV
+                      <Icono nombre="bajar" />{t('constructor.descargar_ranking')}
                     </button>
                   )}
 
@@ -851,9 +853,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                       <button
                         onClick={() => descargarResultado(resultsPanel.sdf_poses)}
                         className="btn-csv-download"
-                        title="La mejor pose de cada molécula, en el orden del ranking"
+                        title={t('constructor.poses_titulo')}
                       >
-                        <Icono nombre="bajar" />Descargar poses SDF
+                        <Icono nombre="bajar" />{t('constructor.descargar_poses')}
                       </button>
                       <VerEn3D fichero={resultsPanel.sdf_poses} abrirEnVisor={abrirEnVisor} className="btn-ver3d" />
                     </div>
@@ -867,18 +869,18 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                     <button
                       onClick={() => descargarResultado(resultsPanel.json_resultados)}
                       className="btn-csv-download"
-                      title="Todas las moléculas con los valores calculados por cada nodo"
+                      title={t('constructor.json_titulo')}
                     >
-                      <Icono nombre="bajar" />Descargar resultados completos (JSON)
+                      <Icono nombre="bajar" />{t('constructor.descargar_json')}
                     </button>
                   )}
 
                   {resultsPanel.ranking && resultsPanel.ranking.length > 0 && (
                     <div className="batch-ranking">
                       <p className="ranking-tipo">
-                        Score: <strong>{resultsPanel.tipo_score || '—'}</strong>
+                        {t('constructor.score')} <strong>{resultsPanel.tipo_score || '—'}</strong>
                         <span className="ranking-top">
-                          Top {Math.min(25, resultsPanel.ranking.filter(r=>r.exito).length)}
+                          {t('constructor.top', { n: Math.min(25, resultsPanel.ranking.filter(r=>r.exito).length) })}
                         </span>
                       </p>
                       <div className="ranking-barras">
@@ -903,7 +905,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                       </div>
                       {resultsPanel.ranking.filter(r=>r.exito).length > 25 && (
                         <p className="ranking-more">
-                          … y {resultsPanel.ranking.filter(r=>r.exito).length - 25} más en el CSV
+                          {t('constructor.mas_en_csv', { n: resultsPanel.ranking.filter(r=>r.exito).length - 25 })}
                         </p>
                       )}
                     </div>
@@ -916,12 +918,12 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                 /* ── Modo normal ── */
                 <>
                   <div className={`status-badge ${resultsPanel.estado}`}>
-                    {resultsPanel.estado?.toUpperCase()}
+                    {textoEstado(resultsPanel.estado, t)?.toUpperCase()}
                   </div>
 
                   {resultsPanel.errores && resultsPanel.errores.length > 0 && (
                     <div className="errors-section">
-                      <h4><Icono nombre="aviso" />Errores</h4>
+                      <h4><Icono nombre="aviso" />{t('constructor.errores')}</h4>
                       <ul>
                         {resultsPanel.errores.map((err, idx) => (
                           <li key={idx}>{err}</li>
@@ -931,7 +933,7 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                   )}
 
                   <div className="results-files">
-                    <h4><Icono nombre="fichero" />Ficheros resultantes</h4>
+                    <h4><Icono nombre="fichero" />{t('constructor.ficheros_resultantes')}</h4>
                     {resultsPanel.resultados && Object.entries(resultsPanel.resultados).map(([nId, resultado]) => {
                       const archivo = resultado.archivo || resultado.archivo_salida || resultado.archivo_poses;
                       if (!archivo) return null;
@@ -950,13 +952,13 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
                     })}
                   </div>
 
-                  <p className="duration"><Icono nombre="reloj" />Duración: {resultsPanel.duracion_segundos}s</p>
+                  <p className="duration"><Icono nombre="reloj" />{t('constructor.duracion', { s: resultsPanel.duracion_segundos })}</p>
                 </>
               )}
             </div>
           ) : (
             <div className="no-results">
-              <p>Ejecuta un workflow para ver resultados aquí</p>
+              <p>{t('constructor.sin_resultados')}</p>
             </div>
           )}
         </div>

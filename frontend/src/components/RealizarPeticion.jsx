@@ -4,14 +4,18 @@ import {
   claseEstado, textoEstado, estaActivo, etiquetaFichero, formatFecha,
 } from '../utils/ficheros'
 import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
+import { ETIQUETA_ALGORITMO } from '../utils/tiposNodo'
 import VerEn3D from './VerEn3D'
 import Icono from './Icono'
+import SelectorFichero from './SelectorFichero'
+import { useIdioma } from '../hooks/useIdioma'
 
 const POLL_MS = 4000;
 
 // ── Componente principal ─────────────────────────────────────────────────────
 
 export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow }) {
+  const { t, idioma } = useIdioma();
   // — estado peticiones algoritmo —
   const [peticiones,   setPeticiones]   = useState([]);
   const [algoritmos,   setAlgoritmos]   = useState([]);
@@ -87,7 +91,7 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
   const subirMolecula = async (e) => {
     e.preventDefault();
     if (!archivo) {
-      setMensaje({ tipo: 'error', texto: 'Elige una molécula en formato .mol2, .sdf o .mol.' });
+      setMensaje({ tipo: 'error', texto: t('resultados.elige_molecula') });
       return;
     }
     setCargando(true); setMensaje(null);
@@ -99,13 +103,13 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
     try {
       const resp = await apiFetch('/peticiones', { method: 'POST', body: fd });
       if (!resp.ok) throw await errorDeRespuesta(resp);
-      setMensaje({ tipo: 'exito', texto: 'Petición enviada. Te avisaremos por correo cuando termine.' });
+      setMensaje({ tipo: 'exito', texto: t('resultados.peticion_enviada') });
       setArchivo(null);
       formulario.reset();
       cargarDatos();
     } catch (err) {
       // Antes un fallo de red dejaba el boton en "Enviando…" para siempre.
-      setMensaje({ tipo: 'error', texto: mensajeError('enviar la petición', err) });
+      setMensaje({ tipo: 'error', texto: mensajeError(t('accion.enviar_peticion'), err, t) });
     } finally {
       setCargando(false);
     }
@@ -113,33 +117,33 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
 
   // ── Cancelar ejecución de workflow ───────────────────────────────────────
   const cancelarEjecucion = async (id) => {
-    if (!confirm('¿Cancelar esta ejecución? Se detendrá y no generará resultados.')) return;
+    if (!confirm(t('resultados.confirmar_cancelar'))) return;
     setAvisoTablas(null);
     try {
       const resp = await apiFetch(`/workflows/ejecuciones/${id}/cancelar`, { method: 'POST' });
       if (!resp.ok) throw await errorDeRespuesta(resp);
       cargarDatos();
     } catch (err) {
-      setAvisoTablas(mensajeError('cancelar la ejecución', err));
+      setAvisoTablas(mensajeError(t('accion.cancelar_ejecucion'), err, t));
     }
   };
 
   // ── Borrar los resultados de una ejecución (spec 012) ────────────────────
   const borrarEjecucion = async (id) => {
-    if (!confirm(`Se borrarán los resultados de la ejecución nº ${id} y sus ficheros. No se puede deshacer.`)) return;
+    if (!confirm(t('resultados.confirmar_borrar_ejecucion', { id }))) return;
     setAvisoTablas(null);
     try {
       const resp = await apiFetch(`/workflows/ejecuciones/${id}`, { method: 'DELETE' });
       if (!resp.ok) throw await errorDeRespuesta(resp);
       cargarDatos();
     } catch (err) {
-      setAvisoTablas(mensajeError('borrar la ejecución', err));
+      setAvisoTablas(mensajeError(t('accion.borrar_ejecucion'), err, t));
     }
   };
 
   // ── Borrar petición ──────────────────────────────────────────────────────
   const borrarPeticion = async (id) => {
-    if (!confirm('¿Borrar esta petición y su resultado?')) return;
+    if (!confirm(t('resultados.confirmar_borrar_peticion'))) return;
     const resp = await apiFetch(`/peticiones/${id}`, { method: 'DELETE' });
     if (resp.ok) cargarDatos();
   };
@@ -154,7 +158,7 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
     try {
       await descargarConToken(ruta, nombre);
     } catch (err) {
-      setAvisoTablas(mensajeError('descargar el fichero', err));
+      setAvisoTablas(mensajeError(t('accion.descargar_fichero'), err, t));
     }
   };
 
@@ -163,23 +167,20 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
 
   return (
     <div className="seccion-wrapper">
-      <h2>Resultados</h2>
-      <p className="seccion-subtitulo">
-        Tus peticiones de algoritmo y las ejecuciones de tus workflows, con los
-        ficheros que generan. Solo los ves tú.
-      </p>
+      <h2>{t('cabecera.resultados')}</h2>
+      <p className="seccion-subtitulo">{t('resultados.subtitulo')}</p>
 
       {/* ══════════ FORMULARIO NUEVA PETICIÓN ══════════ */}
       <section className="panel">
-        <h3>Ejecutar un algoritmo sobre una molécula</h3>
+        <h3>{t('resultados.ejecutar_titulo')}</h3>
         <form onSubmit={subirMolecula} className="formulario">
-          <label htmlFor="peticion-algoritmo">Algoritmo</label>
+          <label htmlFor="peticion-algoritmo">{t('tabla.algoritmo')}</label>
           <select id="peticion-algoritmo" value={algoritmoSel}
                   onChange={e => setAlgoritmoSel(e.target.value)} required>
             {algoritmos.length === 0
-              ? <option value="">No hay algoritmos disponibles</option>
+              ? <option value="">{t('resultados.sin_algoritmos')}</option>
               : algoritmos.map(a => (
-                  <option key={a.id} value={a.id}>{a.nombre} ({a.tipo})</option>
+                  <option key={a.id} value={a.id}>{a.nombre} ({ETIQUETA_ALGORITMO[a.tipo] ? t(ETIQUETA_ALGORITMO[a.tipo]) : a.tipo})</option>
                 ))}
           </select>
           {/* Los tres formatos que los algoritmos del catálogo saben leer
@@ -187,11 +188,11 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
               solo se admitía .mol2, lo que obligaba a convertir cualquier
               SDF descargado de ChEMBL o PubChem -- y esa conversión degrada
               la química de muchos heterociclos aromáticos. */}
-          <label htmlFor="peticion-molecula">Molécula (.mol2, .sdf o .mol)</label>
-          <input id="peticion-molecula" type="file" accept=".mol2,.sdf,.mol"
-                 onChange={e => setArchivo(e.target.files[0])} required />
+          <label htmlFor="peticion-molecula">{t('resultados.molecula_formatos')}</label>
+          <SelectorFichero id="peticion-molecula" accept=".mol2,.sdf,.mol"
+                           fichero={archivo} alElegir={setArchivo} />
           <button type="submit" className="btn-primary" disabled={cargando}>
-            {cargando ? 'Enviando…' : 'Enviar a la cola'}
+            {cargando ? t('recordar.enviando') : t('resultados.enviar_cola')}
           </button>
         </form>
         {mensaje && (
@@ -205,44 +206,44 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
 
       {/* ══════════ TABLA PETICIONES DE ALGORITMO ══════════ */}
       <h3 className="subtitulo-tabla">
-        Peticiones de algoritmo
-        {hayActivas && <span className="aviso-vivo">Actualizando…</span>}
+        {t('resultados.peticiones')}
+        {hayActivas && <span className="aviso-vivo">{t('resultados.actualizando')}</span>}
       </h3>
 
       <div className="tabla-contenedor">
         <table className="tabla-peticiones">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Fecha</th>
-              <th>Algoritmo</th>
-              <th>Molécula</th>
-              <th>Estado</th>
-              <th>Cola</th>
-              <th>Acciones</th>
+              <th>{t('tabla.id')}</th>
+              <th>{t('tabla.fecha')}</th>
+              <th>{t('tabla.algoritmo')}</th>
+              <th>{t('tabla.molecula')}</th>
+              <th>{t('tabla.estado')}</th>
+              <th>{t('tabla.cola')}</th>
+              <th>{t('tabla.acciones')}</th>
             </tr>
           </thead>
           <tbody>
             {peticiones.length === 0 && (
               <tr><td colSpan="7" className="tabla-vacia">
-                Aún no has enviado ninguna petición. Usa el formulario de arriba.
+                {t('resultados.sin_peticiones')}
               </td></tr>
             )}
             {peticiones.map(p => (
               <tr key={p.id}>
-                <td data-label="ID" className="col-id">#{p.id}</td>
-                <td data-label="Fecha" className="col-fecha">{formatFecha(p.fecha_creacion)}</td>
-                <td data-label="Algoritmo">{p.algoritmo_nombre}</td>
-                <td data-label="Molécula" className="col-fichero">{p.ruta_mol_original}</td>
-                <td data-label="Estado">
-                  <span className={`badge ${claseEstado(p.estado)}`}>{textoEstado(p.estado)}</span>
+                <td data-label={t('tabla.id')} className="col-id">#{p.id}</td>
+                <td data-label={t('tabla.fecha')} className="col-fecha">{formatFecha(p.fecha_creacion, idioma)}</td>
+                <td data-label={t('tabla.algoritmo')}>{p.algoritmo_nombre}</td>
+                <td data-label={t('tabla.molecula')} className="col-fichero">{p.ruta_mol_original}</td>
+                <td data-label={t('tabla.estado')}>
+                  <span className={`badge ${claseEstado(p.estado)}`}>{textoEstado(p.estado, t)}</span>
                 </td>
-                <td data-label="Cola" className="col-cifra">
+                <td data-label={t('tabla.cola')} className="col-cifra">
                   {p.estado === 'PENDIENTE' && posiciones[p.id]
-                    ? `Posición ${posiciones[p.id]}`
-                    : p.estado === 'PROCESANDO' ? 'Ejecutando' : '—'}
+                    ? t('resultados.posicion', { n: posiciones[p.id] })
+                    : p.estado === 'PROCESANDO' ? t('resultados.ejecutando') : '—'}
                 </td>
-                <td data-label="Acciones" className="acciones-celda">
+                <td data-label={t('tabla.acciones')} className="acciones-celda">
                   {p.estado === 'COMPLETADO' && (
                     /* El nombre sugerido es el del RESULTADO, no el de la entrada.
                        descargarConToken hace a.download = nombreSugerido, que pisa
@@ -256,13 +257,13 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
                       onClick={() => descargarPeticion(p.id, p.ruta_mol_resultado || p.ruta_mol_original)}
                       className="btn-descarga"
                     >
-                      Descargar resultado
+                      {t('resultados.descargar_resultado')}
                     </button>
                   )}
                   {p.estado === 'COMPLETADO' && p.ruta_mol_resultado && (
                     <VerEn3D fichero={p.ruta_mol_resultado} abrirEnVisor={abrirEnVisor} />
                   )}
-                  <button onClick={() => borrarPeticion(p.id)} className="btn-borrar">Borrar</button>
+                  <button onClick={() => borrarPeticion(p.id)} className="btn-borrar">{t('comun.borrar')}</button>
                 </td>
               </tr>
             ))}
@@ -271,41 +272,41 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
       </div>
 
       {/* ══════════ TABLA EJECUCIONES DE WORKFLOW ══════════ */}
-      <h3 className="subtitulo-tabla">Ejecuciones de workflows</h3>
+      <h3 className="subtitulo-tabla">{t('resultados.ejecuciones')}</h3>
       <div className="tabla-contenedor">
         <table className="tabla-peticiones">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Fecha</th>
-              <th>Workflow</th>
-              <th>Estado</th>
-              <th>Duración</th>
-              <th>Ficheros</th>
-              <th>Acciones</th>
+              <th>{t('tabla.id')}</th>
+              <th>{t('tabla.fecha')}</th>
+              <th>{t('tabla.workflow')}</th>
+              <th>{t('tabla.estado')}</th>
+              <th>{t('tabla.duracion')}</th>
+              <th>{t('tabla.ficheros')}</th>
+              <th>{t('tabla.acciones')}</th>
             </tr>
           </thead>
           <tbody>
             {ejecuciones.length === 0 && (
               <tr><td colSpan="7" className="tabla-vacia">
-                Aún no has ejecutado ningún workflow. Créalo en el Constructor.
+                {t('resultados.sin_ejecuciones')}
               </td></tr>
             )}
             {ejecuciones.map(e => (
               <tr key={e.id}>
-                <td data-label="ID" className="col-id">#{e.id}</td>
-                <td data-label="Fecha" className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
-                <td data-label="Workflow">
+                <td data-label={t('tabla.id')} className="col-id">#{e.id}</td>
+                <td data-label={t('tabla.fecha')} className="col-fecha">{formatFecha(e.fecha_ejecucion, idioma)}</td>
+                <td data-label={t('tabla.workflow')}>
                   {e.workflow_nombre}
-                  {e.workflow_borrado && <span className="texto-secundario"> (borrado)</span>}
+                  {e.workflow_borrado && <span className="texto-secundario"> {t('resultados.borrado')}</span>}
                 </td>
-                <td data-label="Estado">
-                  <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
+                <td data-label={t('tabla.estado')}>
+                  <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado, t)}</span>
                 </td>
-                <td data-label="Duración" className="col-cifra">
+                <td data-label={t('tabla.duracion')} className="col-cifra">
                   {e.duracion_segundos != null ? `${e.duracion_segundos} s` : '—'}
                 </td>
-                <td data-label="Ficheros">
+                <td data-label={t('tabla.ficheros')}>
                   {e.archivos && e.archivos.length > 0 && e.archivos.map(f => (
                     <span key={f} className="fichero-acciones">
                       <button
@@ -313,27 +314,27 @@ export default function RealizarPeticion({ usuario, abrirEnVisor, verWorkflow })
                         className="btn-descarga"
                         title={f}
                       >
-                        {etiquetaFichero(f)}
+                        {etiquetaFichero(f, t)}
                       </button>
                       <VerEn3D fichero={f} abrirEnVisor={abrirEnVisor} />
                     </span>
                   ))}
                   {!e.archivos?.length && <span className="col-cifra">—</span>}
                 </td>
-                <td data-label="Acciones">
+                <td data-label={t('tabla.acciones')}>
                   <span className="acciones-ejecucion">
                     <button onClick={() => verWorkflow(e)} className="btn-descarga">
-                      <Icono nombre="nodos" />Ver workflow
+                      <Icono nombre="nodos" />{t('resultados.ver_workflow')}
                     </button>
                     {/* En marcha no se puede borrar (el backend responde 409):
                         primero se cancela. */}
                     {estaActivo(e.estado) ? (
                       <button onClick={() => cancelarEjecucion(e.id)} className="btn-borrar">
-                        Cancelar ejecución
+                        {t('resultados.cancelar_ejecucion')}
                       </button>
                     ) : (
                       <button onClick={() => borrarEjecucion(e.id)} className="btn-borrar">
-                        <Icono nombre="papelera" />Borrar
+                        <Icono nombre="papelera" />{t('comun.borrar')}
                       </button>
                     )}
                   </span>

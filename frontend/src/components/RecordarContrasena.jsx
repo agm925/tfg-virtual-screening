@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../api/client'
 import { textoDetalle } from '../utils/mensajes'
+import TextoConFormato from './TextoConFormato'
+import { useIdioma } from '../hooks/useIdioma'
 import '../styles/RecordarContrasena.css'
 
 // «¿Has olvidado tu contraseña?» (spec 011, R1). Mismo patrón que
 // PreguntaVisibilidad: <dialog> con showModal, que ya hace el diálogo modal,
 // lo cierra con Escape y no deja escapar el foco.
 export default function RecordarContrasena({ abierto, emailInicial, alCerrar }) {
+  const { t } = useIdioma()
   const ref = useRef()
   const campo = useRef()
   const [email, setEmail] = useState('')
@@ -45,12 +48,12 @@ export default function RecordarContrasena({ abierto, emailInicial, alCerrar }) 
         setEnviadoA(email)
       } else {
         // 404 (no existe), 429 (demasiadas) y 503 (el correo no ha salido)
-        // ya llegan explicados en español desde el backend.
+        // ya llegan explicados desde el backend, en el idioma de la interfaz.
         const data = await resp.json().catch(() => ({}))
-        setError(textoDetalle(data.detail) || 'No se pudo completar la operación. Inténtalo de nuevo.')
+        setError(textoDetalle(data.detail) || t('comun.error_generico'))
       }
     } catch {
-      setError('No se puede conectar con el servidor. Comprueba que la plataforma está en marcha.')
+      setError(t('comun.sin_conexion'))
     } finally {
       setEnviando(false)
     }
@@ -63,29 +66,28 @@ export default function RecordarContrasena({ abierto, emailInicial, alCerrar }) 
       aria-labelledby="recordar-contrasena-titulo"
       onCancel={e => { e.preventDefault(); alCerrar() }}
     >
-      <h3 id="recordar-contrasena-titulo">¿Has olvidado tu contraseña?</h3>
+      <h3 id="recordar-contrasena-titulo">{t('recordar.titulo')}</h3>
 
       {enviadoA ? (
         <>
           <p role="status">
-            Te hemos enviado un enlace a <strong>{enviadoA}</strong>. Caduca en 1 hora.
-            Si no lo ves, mira en la carpeta de spam.
+            <TextoConFormato texto={t('recordar.enviado', { email: `**${enviadoA}**` })} />
           </p>
-          <button type="button" className="btn-primary" onClick={alCerrar}>Cerrar</button>
+          <button type="button" className="btn-primary" onClick={alCerrar}>{t('comun.cerrar')}</button>
         </>
       ) : (
         <form onSubmit={enviar} className="login-form">
           <p className="texto-secundario">
-            Escribe el correo de tu cuenta y te enviaremos un enlace para elegir una contraseña nueva.
+            {t('recordar.explicacion')}
           </p>
-          <label htmlFor="recordar-email">Correo electrónico</label>
+          <label htmlFor="recordar-email">{t('comun.correo')}</label>
           <input id="recordar-email" ref={campo} type="email" autoComplete="email" required
                  value={email} onChange={e => setEmail(e.target.value)} />
           {error && <p className="error-msg" role="alert">{error}</p>}
           <div className="recordar-contrasena-botones">
-            <button type="button" className="btn-secundario" onClick={alCerrar}>Cancelar</button>
+            <button type="button" className="btn-secundario" onClick={alCerrar}>{t('comun.cancelar')}</button>
             <button type="submit" className="btn-primary" disabled={enviando}>
-              {enviando ? 'Enviando…' : 'Enviar enlace'}
+              {enviando ? t('recordar.enviando') : t('recordar.enviar')}
             </button>
           </div>
         </form>

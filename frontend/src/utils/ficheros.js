@@ -1,38 +1,41 @@
 // Utilidades que comparten Inicio y Resultados para enseñar ejecuciones y
-// sus ficheros.
+// sus ficheros. Los textos son claves de los diccionarios (spec 014); las
+// funciones reciben el traductor `t` o el idioma, y sin él hablan en español.
+import { IDIOMA_POR_DEFECTO, localeDe, traductor } from './idioma.js';
 
 // Los ficheros de un cribado llevan en el nombre la base de datos, la ejecución
 // y la fecha, para que dos ejecuciones no se pisen. Como texto de un botón es
 // ilegible: se enseña qué es, y el nombre completo queda en el tooltip.
 const ETIQUETA_FICHERO = {
-  moleculas_:   'Moléculas',
-  propiedades_: 'Propiedades',
-  ranking_:     'Ranking',
-  poses_:       'Poses',
-  resultados_:  'Resultados completos',
+  moleculas_:   'ficheros.moleculas',
+  propiedades_: 'ficheros.propiedades',
+  ranking_:     'ficheros.ranking',
+  poses_:       'ficheros.poses',
+  resultados_:  'ficheros.resultados',
 };
 
-export function etiquetaFichero(nombre) {
+export function etiquetaFichero(nombre, t = traductor(IDIOMA_POR_DEFECTO)) {
   const prefijo = Object.keys(ETIQUETA_FICHERO).find(p => nombre.startsWith(p));
-  return prefijo ? `${ETIQUETA_FICHERO[prefijo]} (${nombre.split('.').pop().toUpperCase()})` : nombre;
+  return prefijo ? `${t(ETIQUETA_FICHERO[prefijo])} (${nombre.split('.').pop().toUpperCase()})` : nombre;
 }
 
-export function formatFecha(iso) {
+export function formatFecha(iso, idioma = IDIOMA_POR_DEFECTO) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })
-    + ' ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const locale = localeDe(idioma);
+  return d.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric' })
+    + ' ' + d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
 // Las peticiones guardan el estado en mayúsculas y las ejecuciones de
 // workflow en minúsculas: se normaliza aquí para que las dos tablas hablen
 // igual.
 const ESTADOS = {
-  pendiente:  'En cola',
-  procesando: 'Procesando',
-  completado: 'Completado',
-  error:      'Error',
-  cancelado:  'Cancelado',
+  pendiente:  'estado.pendiente',
+  procesando: 'estado.procesando',
+  completado: 'estado.completado',
+  error:      'estado.error',
+  cancelado:  'estado.cancelado',
 };
 
 export function claseEstado(estado) {
@@ -40,8 +43,9 @@ export function claseEstado(estado) {
   return ESTADOS[clave] ? clave : 'pendiente';
 }
 
-export function textoEstado(estado) {
-  return ESTADOS[(estado || '').toLowerCase()] || estado;
+export function textoEstado(estado, t = traductor(IDIOMA_POR_DEFECTO)) {
+  const clave = ESTADOS[(estado || '').toLowerCase()];
+  return clave ? t(clave) : estado;
 }
 
 export const ESTADOS_ACTIVOS = ['pendiente', 'procesando'];

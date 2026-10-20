@@ -4,6 +4,7 @@ import { claseEstado, textoEstado, etiquetaFichero, formatFecha } from '../utils
 import { mensajeError } from '../utils/mensajes'
 import VerEn3D from './VerEn3D'
 import Icono from './Icono'
+import { useIdioma } from '../hooks/useIdioma'
 
 // Cuántas ejecuciones recientes se enseñan aquí; el resto está en Resultados.
 const RECIENTES = 5;
@@ -13,13 +14,14 @@ const RECIENTES = 5;
 // de presentación iguales para todos, y los resultados de un cribado no
 // aparecían en ninguna parte fuera del editor.
 export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnVisor, verWorkflow }) {
+  const { t, idioma } = useIdioma();
   const [ejecuciones, setEjecuciones] = useState(null);   // null = cargando
   const [errorDescarga, setErrorDescarga] = useState(null);
 
   const descargar = (f) => {
     setErrorDescarga(null);
     descargarConToken(`/uploads/${f}`, f)
-      .catch(err => setErrorDescarga(mensajeError('descargar el fichero', err)));
+      .catch(err => setErrorDescarga(mensajeError(t('accion.descargar_fichero'), err, t)));
   };
 
   useEffect(() => {
@@ -33,42 +35,39 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
 
   return (
     <div className="seccion-wrapper">
-      <h2>Hola, {usuario.nombre}</h2>
+      <h2>{t('inicio.hola', { nombre: usuario.nombre })}</h2>
 
       <div className="inicio-acciones">
-        <button className="btn-primary" onClick={nuevoWorkflow}>Nuevo workflow</button>
+        <button className="btn-primary" onClick={nuevoWorkflow}>{t('cabecera.nuevo_workflow')}</button>
         <button className="btn-secundario" onClick={() => setPaginaActual('moleculas')}>
-          Subir moléculas
+          {t('inicio.subir_moleculas')}
         </button>
         <button className="btn-secundario" onClick={() => setPaginaActual('algoritmos')}>
-          Subir algoritmo
+          {t('inicio.subir_algoritmo')}
         </button>
         <span className="inicio-tutorial">
-          ¿Primera vez?{' '}
-          <button className="btn-enlace" onClick={() => setPaginaActual('tutorial')}>Ver el tutorial</button>
+          {t('inicio.primera_vez')}{' '}
+          <button className="btn-enlace" onClick={() => setPaginaActual('tutorial')}>{t('inicio.ver_tutorial')}</button>
         </span>
       </div>
 
       <div className="subtitulo-tabla">
-        <h3>Tus últimas ejecuciones</h3>
+        <h3>{t('inicio.ultimas')}</h3>
         {ejecuciones?.length > 0 && (
           <button className="btn-enlace" onClick={() => setPaginaActual('peticiones')}>
-            Ver todos los resultados
+            {t('inicio.ver_todos')}
           </button>
         )}
       </div>
 
-      {ejecuciones === null && <p className="texto-secundario">Cargando…</p>}
+      {ejecuciones === null && <p className="texto-secundario">{t('comun.cargando')}</p>}
       {errorDescarga && <p className="error-msg" role="status">{errorDescarga}</p>}
 
       {ejecuciones?.length === 0 && (
         <div className="panel inicio-vacio">
-          <p>
-            Todavía no has lanzado ningún cribado. Empieza por subir una biblioteca de
-            moléculas y después crea un workflow que la use.
-          </p>
+          <p>{t('inicio.vacio')}</p>
           <button className="btn-primary" onClick={() => setPaginaActual('moleculas')}>
-            Subir moléculas
+            {t('inicio.subir_moleculas')}
           </button>
         </div>
       )}
@@ -78,27 +77,27 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
           <table className="tabla-peticiones">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Fecha</th>
-                <th>Workflow</th>
-                <th>Estado</th>
-                <th>Ficheros</th>
-                <th>Acciones</th>
+                <th>{t('tabla.id')}</th>
+                <th>{t('tabla.fecha')}</th>
+                <th>{t('tabla.workflow')}</th>
+                <th>{t('tabla.estado')}</th>
+                <th>{t('tabla.ficheros')}</th>
+                <th>{t('tabla.acciones')}</th>
               </tr>
             </thead>
             <tbody>
               {ejecuciones.map(e => (
                 <tr key={e.id}>
-                  <td data-label="ID" className="col-id">#{e.id}</td>
-                  <td data-label="Fecha" className="col-fecha">{formatFecha(e.fecha_ejecucion)}</td>
-                  <td data-label="Workflow">
+                  <td data-label={t('tabla.id')} className="col-id">#{e.id}</td>
+                  <td data-label={t('tabla.fecha')} className="col-fecha">{formatFecha(e.fecha_ejecucion, idioma)}</td>
+                  <td data-label={t('tabla.workflow')}>
                     {e.workflow_nombre}
-                    {e.workflow_borrado && <span className="texto-secundario"> (borrado)</span>}
+                    {e.workflow_borrado && <span className="texto-secundario"> {t('resultados.borrado')}</span>}
                   </td>
-                  <td data-label="Estado">
-                    <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado)}</span>
+                  <td data-label={t('tabla.estado')}>
+                    <span className={`badge ${claseEstado(e.estado)}`}>{textoEstado(e.estado, t)}</span>
                   </td>
-                  <td data-label="Ficheros">
+                  <td data-label={t('tabla.ficheros')}>
                     {e.archivos?.length
                       ? e.archivos.map(f => (
                           <span key={f} className="fichero-acciones">
@@ -107,16 +106,16 @@ export default function Home({ usuario, setPaginaActual, nuevoWorkflow, abrirEnV
                               title={f}
                               onClick={() => descargar(f)}
                             >
-                              {etiquetaFichero(f)}
+                              {etiquetaFichero(f, t)}
                             </button>
                             <VerEn3D fichero={f} abrirEnVisor={abrirEnVisor} />
                           </span>
                         ))
                       : <span className="col-cifra">—</span>}
                   </td>
-                  <td data-label="Acciones">
+                  <td data-label={t('tabla.acciones')}>
                     <button className="btn-descarga" onClick={() => verWorkflow(e)}>
-                      <Icono nombre="nodos" />Ver workflow
+                      <Icono nombre="nodos" />{t('resultados.ver_workflow')}
                     </button>
                   </td>
                 </tr>

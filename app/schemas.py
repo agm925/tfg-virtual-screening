@@ -36,6 +36,8 @@ class AlgoritmoRespuesta(BaseModel):
     formato_salida: Optional[str] = None
     clave_score: Optional[str] = None
     verificado: bool = False
+    # Spec 013: entradas, salida y opciones; None = las de siempre de su tipo.
+    interfaz: Optional[Dict[str, Any]] = None
     # Un algoritmo desactivado desaparece del catalogo y no puede ejecutarse,
     # pero su fila --y el historial de peticiones que lo usaron-- se conserva.
     activo: bool = True

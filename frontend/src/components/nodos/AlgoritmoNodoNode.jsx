@@ -2,11 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
+import ConectoresInterfaz from './ConectoresInterfaz';
+import { useIdioma } from '../../hooks/useIdioma';
 
 const AlgoritmoNodoNode = ({ data, id }) => {
+  const { t } = useIdioma();
   const [algoritmos, setAlgoritmos] = useState([]);
   // Valor siempre como string para evitar mismatch número/string en el select
   const [seleccionado, setSeleccionado] = useState(String(data.algoritmo_id || ''));
+  // La interfaz del algoritmo elegido (spec 013) y si ya ha llegado la lista.
+  const [interfaz, setInterfaz] = useState(null);
+  const [listo, setListo] = useState(false);
 
   useEffect(() => { cargarAlgoritmos(); }, []);
 
@@ -15,16 +21,18 @@ const AlgoritmoNodoNode = ({ data, id }) => {
       const todos = await apiFetch('/algoritmos').then(r => r.json());
       const filtrados = todos.filter(a => a.tipo === 'alineacion');
       setAlgoritmos(filtrados);
+      setListo(true);
       if (filtrados.length === 0) return;
       // Restaurar la selección guardada en data, o elegir el primero
       const guardado = filtrados.find(a => String(a.id) === String(data.algoritmo_id));
       const elegido = guardado || filtrados[0];
-      aplicarCambio(elegido.id, elegido.nombre, elegido.ruta_archivo);
+      aplicarCambio(elegido.id, elegido.nombre, elegido.ruta_archivo, elegido.interfaz);
     } catch (err) { console.error('Error cargando algoritmos:', err); }
   };
 
-  const aplicarCambio = (algId, nombre, rutaArchivo) => {
+  const aplicarCambio = (algId, nombre, rutaArchivo, interfazAlgoritmo) => {
     setSeleccionado(String(algId));
+    setInterfaz(interfazAlgoritmo || null);
     data.algoritmo_id     = algId;
     data.algoritmo_nombre = nombre;
     data.algoritmo_ruta   = rutaArchivo;
@@ -35,23 +43,31 @@ const AlgoritmoNodoNode = ({ data, id }) => {
       <div className="nodo-body">
         <select
           className="select-algo"
-          aria-label="Algoritmo de alineación"
+          aria-label={t('nodos.algoritmo_alineacion')}
           value={seleccionado}
           onChange={e => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
-            if (algo) aplicarCambio(algo.id, algo.nombre, algo.ruta_archivo);
+            if (algo) aplicarCambio(algo.id, algo.nombre, algo.ruta_archivo, algo.interfaz);
           }}
         >
           {algoritmos.length > 0
             ? algoritmos.map(a => <option key={a.id} value={String(a.id)}>{a.nombre}</option>)
-            : <option value="">Sin algoritmos de alineación</option>}
+            : <option value="">{t('nodos.sin_alineacion')}</option>}
         </select>
-        <p className="nodo-nota">
-          Conecta la molécula al punto de arriba y, si quieres, la referencia al de abajo.
-        </p>
+        <ConectoresInterfaz id={id} data={data} interfaz={interfaz}
+                            idsDeSiempre={['input_molecula', 'input_referencia']} listo={listo} />
+        {!interfaz && (
+          <p className="nodo-nota">
+            {t('nodos.nota_alineacion')}
+          </p>
+        )}
       </div>
-      <Handle type="target" position={Position.Left}  id="input_molecula"   title="Molécula"   style={{ top: '35%' }} />
-      <Handle type="target" position={Position.Left}  id="input_referencia" title="Referencia (opcional)" style={{ top: '70%' }} />
+      {!interfaz && (
+        <>
+          <Handle type="target" position={Position.Left}  id="input_molecula"   title={t('tabla.molecula')}   style={{ top: '35%' }} />
+          <Handle type="target" position={Position.Left}  id="input_referencia" title={t('nodos.referencia_opcional')} style={{ top: '70%' }} />
+        </>
+      )}
       <Handle type="source" position={Position.Right} id="output" />
     </MarcoNodo>
   );

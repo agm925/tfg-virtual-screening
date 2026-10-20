@@ -3,6 +3,7 @@ import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
 import { seleccionInicial } from '../../utils/ficheros';
+import { useIdioma } from '../../hooks/useIdioma';
 
 // `tipo` lo verifica el backend contra el contenido real del fichero al
 // subirlo (GET /moleculas), no es lo que declaró quien lo subió: antes el
@@ -13,12 +14,13 @@ import { seleccionInicial } from '../../utils/ficheros';
 // Se agrupan con <optgroup> en vez de marcarlas con un emoji: un <option> no
 // admite iconos SVG, y el grupo dice lo mismo con palabras.
 const GRUPOS = [
-  ['molecula',      'Moléculas'],
-  ['base_de_datos', 'Bibliotecas'],
-  ['resultado',     'Resultados'],
+  ['molecula',      'tabla.moleculas'],
+  ['base_de_datos', 'moleculas.bibliotecas'],
+  ['resultado',     'cabecera.resultados'],
 ];
 
 const SelectMolNodoNode = ({ data, id }) => {
+  const { t } = useIdioma();
   const [moleculas, setMoleculas] = useState([]);
   const [seleccionada, setSeleccionada] = useState(data.nombre_archivo || '');
   const [cargando, setCargando] = useState(true);
@@ -38,7 +40,7 @@ const SelectMolNodoNode = ({ data, id }) => {
       setSeleccionada(inicial.nombre);
       setFalta(inicial.falta);
       if (inicial.nombre) data.nombre_archivo = inicial.nombre;
-    } catch { setError('No se pudo cargar la lista de moléculas'); }
+    } catch { setError(t('nodos.error_moleculas')); }
     finally { setCargando(false); }
   };
 
@@ -48,40 +50,42 @@ const SelectMolNodoNode = ({ data, id }) => {
     <MarcoNodo id={id} tipo="selectMol" data={data}>
       <div className="nodo-body">
         {cargando ? (
-          <p className="nodo-nota">Cargando moléculas…</p>
+          <p className="nodo-nota">{t('nodos.cargando_moleculas')}</p>
         ) : error ? (
           <p className="nodo-aviso">{error}</p>
         ) : moleculas.length === 0 && !falta ? (
           <>
-            <p className="nodo-aviso">Todavía no tienes ninguna molécula.</p>
-            <p className="nodo-nota">Súbela desde la página Moléculas o con el nodo Subir molécula.</p>
+            <p className="nodo-aviso">{t('nodos.sin_moleculas')}</p>
+            <p className="nodo-nota">{t('nodos.subela')}</p>
           </>
         ) : (
           <>
             <select className="select-input" value={seleccionada} onChange={e => handleCambio(e.target.value)}
-                    aria-label="Molécula">
-              {falta && <option value={seleccionada}>{seleccionada} (ya no existe)</option>}
+                    aria-label={t('tabla.molecula')}>
+              {falta && <option value={seleccionada}>{seleccionada} {t('nodos.ya_no_existe')}</option>}
               {GRUPOS.map(([tipo, titulo]) => {
                 // Un tipo desconocido cae con las moléculas, como antes caía
                 // en su icono.
                 const delGrupo = moleculas.filter(m =>
-                  (GRUPOS.some(([t]) => t === m.tipo) ? m.tipo : 'molecula') === tipo);
+                  (GRUPOS.some(([tipoGrupo]) => tipoGrupo === m.tipo) ? m.tipo : 'molecula') === tipo);
                 return delGrupo.length > 0 && (
-                  <optgroup key={tipo} label={titulo}>
+                  <optgroup key={tipo} label={t(titulo)}>
                     {delGrupo.map(m => (
                       <option key={m.nombre} value={m.nombre}>
                         {m.nombre}
-                        {m.num_moleculas > 1 ? ` (${m.num_moleculas} moléculas, ${m.tamano_kb} KB)` : ` (${m.tamano_kb} KB)`}
+                        {m.num_moleculas > 1
+                          ? ` ${t('nodos.detalle_n', { n: m.num_moleculas, kb: m.tamano_kb })}`
+                          : ` (${m.tamano_kb} KB)`}
                       </option>
                     ))}
                   </optgroup>
                 );
               })}
             </select>
-            {falta && <p className="nodo-aviso">Esta molécula ya no está disponible: elige otra.</p>}
+            {falta && <p className="nodo-aviso">{t('nodos.no_disponible')}</p>}
             <p className="nodo-nota">
-              {moleculas.length} fichero{moleculas.length !== 1 ? 's' : ''} ·{' '}
-              <button type="button" className="nodo-enlace" onClick={cargarMoleculas}>actualizar</button>
+              {t(moleculas.length === 1 ? 'nodos.un_fichero' : 'nodos.n_ficheros', { n: moleculas.length })} ·{' '}
+              <button type="button" className="nodo-enlace" onClick={cargarMoleculas}>{t('nodos.actualizar')}</button>
             </p>
           </>
         )}

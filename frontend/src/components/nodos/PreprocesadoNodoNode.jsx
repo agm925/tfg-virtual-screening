@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
+import ConectoresInterfaz from './ConectoresInterfaz';
+import { useIdioma } from '../../hooks/useIdioma';
 
 const PreprocesadoNodoNode = ({ data, id }) => {
+  const { t } = useIdioma();
   const [algoritmos, setAlgoritmos] = useState([]);
   const [seleccionado, setSeleccionado] = useState(String(data.algoritmo_id || ''));
   const [nombreSeleccionado, setNombreSeleccionado] = useState(data.algoritmo_nombre || '');
@@ -12,6 +15,9 @@ const PreprocesadoNodoNode = ({ data, id }) => {
   const [sin3D, setSin3D] = useState(data.sin_3d || false);
   const [sinCenter, setSinCenter] = useState(data.sin_center || false);
   const [formatoSalida, setFormatoSalida] = useState(data.formato_salida || 'mismo');
+  // La interfaz del algoritmo elegido (spec 013) y si ya ha llegado la lista.
+  const [interfaz, setInterfaz] = useState(null);
+  const [listo, setListo] = useState(false);
 
   useEffect(() => {
     cargarAlgoritmos();
@@ -22,10 +28,11 @@ const PreprocesadoNodoNode = ({ data, id }) => {
       const todos = await apiFetch('/algoritmos').then(r => r.json());
       const filtrados = todos.filter(a => a.tipo === 'preprocesado');
       setAlgoritmos(filtrados);
+      setListo(true);
       if (filtrados.length === 0) return;
       const guardado = filtrados.find(a => String(a.id) === String(data.algoritmo_id));
       const elegido = guardado || filtrados[0];
-      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo, elegido.clave_score);
+      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo, elegido.clave_score, elegido.interfaz);
     } catch (err) {
       console.error('Error cargando algoritmos de preprocesado:', err);
     }
@@ -37,8 +44,9 @@ const PreprocesadoNodoNode = ({ data, id }) => {
   // solo mientras ambos coincidian: en cuanto un algoritmo se registre como
   // "Docking con Smina" en vez de "dockingSmina", el flujo fallaria con
   // "Algoritmo no encontrado: algoritmos/Docking con Smina.py".
-  const handleCambio = (id, nombre, rutaArchivo, claveScore) => {
+  const handleCambio = (id, nombre, rutaArchivo, claveScore, interfazAlgoritmo) => {
     setSeleccionado(String(id));
+    setInterfaz(interfazAlgoritmo || null);
     setNombreSeleccionado(nombre);
     data.algoritmo_id     = id;
     data.algoritmo_nombre = nombre;
@@ -76,23 +84,26 @@ const PreprocesadoNodoNode = ({ data, id }) => {
       <div className="nodo-body">
         <select
           className="select-algo"
-          aria-label="Algoritmo de preparación"
+          aria-label={t('nodos.algoritmo_preparacion')}
           value={seleccionado}
           onChange={(e) => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
-            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo, algo.clave_score);
+            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo, algo.clave_score, algo.interfaz);
           }}
         >
           {algoritmos.length > 0
             ? algoritmos.map(algo => (
                 <option key={algo.id} value={String(algo.id)}>{algo.nombre}</option>
               ))
-            : <option value="">Sin algoritmos de preprocesado</option>}
+            : <option value="">{t('nodos.sin_preparacion')}</option>}
         </select>
+
+        <ConectoresInterfaz id={id} data={data} interfaz={interfaz}
+                            idsDeSiempre={['input_molecula']} listo={listo} />
 
         {esFiltroObabel && (
           <label className="nodo-campo">
-            Condición que deben cumplir
+            {t('nodos.condicion')}
             <input
               type="text"
               className="select-input"
@@ -100,16 +111,16 @@ const PreprocesadoNodoNode = ({ data, id }) => {
               placeholder="MW>200"
               onChange={(e) => handleCambioFiltro(e.target.value)}
             />
-            <span>Ejemplo: MW&gt;200 deja las de peso molecular mayor de 200.</span>
+            <span>{t('nodos.condicion_ejemplo')}</span>
           </label>
         )}
 
         {esPreparacionObabel && (
           <>
             <label className="nodo-campo">
-              Formato de salida
+              {t('nodos.formato_salida')}
               <select className="select-input" value={formatoSalida} onChange={(e) => handleCambioFormato(e.target.value)}>
-                <option value="mismo">Igual que la entrada</option>
+                <option value="mismo">{t('nodos.igual_entrada')}</option>
                 <option value="sdf">SDF</option>
                 <option value="mol2">MOL2</option>
                 <option value="pdbqt">PDBQT</option>
@@ -122,22 +133,22 @@ const PreprocesadoNodoNode = ({ data, id }) => {
             <div className="opciones-checkbox">
               <label>
                 <input type="checkbox" checked={!sinH} onChange={(e) => handleCambioOpcion('sin_h', !e.target.checked)} />
-                Añadir hidrógenos (pH 7.4)
+                {t('nodos.anadir_hidrogenos')}
               </label>
               <label>
                 <input type="checkbox" checked={!sin3D} onChange={(e) => handleCambioOpcion('sin_3d', !e.target.checked)} />
-                Generar 3D
+                {t('nodos.generar_3d')}
               </label>
               <label>
                 <input type="checkbox" checked={!sinCenter} onChange={(e) => handleCambioOpcion('sin_center', !e.target.checked)} />
-                Centrar molécula
+                {t('nodos.centrar')}
               </label>
             </div>
           </>
         )}
       </div>
 
-      <Handle type="target" position={Position.Left}  id="input_molecula" title="Molécula" />
+      {!interfaz && <Handle type="target" position={Position.Left}  id="input_molecula" title={t('tabla.molecula')} />}
       <Handle type="source" position={Position.Right} id="output" />
     </MarcoNodo>
   );

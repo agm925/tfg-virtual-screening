@@ -17,6 +17,7 @@ import {
   claveVisor, serializar, restaurar, crearContadorDeBusquedas,
   tieneLista, ponerEnHueco, llegaConLista, detalleFichero,
 } from '../../frontend/src/utils/visor.js';
+import { traducir } from '../../frontend/src/utils/idioma.js';
 
 // Congela un objeto entero: si una función lo modificara en vez de devolver
 // uno nuevo, la prueba fallaría con un TypeError.
@@ -160,7 +161,8 @@ test('cintas en algo que no es proteína se dibuja en varillas y avisa', () => {
   const { estilo, aviso } = estiloEfectivo('cintas', ETANOL);
 
   assert.equal(estilo, 'varillas');
-  assert.match(aviso, /proteína/);
+  // El aviso es una clave de los diccionarios (spec 014): se traduce al enseñarlo.
+  assert.match(traducir('es', aviso), /proteína/);
 });
 
 test('los demás estilos se respetan en cualquier molécula', () => {

@@ -82,6 +82,12 @@ def ejecutar_algoritmo(ruta_algoritmo: str, *archivos, flags=()) -> dict:
         - Docking:                 ejecutar_algoritmo(algo, ligando, receptor, salida,
                                                       flags=["--scoring", "vinardo"])
 
+    Si el algoritmo recibe la salida con una opción (`entrada -o salida`,
+    spec 013), esa opción va en `archivos` justo delante de la salida: la
+    salida sigue siendo el último fichero, que es lo que se descarga en slurm y
+    lo que mira el cribado en lote, y slurm la deja literal (ver _es_opcion en
+    app/slurm_executor.py).
+
     `flags` va aparte de `archivos` y NO es cosmético: en modo slurm cada
     elemento de `archivos` se sube al nodo del clúster y se sustituye por su
     ruta remota. Cuando las opciones viajaban mezcladas con los ficheros,

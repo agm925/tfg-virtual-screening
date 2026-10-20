@@ -6,26 +6,27 @@
 //
 // `familia` elige el color: la clase CSS `familia-<familia>` lo toma de
 // --nodo-<familia> en tokens.css. `icono` es el nombre que dibuja Icono.jsx.
-// El orden del array es el de la paleta.
+// El orden del array es el de la paleta. `etiqueta` y `descripcion` son claves
+// de los diccionarios (spec 014): las traduce quien las enseña.
 export const TIPOS_NODO = [
-  { tipo: 'upload',       etiqueta: 'Subir molécula',    familia: 'entrada',     icono: 'subir',
-    descripcion: 'Sube una molécula desde tu equipo.' },
-  { tipo: 'selectMol',    etiqueta: 'Elegir molécula',   familia: 'entrada',     icono: 'matraz',
-    descripcion: 'Usa una molécula que ya subiste.' },
-  { tipo: 'selectDB',     etiqueta: 'Elegir biblioteca', familia: 'entrada',     icono: 'biblioteca',
-    descripcion: 'Aplica el workflow a todas las moléculas de una biblioteca SDF.' },
-  { tipo: 'preprocesado', etiqueta: 'Preparar',          familia: 'preparacion', icono: 'ajustes',
-    descripcion: 'Convierte, añade hidrógenos, genera 3D o filtra (Lipinski).' },
-  { tipo: 'alineacion',   etiqueta: 'Alinear',           familia: 'alineacion',  icono: 'alinear',
-    descripcion: 'Superpone una molécula sobre otra de referencia.' },
-  { tipo: 'comparacion',  etiqueta: 'Comparar',          familia: 'comparacion', icono: 'balanza',
-    descripcion: 'Puntúa el parecido entre dos moléculas (Tanimoto, RMSD).' },
-  { tipo: 'docking',      etiqueta: 'Docking',           familia: 'docking',     icono: 'diana',
-    descripcion: 'Encaja el ligando en el receptor y estima la afinidad.' },
-  { tipo: 'ejecutar',     etiqueta: 'Inicio',            familia: 'control',     icono: 'reproducir',
-    descripcion: 'Marca dónde empieza el workflow.' },
-  { tipo: 'descargar',    etiqueta: 'Descargar',         familia: 'control',     icono: 'bajar',
-    descripcion: 'Deja el resultado listo para descargar.' },
+  { tipo: 'upload',       etiqueta: 'nodo.upload',       familia: 'entrada',     icono: 'subir',
+    descripcion: 'nodo.upload_desc' },
+  { tipo: 'selectMol',    etiqueta: 'nodo.selectMol',    familia: 'entrada',     icono: 'matraz',
+    descripcion: 'nodo.selectMol_desc' },
+  { tipo: 'selectDB',     etiqueta: 'nodo.selectDB',     familia: 'entrada',     icono: 'biblioteca',
+    descripcion: 'nodo.selectDB_desc' },
+  { tipo: 'preprocesado', etiqueta: 'nodo.preprocesado', familia: 'preparacion', icono: 'ajustes',
+    descripcion: 'nodo.preprocesado_desc' },
+  { tipo: 'alineacion',   etiqueta: 'nodo.alineacion',   familia: 'alineacion',  icono: 'alinear',
+    descripcion: 'nodo.alineacion_desc' },
+  { tipo: 'comparacion',  etiqueta: 'nodo.comparacion',  familia: 'comparacion', icono: 'balanza',
+    descripcion: 'nodo.comparacion_desc' },
+  { tipo: 'docking',      etiqueta: 'nodo.docking',      familia: 'docking',     icono: 'diana',
+    descripcion: 'nodo.docking_desc' },
+  { tipo: 'ejecutar',     etiqueta: 'nodo.ejecutar',     familia: 'control',     icono: 'reproducir',
+    descripcion: 'nodo.ejecutar_desc' },
+  { tipo: 'descargar',    etiqueta: 'nodo.descargar',    familia: 'control',     icono: 'bajar',
+    descripcion: 'nodo.descargar_desc' },
 ];
 
 const POR_TIPO = Object.fromEntries(TIPOS_NODO.map(t => [t.tipo, t]));
@@ -33,10 +34,10 @@ const POR_TIPO = Object.fromEntries(TIPOS_NODO.map(t => [t.tipo, t]));
 // Nombre del `tipo` de un algoritmo (Algoritmo.tipo en el backend). Coincide
 // con el tipo del nodo que lo usa, de ahi su icono y su color.
 export const ETIQUETA_ALGORITMO = {
-  preprocesado: 'Preparación',
-  alineacion:   'Alineación',
-  comparacion:  'Comparación',
-  docking:      'Docking',
+  preprocesado: 'algoritmo.tipo_preprocesado',
+  alineacion:   'algoritmo.tipo_alineacion',
+  comparacion:  'algoritmo.tipo_comparacion',
+  docking:      'algoritmo.tipo_docking',
 };
 
 export const tipoNodo = (tipo) => POR_TIPO[tipo];

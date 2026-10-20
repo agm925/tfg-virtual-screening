@@ -3,17 +3,19 @@ import { apiFetch } from '../../api/client'
 import { crearContadorDeBusquedas, detalleFichero } from '../../utils/visor'
 import { errorDeRespuesta, mensajeError } from '../../utils/mensajes'
 import Icono from '../Icono'
+import { useIdioma } from '../../hooks/useIdioma'
 
 const GRUPOS = [
-  { id: 'molecula', titulo: 'Moléculas' },
-  { id: 'biblioteca', titulo: 'Bibliotecas' },
-  { id: 'resultado', titulo: 'Resultados' },
+  { id: 'molecula', titulo: 'tabla.moleculas' },
+  { id: 'biblioteca', titulo: 'moleculas.bibliotecas' },
+  { id: 'resultado', titulo: 'cabecera.resultados' },
 ]
 
 // Buscador de ficheros del visor (RF-3): todos los que el usuario puede ver,
 // agrupados y con lo más reciente primero (el orden lo da el servidor), y
 // filtrados por nombre al escribir.
 export default function BuscadorFicheros({ abierto, alElegir, irA }) {
+  const { t } = useIdioma()
   const [consulta, setConsulta] = useState('')
   const [ficheros, setFicheros] = useState(null)   // null = cargando
   const [error, setError] = useState(null)
@@ -34,20 +36,22 @@ export default function BuscadorFicheros({ abierto, alElegir, irA }) {
         setError(null)
       } catch (err) {
         if (!contador.current.esVigente(id)) return
-        setError(mensajeError('cargar la lista de ficheros', err))
+        setError(mensajeError(t('accion.cargar_ficheros'), err, t))
       }
     }, consulta ? 250 : 0)
     return () => clearTimeout(espera)
+    // `t` no dispara una búsqueda: cambia el texto del error, no lo que se pide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [consulta, reintentos])
 
   return (
     <>
-      <label htmlFor="visor-buscar-fichero" className="visor3d-etiqueta">Buscar fichero</label>
+      <label htmlFor="visor-buscar-fichero" className="visor3d-etiqueta">{t('visor.buscar_fichero')}</label>
       <input
         id="visor-buscar-fichero"
         type="search"
         className="visor3d-campo"
-        placeholder="Nombre de la molécula, biblioteca o resultado"
+        placeholder={t('visor.buscar_fichero_ejemplo')}
         value={consulta}
         onChange={e => setConsulta(e.target.value)}
       />
@@ -55,19 +59,19 @@ export default function BuscadorFicheros({ abierto, alElegir, irA }) {
       {error && (
         <div className="error-msg" role="status">
           {error}{' '}
-          <button className="btn-enlace" onClick={() => setReintentos(n => n + 1)}>Reintentar</button>
+          <button className="btn-enlace" onClick={() => setReintentos(n => n + 1)}>{t('comun.reintentar')}</button>
         </div>
       )}
 
-      {ficheros === null && !error && <p className="texto-secundario">Cargando…</p>}
+      {ficheros === null && !error && <p className="texto-secundario">{t('comun.cargando')}</p>}
 
       {ficheros?.length === 0 && (consulta ? (
-        <p className="texto-secundario" role="status">Ningún fichero coincide con «{consulta}».</p>
+        <p className="texto-secundario" role="status">{t('visor.ningun_fichero', { consulta })}</p>
       ) : (
         <div className="visor3d-vacio" role="status">
-          <p>Todavía no hay ficheros que puedas ver. Sube una molécula o una biblioteca para empezar.</p>
+          <p>{t('visor.sin_ficheros')}</p>
           <button className="btn-primary" onClick={() => irA('moleculas')}>
-            <Icono nombre="subir" />Ir a Moléculas
+            <Icono nombre="subir" />{t('visor.ir_moleculas')}
           </button>
         </div>
       ))}
@@ -76,8 +80,8 @@ export default function BuscadorFicheros({ abierto, alElegir, irA }) {
         const delGrupo = ficheros.filter(f => f.grupo === id)
         if (delGrupo.length === 0) return null
         return (
-          <section key={id} className="visor3d-grupo" aria-label={titulo}>
-            <h4>{titulo}</h4>
+          <section key={id} className="visor3d-grupo" aria-label={t(titulo)}>
+            <h4>{t(titulo)}</h4>
             <ul className="visor3d-lista">
               {delGrupo.map(f => (
                 <li key={f.nombre}>
@@ -88,7 +92,7 @@ export default function BuscadorFicheros({ abierto, alElegir, irA }) {
                     title={f.nombre}
                   >
                     <span className="visor3d-item-nombre">{f.nombre}</span>
-                    <span className="visor3d-item-detalle">{detalleFichero(f)}</span>
+                    <span className="visor3d-item-detalle">{detalleFichero(f, t)}</span>
                   </button>
                 </li>
               ))}

@@ -4,6 +4,7 @@ import Icono from './Icono'
 import { tipoNodo, ETIQUETA_ALGORITMO } from '../utils/tiposNodo'
 import { formatFecha } from '../utils/ficheros'
 import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
+import { useIdioma } from '../hooks/useIdioma'
 
 // Panel de administración de la plataforma.
 //
@@ -16,17 +17,17 @@ import { errorDeRespuesta, mensajeError } from '../utils/mensajes'
 // deshacer. El único borrado real es el de ficheros sueltos.
 
 const PESTANAS = [
-  { id: 'usuarios',   label: 'Usuarios' },
-  { id: 'algoritmos', label: 'Algoritmos' },
-  { id: 'moleculas',  label: 'Ficheros' },
+  { id: 'usuarios',   texto: 'admin.usuarios' },
+  { id: 'algoritmos', texto: 'cabecera.algoritmos' },
+  { id: 'moleculas',  texto: 'tabla.ficheros' },
 ]
 
 // `tipo` lo verifica el backend contra el contenido real al subir el
 // fichero (GET /admin/moleculas), no se deduce de la visibilidad.
 const ETIQUETA_TIPO = {
-  molecula: 'Molécula',
-  base_de_datos: 'Biblioteca',
-  resultado: 'Resultado',
+  molecula: 'tabla.molecula',
+  base_de_datos: 'moleculas.biblioteca',
+  resultado: 'admin.resultado',
 }
 
 // Insignia de dos estados con las clases de App.css (.badge.*): `si` cuando
@@ -40,6 +41,7 @@ const Insignia = ({ ok, si, no, claseSi = 'completado', claseNo = 'cancelado' })
 const nombreFichero = (ruta) => (ruta || '').replace(/\\/g, '/').split('/').pop()
 
 export default function Administracion({ usuario }) {
+  const { t, idioma } = useIdioma()
   const [pestana, setPestana]   = useState('usuarios')
   const [usuarios, setUsuarios] = useState([])
   const [algoritmos, setAlgoritmos] = useState([])
@@ -64,7 +66,7 @@ export default function Administracion({ usuario }) {
     try {
       const resp = await apiFetch(rutas[cual])
       if (resp.status === 403) {
-        setError('Tu cuenta no tiene permiso para ver esta página.')
+        setError(t('admin.sin_permiso'))
         return
       }
       if (!resp.ok) throw await errorDeRespuesta(resp)
@@ -73,7 +75,7 @@ export default function Administracion({ usuario }) {
       if (cual === 'algoritmos') setAlgoritmos(datos)
       if (cual === 'moleculas')  setMoleculas(datos)
     } catch (err) {
-      setError(mensajeError('cargar la información', err))
+      setError(mensajeError(t('accion.cargar_informacion'), err, t))
     } finally {
       setCargando(false)
     }
@@ -97,33 +99,30 @@ export default function Administracion({ usuario }) {
       setAviso({ tipo: 'exito', texto: hecho })
       cargar()
     } catch (err) {
-      setAviso({ tipo: 'error', texto: mensajeError(accion, err) })
+      setAviso({ tipo: 'error', texto: mensajeError(accion, err, t) })
     }
   }
 
   const borrarMolecula = async (nombre) => {
     // Este sí es un borrado real e irreversible, así que se confirma.
-    if (!window.confirm(`¿Eliminar definitivamente «${nombre}»?\n\nEl fichero se borra del disco y no se puede recuperar.`)) return
+    if (!window.confirm(t('admin.confirmar_eliminar', { nombre }))) return
     setAviso(null)
     try {
       const resp = await apiFetch(`/moleculas/${encodeURIComponent(nombre)}`, { method: 'DELETE' })
       if (!resp.ok) throw await errorDeRespuesta(resp)
-      setAviso({ tipo: 'exito', texto: `«${nombre}» eliminado.` })
+      setAviso({ tipo: 'exito', texto: t('admin.eliminado', { nombre }) })
       cargar('moleculas')
     } catch (err) {
-      setAviso({ tipo: 'error', texto: mensajeError(`eliminar «${nombre}»`, err) })
+      setAviso({ tipo: 'error', texto: mensajeError(t('accion.eliminar', { nombre }), err, t) })
     }
   }
 
   return (
     <div className="seccion-wrapper">
-      <h2>Administración</h2>
-      <p className="seccion-subtitulo">
-        Desactivar no borra: conserva el historial y se puede deshacer. Solo el
-        borrado de ficheros es definitivo.
-      </p>
+      <h2>{t('cabecera.administracion')}</h2>
+      <p className="seccion-subtitulo">{t('admin.subtitulo')}</p>
 
-      <div className="pestanas" role="tablist" aria-label="Qué administrar">
+      <div className="pestanas" role="tablist" aria-label={t('admin.que_administrar')}>
         {PESTANAS.map(p => (
           <button
             key={p.id}
@@ -131,7 +130,7 @@ export default function Administracion({ usuario }) {
             aria-selected={pestana === p.id}
             className={`pestana ${pestana === p.id ? 'activa' : ''}`}
             onClick={() => { setAviso(null); setPestana(p.id) }}
-          >{p.label}</button>
+          >{t(p.texto)}</button>
         ))}
       </div>
 
@@ -139,7 +138,7 @@ export default function Administracion({ usuario }) {
         <p className={aviso.tipo === 'exito' ? 'exito-msg' : 'error-msg'} role="status">{aviso.texto}</p>
       )}
 
-      {cargando && <p className="texto-secundario">Cargando…</p>}
+      {cargando && <p className="texto-secundario">{t('comun.cargando')}</p>}
       {error && <p className="error-msg" role="status">{error}</p>}
 
       {!cargando && !error && pestana === 'usuarios' && (
@@ -147,15 +146,15 @@ export default function Administracion({ usuario }) {
           <table className="tabla-peticiones">
             <thead>
               <tr>
-                <th>Usuario</th>
-                <th>Rol</th>
+                <th>{t('admin.usuario')}</th>
+                <th>{t('admin.rol')}</th>
                 {/* El correo ya sale bajo el nombre, en la celda "Usuario":
                     esta columna es la insignia de verificado/sin verificar,
                     no el correo en sí. */}
-                <th>Verificación</th>
-                <th>Estado</th>
-                <th>Trabajo</th>
-                <th>Acciones</th>
+                <th>{t('admin.verificacion')}</th>
+                <th>{t('tabla.estado')}</th>
+                <th>{t('admin.trabajo')}</th>
+                <th>{t('tabla.acciones')}</th>
               </tr>
             </thead>
             <tbody>
@@ -163,22 +162,22 @@ export default function Administracion({ usuario }) {
                 const esYo = u.id === usuario.id
                 return (
                   <tr key={u.id}>
-                    <td data-label="Usuario">
-                      <strong>{u.nombre}</strong>{esYo && <span className="texto-secundario"> (tú)</span>}
+                    <td data-label={t('admin.usuario')}>
+                      <strong>{u.nombre}</strong>{esYo && <span className="texto-secundario"> {t('admin.tu')}</span>}
                       <div className="texto-secundario">{u.email}</div>
                     </td>
-                    <td data-label="Rol"><Insignia ok={u.rol === 'admin'} si="Administrador" no="Biólogo" claseSi="procesando" /></td>
-                    <td data-label="Verificación"><Insignia ok={u.email_verificado} si="Verificado" no="Sin verificar" claseNo="pendiente" /></td>
-                    <td data-label="Estado"><Insignia ok={u.activo} si="Activo" no="Desactivado" /></td>
-                    <td data-label="Trabajo" className="col-cifra">
-                      {u.n_algoritmos} algoritmos · {u.n_peticiones} peticiones
+                    <td data-label={t('admin.rol')}><Insignia ok={u.rol === 'admin'} si={t('admin.administrador')} no={t('admin.biologo')} claseSi="procesando" /></td>
+                    <td data-label={t('admin.verificacion')}><Insignia ok={u.email_verificado} si={t('admin.verificado')} no={t('admin.sin_verificar')} claseNo="pendiente" /></td>
+                    <td data-label={t('tabla.estado')}><Insignia ok={u.activo} si={t('admin.activo')} no={t('admin.desactivado')} /></td>
+                    <td data-label={t('admin.trabajo')} className="col-cifra">
+                      {t('admin.trabajo_n', { algoritmos: u.n_algoritmos, peticiones: u.n_peticiones })}
                     </td>
-                    <td data-label="Acciones" className="acciones-celda">
+                    <td data-label={t('tabla.acciones')} className="acciones-celda">
                       {!u.email_verificado && (
                         <button className="btn-descarga"
                           onClick={() => aplicar(`/admin/usuarios/${u.id}`, { email_verificado: true },
-                            `verificar el correo de ${u.email}`, `Correo de ${u.email} verificado.`)}>
-                          Verificar correo
+                            t('admin.accion_verificar', { email: u.email }), t('admin.hecho_verificar', { email: u.email }))}>
+                          {t('admin.verificar_correo')}
                         </button>
                       )}
                       {/* Sobre uno mismo no se ofrecen ni el cambio de rol ni
@@ -189,17 +188,17 @@ export default function Administracion({ usuario }) {
                         <button className="btn-descarga"
                           onClick={() => aplicar(`/admin/usuarios/${u.id}`,
                             { rol: u.rol === 'admin' ? 'biologo' : 'admin' },
-                            `cambiar el rol de ${u.email}`,
-                            `${u.email} ahora es ${u.rol === 'admin' ? 'biólogo' : 'administrador'}.`)}>
-                          {u.rol === 'admin' ? 'Quitar administrador' : 'Hacer administrador'}
+                            t('admin.accion_rol', { email: u.email }),
+                            t(u.rol === 'admin' ? 'admin.hecho_biologo' : 'admin.hecho_admin', { email: u.email }))}>
+                          {t(u.rol === 'admin' ? 'admin.quitar_admin' : 'admin.hacer_admin')}
                         </button>
                       )}
                       {!esYo && (
                         <button className={u.activo ? 'btn-borrar' : 'btn-descarga'}
                           onClick={() => aplicar(`/admin/usuarios/${u.id}`, { activo: !u.activo },
-                            `${u.activo ? 'desactivar' : 'reactivar'} la cuenta de ${u.email}`,
-                            `Cuenta de ${u.email} ${u.activo ? 'desactivada' : 'reactivada'}.`)}>
-                          {u.activo ? 'Desactivar' : 'Reactivar'}
+                            t(u.activo ? 'admin.accion_desactivar' : 'admin.accion_reactivar_cuenta', { email: u.email }),
+                            t(u.activo ? 'admin.hecho_desactivada' : 'admin.hecho_reactivada', { email: u.email }))}>
+                          {t(u.activo ? 'admin.desactivar' : 'admin.reactivar')}
                         </button>
                       )}
                     </td>
@@ -214,48 +213,46 @@ export default function Administracion({ usuario }) {
       {!cargando && !error && pestana === 'algoritmos' && (
         <>
           <p className="texto-secundario">
-            Retirar un algoritmo lo quita del catálogo, rechaza las peticiones
-            nuevas que lo pidan y detiene los workflows guardados que lo usen. Las
-            peticiones ya ejecutadas conservan su historial.
+            {t('admin.retirar_texto')}
           </p>
           <div className="tabla-contenedor">
             <table className="tabla-peticiones">
               <thead>
                 <tr>
-                  <th>Algoritmo</th>
-                  <th>Tipo</th>
-                  <th>Fichero</th>
-                  <th>Visibilidad</th>
-                  <th>Estado</th>
-                  <th>Acciones</th>
+                  <th>{t('tabla.algoritmo')}</th>
+                  <th>{t('admin.tipo')}</th>
+                  <th>{t('visor.fichero')}</th>
+                  <th>{t('admin.visibilidad')}</th>
+                  <th>{t('tabla.estado')}</th>
+                  <th>{t('tabla.acciones')}</th>
                 </tr>
               </thead>
               <tbody>
                 {algoritmos.map(a => (
                   <tr key={a.id} className={a.activo ? '' : 'fila-inactiva'}>
-                    <td data-label="Algoritmo">
+                    <td data-label={t('tabla.algoritmo')}>
                       <strong>{a.nombre}</strong>
                       <div className="texto-secundario">{a.descripcion}</div>
                     </td>
-                    <td data-label="Tipo" className="celda-tipo">
+                    <td data-label={t('admin.tipo')} className="celda-tipo">
                       {tipoNodo(a.tipo) && <Icono nombre={tipoNodo(a.tipo).icono} />}
-                      {ETIQUETA_ALGORITMO[a.tipo] || a.tipo}
+                      {ETIQUETA_ALGORITMO[a.tipo] ? t(ETIQUETA_ALGORITMO[a.tipo]) : a.tipo}
                     </td>
-                    <td data-label="Fichero" className="col-fichero">{nombreFichero(a.ruta_archivo)}</td>
-                    <td data-label="Visibilidad"><Insignia ok={a.es_publico} si="Público" no="Privado" claseSi="procesando" /></td>
-                    <td data-label="Estado"><Insignia ok={a.activo} si="Activo" no="Retirado" claseNo="error" /></td>
-                    <td data-label="Acciones" className="acciones-celda">
+                    <td data-label={t('visor.fichero')} className="col-fichero">{nombreFichero(a.ruta_archivo)}</td>
+                    <td data-label={t('admin.visibilidad')}><Insignia ok={a.es_publico} si={t('visibilidad.publico')} no={t('visibilidad.privado')} claseSi="procesando" /></td>
+                    <td data-label={t('tabla.estado')}><Insignia ok={a.activo} si={t('admin.activo')} no={t('admin.retirado')} claseNo="error" /></td>
+                    <td data-label={t('tabla.acciones')} className="acciones-celda">
                       <button className="btn-descarga"
                         onClick={() => aplicar(`/admin/algoritmos/${a.id}`, { es_publico: !a.es_publico },
-                          `hacer ${a.es_publico ? 'privado' : 'público'} «${a.nombre}»`,
-                          `«${a.nombre}» ahora es ${a.es_publico ? 'privado' : 'público'}.`)}>
-                        {a.es_publico ? 'Hacer privado' : 'Hacer público'}
+                          t(a.es_publico ? 'admin.accion_privado' : 'admin.accion_publico', { nombre: a.nombre }),
+                          t(a.es_publico ? 'admin.hecho_privado' : 'admin.hecho_publico', { nombre: a.nombre }))}>
+                        {t(a.es_publico ? 'admin.hacer_privado' : 'admin.hacer_publico')}
                       </button>
                       <button className={a.activo ? 'btn-borrar' : 'btn-descarga'}
                         onClick={() => aplicar(`/admin/algoritmos/${a.id}`, { activo: !a.activo },
-                          `${a.activo ? 'retirar' : 'reactivar'} «${a.nombre}»`,
-                          `«${a.nombre}» ${a.activo ? 'retirado del catálogo' : 'reactivado'}.`)}>
-                        {a.activo ? 'Retirar del catálogo' : 'Reactivar'}
+                          t(a.activo ? 'admin.accion_retirar' : 'admin.accion_reactivar', { nombre: a.nombre }),
+                          t(a.activo ? 'admin.hecho_retirado' : 'admin.hecho_reactivado', { nombre: a.nombre }))}>
+                        {t(a.activo ? 'admin.retirar' : 'admin.reactivar')}
                       </button>
                     </td>
                   </tr>
@@ -269,42 +266,41 @@ export default function Administracion({ usuario }) {
       {!cargando && !error && pestana === 'moleculas' && (
         <>
           <p className="texto-secundario">
-            Todos los ficheros subidos o generados en la plataforma, incluidos los
-            resultados privados de cada usuario. Aquí el borrado sí es definitivo.
+            {t('admin.ficheros_texto')}
           </p>
           <div className="tabla-contenedor">
             <table className="tabla-peticiones">
               <thead>
                 <tr>
-                  <th>Fichero</th>
-                  <th>Tipo</th>
-                  <th>Propietario</th>
-                  <th>Visibilidad</th>
-                  <th>Tamaño</th>
-                  <th>Fecha</th>
-                  <th>Acciones</th>
+                  <th>{t('visor.fichero')}</th>
+                  <th>{t('admin.tipo')}</th>
+                  <th>{t('admin.propietario')}</th>
+                  <th>{t('admin.visibilidad')}</th>
+                  <th>{t('tabla.tamano')}</th>
+                  <th>{t('tabla.fecha')}</th>
+                  <th>{t('tabla.acciones')}</th>
                 </tr>
               </thead>
               <tbody>
                 {moleculas.map(m => (
                   <tr key={m.nombre}>
-                    <td data-label="Fichero" className="col-fichero">{m.nombre}</td>
-                    <td data-label="Tipo">
-                      {ETIQUETA_TIPO[m.tipo] || '—'}
-                      {m.num_moleculas > 1 && <span className="texto-secundario"> ({m.num_moleculas} moléculas)</span>}
+                    <td data-label={t('visor.fichero')} className="col-fichero">{m.nombre}</td>
+                    <td data-label={t('admin.tipo')}>
+                      {ETIQUETA_TIPO[m.tipo] ? t(ETIQUETA_TIPO[m.tipo]) : '—'}
+                      {m.num_moleculas > 1 && <span className="texto-secundario"> ({t('visor.n_moleculas', { n: m.num_moleculas })})</span>}
                     </td>
-                    <td data-label="Propietario" className="texto-secundario">
-                      {m.propietario_email || 'Sin propietario registrado'}
+                    <td data-label={t('admin.propietario')} className="texto-secundario">
+                      {m.propietario_email || t('admin.sin_propietario')}
                     </td>
-                    <td data-label="Visibilidad">
-                      <Insignia ok={m.visibilidad === 'biblioteca'} si="Biblioteca" no="Resultado privado" claseSi="procesando" />
+                    <td data-label={t('admin.visibilidad')}>
+                      <Insignia ok={m.visibilidad === 'biblioteca'} si={t('moleculas.biblioteca')} no={t('admin.resultado_privado')} claseSi="procesando" />
                     </td>
-                    <td data-label="Tamaño" className="col-cifra">{m.tamano_kb} KB</td>
-                    <td data-label="Fecha" className="col-fecha">{formatFecha(m.fecha_creacion)}</td>
-                    <td data-label="Acciones" className="acciones-celda">
+                    <td data-label={t('tabla.tamano')} className="col-cifra">{m.tamano_kb} KB</td>
+                    <td data-label={t('tabla.fecha')} className="col-fecha">{formatFecha(m.fecha_creacion, idioma)}</td>
+                    <td data-label={t('tabla.acciones')} className="acciones-celda">
                       <button className="btn-borrar" onClick={() => borrarMolecula(m.nombre)}
-                              aria-label={`Eliminar ${m.nombre}`}>
-                        <Icono nombre="papelera" />Eliminar
+                              aria-label={t('moleculas.eliminar_nombre', { nombre: m.nombre })}>
+                        <Icono nombre="papelera" />{t('comun.eliminar')}
                       </button>
                     </td>
                   </tr>

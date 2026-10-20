@@ -22,12 +22,13 @@ un contenedor sin nada que robar hasta que salte el límite de tiempo».
 
 No expone puerto al anfitrión: solo es alcanzable desde la red interna.
 """
+import json
 import os
 import tempfile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
-from app.banco_pruebas import INVOCACIONES, probar_en_proceso
+from app.banco_pruebas import INVOCACIONES, probar_en_proceso, validar_interfaz
 
 # El mismo tope que aplica el endpoint de subida. Se repite aquí a propósito:
 # este servicio no debe confiar en que quien le llama ya haya validado nada.
@@ -52,7 +53,8 @@ def salud():
 
 
 @app.post("/probar")
-async def probar(tipo: str = Form(...), archivo: UploadFile = File(...)):
+async def probar(tipo: str = Form(...), archivo: UploadFile = File(...),
+                 interfaz: str = Form(None)):
     """
     Ejecuta el algoritmo recibido contra las moléculas de referencia.
 
@@ -75,6 +77,16 @@ async def probar(tipo: str = Form(...), archivo: UploadFile = File(...)):
             detail=f"Tipo de algoritmo desconocido: '{tipo}'.",
         )
 
+    # La interfaz (spec 013) decide con qué argumentos se ejecuta el script:
+    # se vuelve a validar aquí aunque el backend ya lo haya hecho, por la misma
+    # razón que el tamaño.
+    interfaz_valida = None
+    if interfaz:
+        try:
+            interfaz_valida = validar_interfaz(json.loads(interfaz))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Interfaz no válida: {e}")
+
     # basename: el nombre lo elige quien sube el fichero, así que no se usa
     # para construir ninguna ruta sin sanear, ni siquiera dentro del sandbox.
     nombre = os.path.basename(archivo.filename or "algoritmo.py")
@@ -85,4 +97,4 @@ async def probar(tipo: str = Form(...), archivo: UploadFile = File(...)):
         ruta = os.path.join(tmp, nombre)
         with open(ruta, "wb") as f:
             f.write(contenido)
-        return probar_en_proceso(ruta, tipo).como_dict()
+        return probar_en_proceso(ruta, tipo, interfaz_valida).como_dict()

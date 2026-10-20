@@ -13,6 +13,7 @@ import Administracion from './components/Administracion'
 import { getToken, setToken, tokenValido, alExpirarSesion } from './api/client'
 import { CLAVE_USUARIO, olvidarSesion } from './utils/almacenamiento'
 import { tomarTokenDeRestablecer } from './utils/restablecer'
+import { useIdioma } from './hooks/useIdioma'
 import './App.css'
 
 // El token del enlace de «¿Has olvidado tu contraseña?» (spec 011). Se toma
@@ -22,6 +23,7 @@ import './App.css'
 const tokenDelEnlace = tomarTokenDeRestablecer();
 
 function App() {
+  const { t } = useIdioma();
   const [usuario, setUsuario] = useState(null);
   const [tokenRestablecer, setTokenRestablecer] = useState(tokenDelEnlace);
   const [paginaActual, setPaginaActual] = useState('home');
@@ -177,7 +179,7 @@ function App() {
           en las demás pantallas. */}
       {paginaActual !== 'visual' && (
         <footer className="pie-ual">
-          <span>MolServer · Plataforma de cribado virtual — Universidad de Almería</span>
+          <span>{t('pie.texto')}</span>
           <a href="https://www.ual.es" target="_blank" rel="noopener noreferrer">www.ual.es</a>
         </footer>
       )}

@@ -4,6 +4,8 @@
 // con rutas incluidas, o un alert() que bloqueaba la página. Aquí se decide
 // una vez qué se puede enseñar y con qué forma: "No se pudo <acción>: <motivo>."
 
+import { IDIOMA_POR_DEFECTO, traductor } from './idioma.js';
+
 // Un error cuyo texto ya está pensado para el usuario: lo ha escrito el
 // servidor en `detail` (ya limpio) o el propio frontend. Cualquier otro error
 // (red, JSON roto, fallo de programación) se enseña sin su texto.
@@ -47,13 +49,14 @@ export async function errorDeRespuesta(resp) {
 }
 
 // "No se pudo <accion>: <motivo>." si se sabe un motivo enseñable, y si no,
-// que se reintente. `motivo` puede ser un error o ya un texto.
-export function mensajeError(accion, motivo) {
+// que se reintente. `motivo` puede ser un error o ya un texto; `accion`, ya
+// traducida, y `t`, el traductor del idioma de la interfaz (spec 014).
+export function mensajeError(accion, motivo, t = traductor(IDIOMA_POR_DEFECTO)) {
   const texto = motivo instanceof ErrorLegible ? motivo.message
     : typeof motivo === 'string' ? motivo
     : null;
   if (!texto) {
-    return `No se pudo ${accion}. Inténtalo de nuevo y, si vuelve a fallar, avisa al administrador.`;
+    return t('mensajes.no_se_pudo_generico', { accion });
   }
-  return `No se pudo ${accion}: ${texto.replace(/[.\s]+$/, '')}.`;
+  return t('mensajes.no_se_pudo', { accion, motivo: texto.replace(/[.\s]+$/, '') });
 }

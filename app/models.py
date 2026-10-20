@@ -93,6 +93,11 @@ class Algoritmo(Base):
     # bajo "moleculas", "mejor_afinidad" nulo, y la extension del fichero--.
     formato_salida = Column(String, nullable=True)   # "molecula" | "json"
     clave_score = Column(String, nullable=True)      # p.ej. "rmsd_angstroms"
+    # Como se le llama (spec 013): {entradas, opcion_salida, opciones}, lo que
+    # declara su autor al subirlo (app/banco_pruebas.py, validar_interfaz).
+    # Nula = como a todos los de su tipo, que es lo que tienen los del catalogo
+    # y los subidos antes de la spec.
+    interfaz = Column(JSON, nullable=True)
     verificado = Column(Boolean, default=False, nullable=False)
 
     # Retirada del catalogo sin borrar la fila.

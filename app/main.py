@@ -1,5 +1,9 @@
+import json
 import os
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Query, Response
+from typing import Optional
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Query, Response, Header, Request
+from fastapi.exception_handlers import http_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import engine, SessionLocal
@@ -25,9 +29,10 @@ from app.rate_limit import (
     contar_solicitud_restablecer,
 )
 from app.logging_config import logger, configurar_logging
-from app.banco_pruebas import probar_algoritmo
+from app.banco_pruebas import probar_algoritmo, validar_interfaz, es_interfaz_por_defecto
 from app.formatos import EXTENSIONES_ENTRADA_ALGORITMO, contar_moleculas_sdf
 from app import indice_sdf
+from app.idiomas import idioma_de, traducir, traducir_detail
 from datetime import datetime, timezone
 import shutil
 import tempfile
@@ -55,6 +60,19 @@ app.add_middleware(
     allow_headers=["*"],  # Permite cualquier cabecera
     expose_headers=["X-Total-Count"],  # cabecera de paginación: por defecto el navegador la oculta al JS
 )
+
+
+# Spec 014, R7: los errores en el idioma de la interfaz. El código los escribe
+# en español y se traducen aquí, al salir, con el catálogo de app/idiomas.py:
+# así ninguna de las llamadas que lanzan un HTTPException sabe de idiomas. Sin
+# Accept-Language (o en español) la respuesta es la de siempre.
+@app.exception_handler(StarletteHTTPException)
+async def errores_en_su_idioma(request: Request, exc: StarletteHTTPException):
+    idioma = idioma_de(request.headers.get("accept-language"))
+    if idioma != "es":
+        exc = StarletteHTTPException(exc.status_code, detail=traducir_detail(exc.detail, idioma),
+                                     headers=exc.headers)
+    return await http_exception_handler(request, exc)
 
 # --- DEPENDENCIA DE BASE DE DATOS ---
 # Esto es una "manguera" que se abre cuando un usuario hace una petición y se cierra al terminar
@@ -370,6 +388,7 @@ async def subir_algoritmo(
     tipo: str = Form(...),                 # Campo tipo obligatorio desde el formulario
     es_publico: bool = Form(False),        # Añadido: Para aprovechar tu campo es_publico
     archivo: UploadFile = File(...),       # Lo llamamos "archivo" para no confundirlo con la ruta
+    interfaz: Optional[str] = Form(None),  # JSON: entradas, salida y opciones (spec 013)
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
 ):
@@ -401,6 +420,18 @@ async def subir_algoritmo(
             status_code=400,
             detail=f"El tipo debe ser uno de: {', '.join(tipos_validos)}"
         )
+
+    # 2b. La interfaz que declara el autor (spec 013): con que argumentos se
+    #     le llama. Se valida antes de ejecutar nada; si es la de siempre de su
+    #     tipo se guarda nula y el algoritmo va por el camino de siempre.
+    interfaz_valida = None
+    if interfaz:
+        try:
+            interfaz_valida = validar_interfaz(json.loads(interfaz))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=422, detail=f"La interfaz del algoritmo no es válida: {e}")
+        if es_interfaz_por_defecto(tipo, interfaz_valida):
+            interfaz_valida = None
 
     # 3. Leemos el archivo a memoria, con un tope bajo: un algoritmo es un
     #    script de unos pocos KB, y este endpoint acepta código que después se
@@ -434,7 +465,7 @@ async def subir_algoritmo(
         with open(ruta_temporal, "wb") as f:
             f.write(contenido_archivo)
 
-        prueba = probar_algoritmo(ruta_temporal, tipo)
+        prueba = probar_algoritmo(ruta_temporal, tipo, interfaz_valida)
 
         if not prueba.valido:
             logger.warning(
@@ -450,10 +481,11 @@ async def subir_algoritmo(
                     "detalle": prueba.detalle,
                     "salida": (prueba.log or "")[-1500:],
                     "ayuda": (
-                        "El algoritmo se ejecuta sobre dos moléculas de referencia "
-                        "antes de aceptarlo. Comprueba que recibe sus ficheros como "
-                        "argumentos posicionales, que escribe el resultado en el "
-                        "ÚLTIMO argumento, y que termina con código 0."
+                        "El algoritmo se ejecuta sobre moléculas de referencia "
+                        "antes de aceptarlo, con la llamada que se ve arriba. "
+                        "Comprueba que coincide con la que espera tu script --sus "
+                        "entradas, cómo recibe la salida y sus opciones-- y que "
+                        "termina con código 0."
                     ),
                 },
             )
@@ -479,6 +511,7 @@ async def subir_algoritmo(
         autor_id=autor_id,
         formato_salida=prueba.formato_salida,
         clave_score=prueba.clave_score,
+        interfaz=interfaz_valida,
         verificado=True,
     )
     db.add(nuevo_algoritmo)
@@ -1376,6 +1409,7 @@ def visor_moleculas(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+    accept_language: Optional[str] = Header(None),
 ):
     """
     Una pagina de la lista de moleculas de un SDF (RF-6), sacada de su mapa
@@ -1385,7 +1419,13 @@ def visor_moleculas(
     if visor.formato_de(nombre_archivo) != "sdf":
         raise HTTPException(status_code=400,
                             detail="Este fichero no es una biblioteca: se abre entero, sin lista.")
-    return visor.pagina_de_moleculas(ruta, q, offset, limit)
+    pagina = visor.pagina_de_moleculas(ruta, q, offset, limit)
+    # «Molécula nº N», el nombre de un registro sin título, en el idioma de
+    # la interfaz (spec 014). No es un error: no pasa por el manejador.
+    idioma = idioma_de(accept_language)
+    for m in pagina["coincidencias"]:
+        m["nombre"] = traducir(m["nombre"], idioma)
+    return pagina
 
 
 @app.get("/visor/ficheros/{nombre_archivo}/molecula", response_model=schemas.MoleculaVisor)
@@ -1394,6 +1434,7 @@ def visor_molecula(
     posicion: int | None = Query(None, description="Posición en el SDF, desde 1"),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+    accept_language: Optional[str] = Header(None),
 ):
     """
     Una molecula lista para dibujar y describir (RF-5, RF-9, RF-10, RF-12): el
@@ -1401,12 +1442,18 @@ def visor_molecula(
     """
     ruta = fichero_del_visor(nombre_archivo, db, usuario_actual)
     try:
-        return visor.leer_molecula(ruta, posicion)
+        molecula = visor.leer_molecula(ruta, posicion)
     except visor.FaltaPosicion:
         raise HTTPException(status_code=400,
                             detail="Este fichero tiene varias moléculas: elige una de la lista.")
     except visor.PosicionInexistente:
         raise HTTPException(status_code=404, detail="Esa molécula no existe en el fichero.")
+    # El nombre por defecto y el motivo de no poder dibujarla se enseñan tal
+    # cual: van en el idioma de la interfaz (spec 014).
+    idioma = idioma_de(accept_language)
+    molecula["nombre"] = traducir(molecula["nombre"], idioma)
+    molecula["motivo"] = traducir(molecula.get("motivo"), idioma)
+    return molecula
 
 
 @app.get("/visor/ficheros/{nombre_archivo}/descarga")
@@ -1415,6 +1462,7 @@ def visor_descarga(
     posicion: int | None = Query(None, description="Posición en el SDF, desde 1"),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+    accept_language: Optional[str] = Header(None),
 ):
     """
     La molecula que se esta viendo, como fichero suelto (RF-11): el registro
@@ -1458,6 +1506,7 @@ def obtener_ejecucion(
     ejecucion_id: int,
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(obtener_usuario_actual),
+    accept_language: Optional[str] = Header(None),
 ):
     """
     Obtiene los detalles de una ejecución específica. Solo el propietario
@@ -1478,6 +1527,14 @@ def obtener_ejecucion(
     respuesta.copia_exacta = ejecucion.grafo_json is not None
     if not respuesta.copia_exacta and workflow:
         respuesta.grafo_json = workflow.grafo_json
+    # Los errores de los nodos los enseña el panel de resultados del
+    # Constructor tal cual: en el idioma de la interfaz los que tienen
+    # plantilla (spec 014); lo guardado en la base de datos no cambia.
+    errores = (respuesta.resultados_json or {}).get("errores")
+    if isinstance(errores, list):
+        idioma = idioma_de(accept_language)
+        respuesta.resultados_json = {**respuesta.resultados_json,
+                                     "errores": [traducir(e, idioma) for e in errores]}
     return respuesta
 
 

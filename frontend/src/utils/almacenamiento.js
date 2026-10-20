@@ -16,6 +16,11 @@ export const PREFIJO = 'molserver_';
 export const CLAVE_TOKEN = `${PREFIJO}token`;
 export const CLAVE_USUARIO = `${PREFIJO}usuario`;
 
+// El idioma de la interfaz (spec 014, localStorage). Es una preferencia del
+// navegador, no de la sesión: sobrevive al cierre de sesión para que la
+// pantalla de acceso salga en el idioma que se eligió.
+export const CLAVE_IDIOMA = `${PREFIJO}idioma`;
+
 // El estado del Constructor y del Visor 3D (sessionStorage: solo esta
 // pestaña). Llevan el usuario para que otra cuenta en la misma pestaña no
 // herede lo de la anterior.
@@ -26,7 +31,7 @@ export function esClaveDeMolServer(clave) {
   return typeof clave === 'string' && clave.startsWith(PREFIJO);
 }
 
-// Borra de cada almacén las claves de MolServer y nada más. Los almacenes se
+// Borra de cada almacén las claves de MolServer, salvo el idioma, y nada más. Los almacenes se
 // reciben como parámetro para poder probarlo sin navegador; si uno no está
 // disponible (modo privado, datos del sitio bloqueados) se sigue con el resto.
 export function olvidarSesion(almacenes = almacenesDelNavegador()) {
@@ -37,7 +42,7 @@ export function olvidarSesion(almacenes = almacenesDelNavegador()) {
       const propias = [];
       for (let i = 0; i < almacen.length; i += 1) {
         const clave = almacen.key(i);
-        if (esClaveDeMolServer(clave)) propias.push(clave);
+        if (esClaveDeMolServer(clave) && clave !== CLAVE_IDIOMA) propias.push(clave);
       }
       propias.forEach((clave) => almacen.removeItem(clave));
     } catch {

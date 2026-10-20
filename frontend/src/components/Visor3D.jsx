@@ -10,6 +10,7 @@ import BuscadorFicheros from './visor/BuscadorFicheros'
 import ListaMoleculas from './visor/ListaMoleculas'
 import Hueco from './visor/Hueco'
 import LienzoVisor from './visor/LienzoVisor'
+import { useIdioma } from '../hooks/useIdioma'
 import '../styles/Visor3D.css'
 
 // Página Visor 3D (spec 002, docs/specs/002-visor3D/). Busca cualquier
@@ -46,6 +47,7 @@ function leerGuardado(clave) {
 // se entra desde el menú. Se lee solo al montar, y `alLlegar` avisa a App.jsx
 // de que ya está consumido.
 export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
+  const { t } = useIdioma()
   const clave = claveVisor(usuario.id)
   const [llegadaInicial] = useState(llegada)
   const conLista = Boolean(llegadaInicial) && llegaConLista(llegadaInicial)
@@ -66,8 +68,7 @@ export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
   // Un fichero que estaba en un hueco ya no está: se quita y se dice por qué.
   const quitarPerdido = (h, nombre) => {
     setEstado(e => vaciar(e, h))
-    setAviso({ texto: `«${nombre}» ya no está disponible (se ha borrado o ya no tienes acceso), `
-      + `así que se ha quitado del hueco ${h}.` })
+    setAviso({ texto: t('visor.perdido_quitado', { nombre, hueco: h }) })
   }
 
   // Pide la molécula y la pone en el hueco activo, o en A si llega desde
@@ -77,13 +78,13 @@ export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
     try {
       const molecula = await pedirMolecula(fichero, posicion)
       if (molecula === null) {
-        setAviso({ texto: `«${fichero}» ya no está disponible: se ha borrado o ya no tienes acceso.` })
+        setAviso({ texto: t('visor.no_disponible', { nombre: fichero }) })
         return
       }
       setEstado(e => ponerCon(e, molecula))
     } catch (err) {
       setAviso({
-        texto: mensajeError('abrir la molécula', err),
+        texto: mensajeError(t('accion.abrir_molecula'), err, t),
         reintentar: () => colocarMolecula(fichero, posicion, ponerCon),
       })
     }
@@ -115,7 +116,7 @@ export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
       await descargarConToken(ruta(fichero, 'descarga', posicion))
     } catch (err) {
       if (err.status === 404) quitarPerdido(h, nombre)
-      else setAviso({ texto: mensajeError('descargar la molécula', err), reintentar: () => descargar(h) })
+      else setAviso({ texto: mensajeError(t('accion.descargar_molecula'), err, t), reintentar: () => descargar(h) })
     }
   }
 
@@ -133,7 +134,7 @@ export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
         if (molecula === null) quitarPerdido(h, ref.fichero)
         else setEstado(e => ponerEnHueco(e, h, molecula))
       } catch (err) {
-        if (vigente) setAviso({ texto: mensajeError('recuperar las moléculas de antes', err) })
+        if (vigente) setAviso({ texto: mensajeError(t('accion.recuperar_moleculas'), err, t) })
       }
     })).then(() => { if (vigente) setRestaurando(false) })
     return () => { vigente = false }
@@ -161,22 +162,19 @@ export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
 
   return (
     <div className="seccion-wrapper visor3d">
-      <h2>Visor 3D</h2>
-      <p className="seccion-subtitulo">
-        Busca una molécula, una biblioteca o un resultado y colócalo en el hueco A o B para
-        verlo en 3D. Con dos moléculas puedes verlas juntas o lado a lado.
-      </p>
+      <h2>{t('cabecera.visor')}</h2>
+      <p className="seccion-subtitulo">{t('visor.subtitulo')}</p>
 
-      {restaurando && <p className="texto-secundario" role="status">Recuperando las moléculas de antes…</p>}
+      {restaurando && <p className="texto-secundario" role="status">{t('visor.recuperando')}</p>}
       {aviso && (
         <p className="error-msg" role="status">
           {aviso.texto}
-          {aviso.reintentar && <> <button className="btn-enlace" onClick={aviso.reintentar}>Reintentar</button></>}
+          {aviso.reintentar && <> <button className="btn-enlace" onClick={aviso.reintentar}>{t('comun.reintentar')}</button></>}
         </p>
       )}
 
       <div className="visor3d-rejilla">
-        <aside className="panel visor3d-buscador" aria-label="Elegir molécula">
+        <aside className="panel visor3d-buscador" aria-label={t('nodo.selectMol')}>
           <BuscadorFicheros abierto={abierto} alElegir={elegirFichero} irA={irA} />
           {abierto && (
             <ListaMoleculas key={abierto} fichero={abierto}
@@ -186,18 +184,18 @@ export default function Visor3D({ usuario, irA, llegada, alLlegar }) {
 
         <div className="visor3d-principal">
           {modoDisponible(estado) && (
-            <div className="visor3d-modo" role="group" aria-label="Cómo ver las dos moléculas">
-              {[['superpuestas', 'Superpuestas'], ['lado_a_lado', 'Lado a lado']].map(([modo, texto]) => (
+            <div className="visor3d-modo" role="group" aria-label={t('visor.como_ver')}>
+              {[['superpuestas', 'visor.superpuestas'], ['lado_a_lado', 'visor.lado_a_lado']].map(([modo, texto]) => (
                 <button key={modo} className="visor3d-modo-opcion" aria-pressed={estado.modo === modo}
                         onClick={() => setEstado(e => ({ ...e, modo }))}>
-                  {texto}
+                  {t(texto)}
                 </button>
               ))}
             </div>
           )}
 
           <section className={`visor3d-lienzo ${estado.modo === 'lado_a_lado' && modoDisponible(estado) ? 'lado-a-lado' : ''}`}
-                   aria-label="Dibujo 3D">
+                   aria-label={t('visor.dibujo')}>
             <LienzoVisor estado={estado} />
           </section>
 

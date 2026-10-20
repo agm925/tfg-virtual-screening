@@ -2,10 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
 import { apiFetch } from '../../api/client';
 import MarcoNodo from './MarcoNodo';
+import ConectoresInterfaz from './ConectoresInterfaz';
+import { useIdioma } from '../../hooks/useIdioma';
 
 const DockingNodoNode = ({ data, id }) => {
+  const { t } = useIdioma();
   const [algoritmos, setAlgoritmos] = useState([]);
   const [seleccionado, setSeleccionado] = useState(String(data.algoritmo_id || ''));
+  // La interfaz del algoritmo elegido (spec 013) y si ya ha llegado la lista.
+  const [interfaz, setInterfaz] = useState(null);
+  const [listo, setListo] = useState(false);
   const [modoCaja, setModoCaja] = useState(data.modo_caja || 'auto');
   const [scoring, setScoring] = useState(data.scoring || 'vinardo');
   const [exhaustiveness, setExhaustiveness] = useState(data.exhaustiveness || 8);
@@ -34,10 +40,11 @@ const DockingNodoNode = ({ data, id }) => {
       const todos = await apiFetch('/algoritmos').then(r => r.json());
       const filtrados = todos.filter(a => a.tipo === 'docking');
       setAlgoritmos(filtrados);
+      setListo(true);
       if (filtrados.length === 0) return;
       const guardado = filtrados.find(a => String(a.id) === String(data.algoritmo_id));
       const elegido = guardado || filtrados[0];
-      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo);
+      handleCambio(elegido.id, elegido.nombre, elegido.ruta_archivo, elegido.interfaz);
     } catch (err) {
       console.error('Error cargando algoritmos de docking:', err);
     }
@@ -49,8 +56,9 @@ const DockingNodoNode = ({ data, id }) => {
   // solo mientras ambos coincidian: en cuanto un algoritmo se registre como
   // "Docking con Smina" en vez de "dockingSmina", el flujo fallaria con
   // "Algoritmo no encontrado: algoritmos/Docking con Smina.py".
-  const handleCambio = (id, nombre, rutaArchivo) => {
+  const handleCambio = (id, nombre, rutaArchivo, interfazAlgoritmo) => {
     setSeleccionado(String(id));
+    setInterfaz(interfazAlgoritmo || null);
     data.algoritmo_id     = id;
     data.algoritmo_nombre = nombre;
     data.algoritmo_ruta   = rutaArchivo;
@@ -61,11 +69,11 @@ const DockingNodoNode = ({ data, id }) => {
       <div className="nodo-body">
         <select
           className="select-algo"
-          aria-label="Algoritmo de docking"
+          aria-label={t('nodos.algoritmo_docking')}
           value={seleccionado}
           onChange={(e) => {
             const algo = algoritmos.find(a => String(a.id) === e.target.value);
-            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo);
+            if (algo) handleCambio(algo.id, algo.nombre, algo.ruta_archivo, algo.interfaz);
           }}
         >
           {algoritmos.length > 0 ? (
@@ -75,52 +83,57 @@ const DockingNodoNode = ({ data, id }) => {
               </option>
             ))
           ) : (
-            <option disabled>Sin algoritmos de docking</option>
+            <option disabled>{t('nodos.sin_docking')}</option>
           )}
         </select>
+        <ConectoresInterfaz id={id} data={data} interfaz={interfaz}
+                            idsDeSiempre={['input_ligando', 'input_receptor', 'input_referencia']} listo={listo} />
+
+        {/* Con interfaz propia (spec 013) solo se le pasan sus entradas y
+            opciones: los ajustes de smina no llegarían al script. */}
+        {!interfaz && (<>
         <p className="nodo-nota">
-          Conecta el ligando al punto de la izquierda y el receptor al de abajo
-          {modoCaja === 'referencia' && '; la referencia, al de arriba'}.
+          {t(modoCaja === 'referencia' ? 'nodos.nota_docking_referencia' : 'nodos.nota_docking')}
         </p>
 
         {/* Los nombres de smina (exhaustiveness, num_modes, autobox_add...)
             quedan en el tooltip para quien los conozca; la etiqueta visible
-            dice en castellano para que sirve cada uno. */}
+            dice en lenguaje llano para que sirve cada uno. */}
         <label className="nodo-campo">
-          Función de puntuación
+          {t('nodos.funcion_puntuacion')}
           <select className="select-input" value={scoring} onChange={(e) => setScoring(e.target.value)}>
             <option value="vinardo">Vinardo</option>
             <option value="vina">Vina</option>
-            <option value="dkoes_fast">dkoes (rápida)</option>
+            <option value="dkoes_fast">{t('nodos.dkoes_rapida')}</option>
             <option value="dkoes_scoring">dkoes</option>
           </select>
         </label>
 
         <div className="nodo-fila">
-          <label className="nodo-campo" title="exhaustiveness: más alto, búsqueda más completa y más lenta">
-            Exhaustividad
+          <label className="nodo-campo" title={t('nodos.exhaustividad_titulo')}>
+            {t('nodos.exhaustividad')}
             <input type="number" className="select-input" value={exhaustiveness}
               min={1} max={32} onChange={(e) => setExhaustiveness(Number(e.target.value))} />
           </label>
-          <label className="nodo-campo" title="num_modes: poses que se guardan por molécula">
-            Poses
+          <label className="nodo-campo" title={t('nodos.poses_titulo')}>
+            {t('nodos.poses')}
             <input type="number" className="select-input" value={numModes}
               min={1} max={20} onChange={(e) => setNumModes(Number(e.target.value))} />
           </label>
         </div>
 
         <label className="nodo-campo">
-          Zona de búsqueda (caja)
+          {t('nodos.zona_busqueda')}
           <select className="select-input" value={modoCaja} onChange={(e) => setModoCaja(e.target.value)}>
-            <option value="auto">Alrededor del ligando (redocking)</option>
-            <option value="referencia">Alrededor de una referencia</option>
-            <option value="manual">Manual (centro y tamaño)</option>
+            <option value="auto">{t('nodos.caja_auto')}</option>
+            <option value="referencia">{t('nodos.caja_referencia')}</option>
+            <option value="manual">{t('nodos.caja_manual')}</option>
           </select>
         </label>
 
         {modoCaja !== 'manual' && (
           <label className="nodo-campo" title="autobox_add">
-            Margen alrededor (Å)
+            {t('nodos.margen')}
             <input type="number" className="select-input" value={autoboxAdd}
               onChange={(e) => setAutoboxAdd(Number(e.target.value))} />
           </label>
@@ -128,33 +141,38 @@ const DockingNodoNode = ({ data, id }) => {
 
         {modoCaja === 'manual' && (
           <>
-            <span className="nodo-campo">Centro (x, y, z), en Å</span>
+            <span className="nodo-campo">{t('nodos.centro')}</span>
             <div className="nodo-fila">
               {['center_x', 'center_y', 'center_z'].map((campo) => (
                 <input key={campo} type="number" className="select-input"
-                  value={caja[campo]} title={campo} aria-label={`Centro ${campo.slice(-1)}`}
+                  value={caja[campo]} title={campo} aria-label={t('nodos.centro_eje', { eje: campo.slice(-1) })}
                   onChange={(e) => setCaja({ ...caja, [campo]: Number(e.target.value) })} />
               ))}
             </div>
-            <span className="nodo-campo">Tamaño (x, y, z), en Å</span>
+            <span className="nodo-campo">{t('nodos.tamano')}</span>
             <div className="nodo-fila">
               {['size_x', 'size_y', 'size_z'].map((campo) => (
                 <input key={campo} type="number" className="select-input"
-                  value={caja[campo]} title={campo} aria-label={`Tamaño ${campo.slice(-1)}`}
+                  value={caja[campo]} title={campo} aria-label={t('nodos.tamano_eje', { eje: campo.slice(-1) })}
                   onChange={(e) => setCaja({ ...caja, [campo]: Number(e.target.value) })} />
               ))}
             </div>
           </>
         )}
+        </>)}
       </div>
 
-      <Handle type="target" position={Position.Left}   id="input_ligando"  title="Ligando" style={{ top: '35%' }} />
-      <Handle type="target" position={Position.Bottom} id="input_receptor" title="Receptor" />
-      {/* Referencia cristalográfica: opcional, solo con la caja "referencia". */}
-      {modoCaja === 'referencia' && (
-        <Handle type="target" position={Position.Top} id="input_referencia" title="Referencia" />
+      {!interfaz && (
+        <>
+          <Handle type="target" position={Position.Left}   id="input_ligando"  title={t('interfaz.ligando')} style={{ top: '35%' }} />
+          <Handle type="target" position={Position.Bottom} id="input_receptor" title={t('interfaz.receptor')} />
+          {/* Referencia cristalográfica: opcional, solo con la caja "referencia". */}
+          {modoCaja === 'referencia' && (
+            <Handle type="target" position={Position.Top} id="input_referencia" title={t('nodos.referencia')} />
+          )}
+        </>
       )}
-      <Handle type="source" position={Position.Right}  id="output" title="Poses" />
+      <Handle type="source" position={Position.Right}  id="output" title={t('nodos.poses')} />
     </MarcoNodo>
   );
 };

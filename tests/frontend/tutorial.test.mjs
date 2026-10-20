@@ -14,6 +14,11 @@ import { readFileSync } from 'node:fs';
 const leer = (ruta) => readFileSync(new URL(ruta, import.meta.url), 'utf8');
 const JSX = leer('../../frontend/src/components/Tutorial.jsx');
 const CSS = leer('../../frontend/src/styles/Tutorial.css');
+// Desde la spec 014 la prosa vive en los diccionarios del tutorial; el texto
+// de referencia es el español, y el inglés pasa las mismas reglas de forma.
+const TEXTO_ES = leer('../../frontend/src/textos/tutorial.es.js');
+const TEXTO_EN = leer('../../frontend/src/textos/tutorial.en.js');
+const TEXTO = JSX + TEXTO_ES;
 
 // Flechas, símbolos y dingbats (U+2190 en adelante), emojis y el selector de
 // variante que los acompaña: cada sistema los dibuja a su manera. Quedan
@@ -68,7 +73,7 @@ const PROHIBIDAS = ['Seleccionar BD', 'Seleccionar Molécula', 'Upload Molécula
 
 test('el texto no usa nombres antiguos ni habla del servidor (CA4)', () => {
   for (const palabra of PROHIBIDAS) {
-    assert.ok(!JSX.toLowerCase().includes(palabra.toLowerCase()), `aparece «${palabra}»`);
+    assert.ok(!TEXTO.toLowerCase().includes(palabra.toLowerCase()), `aparece «${palabra}»`);
   }
 });
 
@@ -102,13 +107,13 @@ test('el índice es un menú de botones nativos, que se usan con teclado (CA5)',
 // ---------------------------------------------------------------------------
 
 test('el tutorial usa los nombres de los botones y de la página de hoy (R4)', () => {
-  assert.match(JSX, /Ejecutar workflow/);
-  assert.match(JSX, /Nuevo workflow/);
-  assert.doesNotMatch(JSX, /Ejecutar Workflow|Nuevo Workflow/);
+  assert.match(TEXTO_ES, /Ejecutar workflow/);
+  assert.match(TEXTO_ES, /Nuevo workflow/);
+  assert.doesNotMatch(TEXTO_ES, /Ejecutar Workflow|Nuevo Workflow/);
 });
 
 test('el ejemplo no exige los nodos opcionales Inicio y Descargar (R4)', () => {
-  const ejemplo = JSX.slice(JSX.indexOf("seccionAbierta === 'flujo'"), JSX.indexOf("seccionAbierta === 'visor'"));
+  const ejemplo = TEXTO_ES.split('\n').filter((l) => l.includes("'flujo.")).join('\n');
   assert.ok(ejemplo.length > 200, 'no se encontró la sección del ejemplo');
   assert.doesNotMatch(ejemplo, /Añade el nodo (Inicio|Ejecutar|Descargar)/);
 });
@@ -118,8 +123,22 @@ test('el ejemplo no exige los nodos opcionales Inicio y Descargar (R4)', () => {
 // ---------------------------------------------------------------------------
 
 test('el tutorial explica la pregunta de privado o público (spec 007)', () => {
-  assert.doesNotMatch(JSX, /biblioteca compartida/, 'ya no todo lo subido es compartido');
-  assert.match(JSX, /¿Quién puede ver este fichero\?/);
-  assert.match(JSX, /Privado/);
-  assert.match(JSX, /Público/);
+  assert.doesNotMatch(TEXTO_ES, /biblioteca compartida/, 'ya no todo lo subido es compartido');
+  assert.match(TEXTO_ES, /¿Quién puede ver este fichero\?/);
+  assert.match(TEXTO_ES, /Privado/);
+  assert.match(TEXTO_ES, /Público/);
+});
+
+// ---------------------------------------------------------------------------
+// Spec 014: el tutorial en español o en inglés
+// ---------------------------------------------------------------------------
+
+test('cada clave que pide el componente existe en el diccionario (spec 014, R6)', () => {
+  // Las claves escritas enteras (tt('…') o f('…')); las que se montan con el
+  // número de paso o el tipo las cubre idioma.test.mjs: es y en tienen las mismas claves.
+  const claves = nombres(JSX, /\b(?:tt|f)\('([^']+)'/g);
+  assert.ok(claves.length > 50, 'el componente no lee sus textos del diccionario');
+  for (const clave of claves) {
+    assert.ok(TEXTO_ES.includes(`'${clave}':`), `falta «${clave}» en tutorial.es.js`);
+  }
 });

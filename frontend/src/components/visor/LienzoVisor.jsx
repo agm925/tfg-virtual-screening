@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Icono from '../Icono'
 import { modoDisponible, estiloEfectivo } from '../../utils/visor'
+import { useIdioma } from '../../hooks/useIdioma'
 
 // El formato de cada fichero para la librería 3D (3Dmol). Un .mol es un
 // registro SDF suelto.
@@ -39,11 +40,6 @@ function hayWebGL() {
 // Fracción del visor que ocupa la molécula recién encuadrada.
 const MARGEN_ENCUADRE = 0.85
 
-const SIN_WEBGL ='Este navegador no puede dibujar en 3D: la aceleración gráfica está desactivada o no es '
-  + 'compatible. Puedes seguir viendo los datos de cada molécula y descargarla.'
-const NADA_QUE_DIBUJAR = 'Esta molécula no se puede dibujar: el motivo está en su panel, debajo.'
-const NINGUNA_SE_DIBUJA = 'Ninguna de las dos moléculas se puede dibujar: el motivo está en el panel de cada una, debajo.'
-
 // El color de los carbonos de cada hueco sale de tokens.css (--hueco-a,
 // --hueco-b): el mismo que el borde de su panel, con una sola fuente
 // (decisión D11 del plan).
@@ -79,6 +75,7 @@ function aplicarEstilo($3Dmol, v, modelo, estilo, hueco) {
 // Un visor 3D con las moléculas que se le pasan. Es la única pieza que habla
 // con la librería 3D (plan, sección 1.2).
 function Escena({ capas }) {
+  const { t } = useIdioma()
   const contenedor = useRef(null)
   const visor = useRef(null)
   // La vista recién encuadrada (giro, acercamiento y desplazamiento), para
@@ -150,12 +147,12 @@ function Escena({ capas }) {
       <div ref={contenedor} className="visor3d-escena-dibujo" />
       {sinLibreria && (
         <p className="visor3d-lienzo-vacio" role="status">
-          No se ha podido cargar el dibujo 3D. Comprueba la conexión y recarga la página.
+          {t('visor.sin_libreria')}
         </p>
       )}
       <div className="visor3d-escena-controles">
         <button className="btn-secundario" onClick={volverAVistaInicial}>
-          <Icono nombre="procesando" />Vista inicial
+          <Icono nombre="procesando" />{t('visor.vista_inicial')}
         </button>
       </div>
     </div>
@@ -166,6 +163,7 @@ function Escena({ capas }) {
 // se pueden dibujar, juntas en un visor o cada una en el suyo, o el mensaje de
 // que no hay ninguna.
 export default function LienzoVisor({ estado }) {
+  const { t } = useIdioma()
   const capas = ['A', 'B']
     .filter(h => estado.huecos[h]?.dibujable)
     .map(h => ({
@@ -175,10 +173,10 @@ export default function LienzoVisor({ estado }) {
     }))
 
   if (estado.huecos.A === null && estado.huecos.B === null) {
-    return <p className="visor3d-lienzo-vacio">Elige una molécula para el hueco A</p>
+    return <p className="visor3d-lienzo-vacio">{t('visor.elige_para_a')}</p>
   }
   if (!hayWebGL()) {
-    return <p className="visor3d-lienzo-vacio" role="status">{SIN_WEBGL}</p>
+    return <p className="visor3d-lienzo-vacio" role="status">{t('visor.sin_webgl')}</p>
   }
 
   // Lado a lado: un visor por hueco, cada uno manejado por su cuenta (girar o
@@ -188,10 +186,10 @@ export default function LienzoVisor({ estado }) {
       <div className="visor3d-lado-a-lado">
         {['A', 'B'].map(h => (
           <div key={h} className={`visor3d-panel-escena hueco-${h.toLowerCase()}`}>
-            <span className="visor3d-etiqueta-escena">Molécula {h}</span>
+            <span className="visor3d-etiqueta-escena">{t('visor.molecula_hueco', { hueco: h })}</span>
             {estado.huecos[h].dibujable
               ? <Escena capas={capas.filter(c => c.hueco === h)} />
-              : <p className="visor3d-lienzo-vacio" role="status">{NADA_QUE_DIBUJAR}</p>}
+              : <p className="visor3d-lienzo-vacio" role="status">{t('visor.nada_que_dibujar')}</p>}
           </div>
         ))}
       </div>
@@ -199,7 +197,7 @@ export default function LienzoVisor({ estado }) {
   }
   if (capas.length === 0) {
     const dos = estado.huecos.A !== null && estado.huecos.B !== null
-    return <p className="visor3d-lienzo-vacio" role="status">{dos ? NINGUNA_SE_DIBUJA : NADA_QUE_DIBUJAR}</p>
+    return <p className="visor3d-lienzo-vacio" role="status">{t(dos ? 'visor.ninguna_se_dibuja' : 'visor.nada_que_dibujar')}</p>
   }
   return <Escena capas={capas} />
 }

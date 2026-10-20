@@ -1,5 +1,6 @@
 import { errorDeRespuesta } from '../utils/mensajes';
 import { CLAVE_TOKEN } from '../utils/almacenamiento';
+import { idiomaInicial } from '../utils/idioma';
 
 // Cliente API centralizado.
 //
@@ -58,12 +59,21 @@ export function alExpirarSesion(callback) {
   alExpirar = callback;
 }
 
-function authHeaders(headers = {}) {
-  const token = getToken();
-  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+// El idioma de la interfaz, para que el backend responda sus errores en él
+// (spec 014, R7). Se lee del almacenamiento y no del contexto de React: este
+// módulo no es un componente, y la preferencia ya está guardada allí.
+function idiomaActual() {
+  try { return idiomaInicial(window.localStorage); } catch { return idiomaInicial(null); }
 }
 
-// Envoltorio de fetch: añade la cabecera Authorization si hay sesión, y
+function authHeaders(headers = {}) {
+  const token = getToken();
+  const conIdioma = { 'Accept-Language': idiomaActual(), ...headers };
+  return token ? { ...conIdioma, Authorization: `Bearer ${token}` } : conIdioma;
+}
+
+// Envoltorio de fetch: añade la cabecera Authorization si hay sesión (y el
+// idioma), y
 // fuerza logout si el backend responde 401 (token ausente, caducado o
 // inválido) en vez de dejar que cada componente lo gestione por separado.
 export async function apiFetch(ruta, opciones = {}) {

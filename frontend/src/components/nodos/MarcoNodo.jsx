@@ -3,6 +3,7 @@ import { useReactFlow } from 'reactflow';
 import { tipoNodo } from '../../utils/tiposNodo';
 import Icono from '../Icono';
 import { SoloLectura } from '../../utils/soloLectura';
+import { useIdioma } from '../../hooks/useIdioma';
 import '../../styles/Nodos.css';
 
 // Lo comun a los nueve nodos: el marco con el color de su familia, la
@@ -15,7 +16,10 @@ import '../../styles/Nodos.css';
 // ejecucion; antes se rellenaban pero ningun nodo los miraba.
 const MarcoNodo = ({ id, tipo, data, children }) => {
   const { setNodes, setEdges } = useReactFlow();
-  const { etiqueta, familia, icono, descripcion } = tipoNodo(tipo);
+  const { t } = useIdioma();
+  const tipoDelNodo = tipoNodo(tipo);
+  const { familia, icono } = tipoDelNodo;
+  const etiqueta = t(tipoDelNodo.etiqueta);
   const estado = data?.error ? 'error' : data?.ejecutado ? 'ejecutado' : '';
   const soloLectura = useContext(SoloLectura);
 
@@ -31,18 +35,18 @@ const MarcoNodo = ({ id, tipo, data, children }) => {
         <Icono nombre={icono} />{etiqueta}
         {!soloLectura && (
           <button className="nodo-btn-borrar" onClick={eliminar}
-                  title="Eliminar nodo" aria-label={`Eliminar nodo ${etiqueta}`}>
+                  title={t('nodo.eliminar')} aria-label={t('nodo.eliminar_nombre', { nombre: etiqueta })}>
             <Icono nombre="cerrar" tamano={12} />
           </button>
         )}
       </div>
       {estado === 'ejecutado' && (
-        <p className="nodo-estado ok" role="status"><Icono nombre="ok" tamano={14} />Terminado</p>
+        <p className="nodo-estado ok" role="status"><Icono nombre="ok" tamano={14} />{t('nodo.terminado')}</p>
       )}
       {estado === 'error' && (
-        <p className="nodo-estado error" role="status"><Icono nombre="error" tamano={14} />Ha fallado</p>
+        <p className="nodo-estado error" role="status"><Icono nombre="error" tamano={14} />{t('nodo.ha_fallado')}</p>
       )}
-      <p className="nodo-desc">{descripcion}</p>
+      <p className="nodo-desc">{t(tipoDelNodo.descripcion)}</p>
       {/* En modo consulta (spec 012) el navegador desactiva todos los campos
           del nodo, también con el teclado, sin que cada nodo tenga que
           saberlo. */}

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import Icono from './Icono'
+import { useIdioma } from '../hooks/useIdioma'
 import '../styles/PreguntaVisibilidad.css'
 
 // Pregunta, antes de cada subida, quién podrá ver el fichero (spec 007). Se
@@ -7,6 +8,7 @@ import '../styles/PreguntaVisibilidad.css'
 // modal, cierra con Escape y no deja que el foco se escape a la página.
 // Ninguna opción viene marcada: elegir es justo lo que se pide.
 export default function PreguntaVisibilidad({ fichero, alElegir, alCancelar }) {
+  const { t } = useIdioma()
   const ref = useRef()
   const cancelar = useRef()
   const abierto = Boolean(fichero)
@@ -34,24 +36,24 @@ export default function PreguntaVisibilidad({ fichero, alElegir, alCancelar }) {
       // en el estado de quien lo usa.
       onCancel={e => { e.preventDefault(); alCancelar() }}
     >
-      <h3 id="pregunta-visibilidad-titulo">¿Quién puede ver este fichero?</h3>
+      <h3 id="pregunta-visibilidad-titulo">{t('visibilidad.titulo')}</h3>
       {fichero && <p className="texto-secundario pregunta-visibilidad-fichero">{fichero}</p>}
 
       <div className="pregunta-visibilidad-opciones">
         <button type="button" className="opcion-visibilidad" onClick={() => alElegir(false)}>
           <Icono nombre="candado" tamano={24} />
-          <span className="opcion-visibilidad-titulo">Privado</span>
-          <span className="opcion-visibilidad-texto">Solo tú.</span>
+          <span className="opcion-visibilidad-titulo">{t('visibilidad.privado')}</span>
+          <span className="opcion-visibilidad-texto">{t('visibilidad.privado_texto')}</span>
         </button>
         <button type="button" className="opcion-visibilidad" onClick={() => alElegir(true)}>
           <Icono nombre="personas" tamano={24} />
-          <span className="opcion-visibilidad-titulo">Público</span>
-          <span className="opcion-visibilidad-texto">Todos los usuarios, en Moléculas.</span>
+          <span className="opcion-visibilidad-titulo">{t('visibilidad.publico')}</span>
+          <span className="opcion-visibilidad-texto">{t('visibilidad.publico_texto')}</span>
         </button>
       </div>
 
-      <p className="texto-secundario">No se puede cambiar después de subirlo.</p>
-      <button ref={cancelar} type="button" className="btn-secundario" onClick={alCancelar}>Cancelar</button>
+      <p className="texto-secundario">{t('visibilidad.no_cambia')}</p>
+      <button ref={cancelar} type="button" className="btn-secundario" onClick={alCancelar}>{t('comun.cancelar')}</button>
     </dialog>
   )
 }
