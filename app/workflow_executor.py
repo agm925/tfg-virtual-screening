@@ -110,6 +110,29 @@ TIPO_RESULTADO = {
 }
 
 
+def extremos(arista: Dict[str, Any]) -> Tuple[str, str]:
+    """(origen, destino) de una arista, en el formato de React Flow o en el antiguo."""
+    return (arista.get("source") or arista.get("nodo_origen"),
+            arista.get("target") or arista.get("nodo_destino"))
+
+
+def nodo_biblioteca(grafo: Dict[str, Any]):
+    """
+    El nodo selectDB que alimenta el flujo, o None si no hay ninguno.
+
+    Solo cuenta uno con biblioteca elegida y al menos una conexion de salida.
+    Antes bastaba con que existiera: un «Elegir biblioteca» olvidado en el
+    lienzo, sin conectar a nada, convertia el flujo en un cribado y la cadena
+    de la molecula suelta se repetia una vez por cada registro del SDF.
+    """
+    origenes = {extremos(arista)[0] for arista in grafo.get("edges", [])}
+    for nodo in grafo.get("nodes", []):
+        if (nodo.get("type") == "selectDB" and nodo.get("id") in origenes
+                and nodo.get("data", {}).get("nombre_archivo")):
+            return nodo
+    return None
+
+
 class WorkflowExecutor:
     """Ejecuta workflows compilando el grafo y ejecutando nodos en orden topológico."""
 
@@ -164,8 +187,7 @@ class WorkflowExecutor:
         in_degree   = {nodo["id"]: 0  for nodo in self.nodos}
 
         for conexion in self.conexiones:
-            origen  = conexion.get("source") or conexion.get("nodo_origen")
-            destino = conexion.get("target") or conexion.get("nodo_destino")
+            origen, destino = extremos(conexion)
             # Ignorar aristas cuyos extremos no existen como nodos activos
             if not origen or not destino:
                 continue
@@ -689,8 +711,14 @@ class WorkflowExecutor:
         self.inicio = datetime.utcnow()
         try:
             orden = self.obtener_orden_ejecucion()
+            # Un nodo sin ninguna conexion no forma parte del flujo: es algo
+            # que el usuario dejo en el lienzo. Ejecutarlo listaba su fichero
+            # entre los resultados y, si ese fichero ya se habia borrado,
+            # hacia fallar una ejecucion que no lo usaba.
+            conectados = {nid for arista in self.conexiones for nid in extremos(arista)}
             for nodo_id in orden:
-                self.ejecutar_nodo(nodo_id)
+                if nodo_id in conectados:
+                    self.ejecutar_nodo(nodo_id)
 
             self.fin      = datetime.utcnow()
             duracion      = (self.fin - self.inicio).total_seconds()
@@ -743,10 +771,7 @@ class BatchWorkflowExecutor:
     # ------------------------------------------------------------------
 
     def _encontrar_nodo_bd(self):
-        for nodo in self.nodos:
-            if nodo.get("type") == "selectDB":
-                return nodo
-        return None
+        return nodo_biblioteca(self.workflow_json)
 
     @staticmethod
     def inventario_sdf(ruta_sdf: str) -> Tuple[List[int], int]:
@@ -950,9 +975,12 @@ class BatchWorkflowExecutor:
         return None, None
 
     def _generar_csv(self, ranking: List[Dict], nombre_bd: str, tipo_score: str) -> str:
+        # Cabeceras solo en ASCII: el CSV va en UTF-8 y Excel en español lo abre
+        # como Windows-1252, así que «Posición» salía como «PosiciÃ³n». Lo mismo
+        # pasaba con «Å» y con la raya «—».
         label_score = {
             "similitud": "Tanimoto (0-1, mayor mejor)",
-            "rmsd":      "RMSD (Å, menor mejor)",
+            "rmsd":      "RMSD (A, menor mejor)",
             "docking":   "Afinidad (kcal/mol, menor mejor)",
         }.get(tipo_score or "", "Score")
 
@@ -964,12 +992,12 @@ class BatchWorkflowExecutor:
         ruta_csv = os.path.join("uploads", nombre_csv)
         with open(ruta_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Posición", "Nombre molécula", label_score, "Estado"])
+            writer.writerow(["Posicion", "Nombre molecula", label_score, "Estado"])
             for r in ranking:
                 writer.writerow([
-                    r.get("posicion", "—"),
+                    r.get("posicion", "-"),
                     r["nombre"],
-                    f"{r['score']:.4f}" if r.get("score") is not None else "—",
+                    f"{r['score']:.4f}" if r.get("score") is not None else "-",
                     "OK" if r["exito"] else "ERROR",
                 ])
         return nombre_csv
@@ -1918,7 +1946,8 @@ class BatchWorkflowExecutor:
         nombre_csv = self._nombre_resultado("propiedades", nombre_bd, ".csv")
         with open(os.path.join("uploads", nombre_csv), "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Nombre molécula", "Estado", *columnas, "Error"])
+            # Sin acentos, por Excel (ver _generar_csv).
+            writer.writerow(["Nombre molecula", "Estado", *columnas, "Error"])
             for r in moleculas:
                 estado = (r.get("filtro") or "OK") if r.get("exito") else "ERROR"
                 propiedades = r.get("propiedades") or {}

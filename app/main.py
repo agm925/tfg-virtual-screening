@@ -31,6 +31,7 @@ from app.rate_limit import (
 from app.logging_config import logger, configurar_logging
 from app.banco_pruebas import probar_algoritmo, validar_interfaz, es_interfaz_por_defecto
 from app.formatos import EXTENSIONES_ENTRADA_ALGORITMO, contar_moleculas_sdf
+from app.workflow_executor import nodo_biblioteca
 from app import indice_sdf
 from app.idiomas import idioma_de, traducir, traducir_detail
 from datetime import datetime, timezone
@@ -1257,11 +1258,9 @@ def ejecutar_workflow(
     # La copia que se guarda en la ejecucion (spec 012) es lo que se ejecuta,
     # asi que el modo se decide sobre ella.
     grafo    = workflow.grafo_json or {}
-    # Auto-detectar modo batch: hay nodo selectDB con base de datos seleccionada
-    es_batch = any(
-        nodo.get("type") == "selectDB" and nodo.get("data", {}).get("nombre_archivo")
-        for nodo in grafo.get("nodes", [])
-    )
+    # Modo batch solo si una biblioteca alimenta el flujo: una suelta en el
+    # lienzo no cuenta (ver nodo_biblioteca).
+    es_batch = nodo_biblioteca(grafo) is not None
 
     ejecucion = models.WorkflowExecution(
         workflow_id=workflow_id,

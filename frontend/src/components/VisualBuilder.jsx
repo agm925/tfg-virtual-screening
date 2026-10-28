@@ -104,6 +104,19 @@ const grafoGuardable = (nodes, edges) => ({
 
 const GRAFO_VACIO = { nodes: [], edges: [] };
 
+// Los nodos de entrada solo señalan ficheros que el usuario ya tenía: no son
+// resultados. Y «Descargar» apunta al fichero que recibe, así que sin quitar
+// repetidos la salida del nodo anterior aparecía dos veces.
+const NODOS_DE_ENTRADA = new Set(['selectMol', 'selectDB', 'upload']);
+
+const ficherosResultantes = (resultados) => [...new Set(
+  Object.values(resultados || {})
+    .filter((r) => !NODOS_DE_ENTRADA.has(r.tipo))
+    .map((r) => r.archivo || r.archivo_salida || r.archivo_poses)
+    .filter(Boolean)
+    .map((archivo) => archivo.replace(/\\/g, '/').split('/').pop()),
+)];
+
 const resumenWorkflow = (wf) => wf && { id: wf.id, nombre: wf.nombre, descripcion: wf.descripcion };
 
 // Los ids de nodo son tipo_<n>: los nuevos siguen al mayor ya usado, para no
@@ -934,12 +947,9 @@ const VisualBuilder = ({ usuario, crearAlAbrir = false, alCrearAlAbrir, salidaRe
 
                   <div className="results-files">
                     <h4><Icono nombre="fichero" />{t('constructor.ficheros_resultantes')}</h4>
-                    {resultsPanel.resultados && Object.entries(resultsPanel.resultados).map(([nId, resultado]) => {
-                      const archivo = resultado.archivo || resultado.archivo_salida || resultado.archivo_poses;
-                      if (!archivo) return null;
-                      const nombreArchivo = archivo.replace(/\\/g, '/').split('/').pop();
+                    {ficherosResultantes(resultsPanel.resultados).map((nombreArchivo) => {
                       return (
-                        <div key={nId} className="result-file">
+                        <div key={nombreArchivo} className="result-file">
                           <button
                             onClick={() => descargarResultado(nombreArchivo)}
                             className="download-link"

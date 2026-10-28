@@ -170,17 +170,21 @@ def test_un_lote_cancelado_no_lanza_lo_que_queda(monkeypatch):
     assert [r["exito"] for r in resultados] == [False, False]
 
 
-def test_la_opcion_de_salida_llega_justo_delante_de_la_salida(tmp_path):
+def test_la_opcion_de_salida_llega_justo_delante_de_la_salida(carpeta):
     """Spec 013: `entrada -o salida --all`, en ese orden, como lo espera argparse."""
     import json
+    from pathlib import Path
 
     from app.ejecutor import _ejecutar_local
 
-    script = tmp_path / "argumentos.py"
+    # En `carpeta` y no en tmp_path: como root el script corre como uid 65534,
+    # que no puede entrar en /tmp/pytest-of-root.
+    script = Path(carpeta) / "argumentos.py"
     script.write_text("import json, sys\n"
                       "salida = sys.argv[sys.argv.index('-o') + 1]\n"
                       "open(salida, 'w').write(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
-    entrada, salida = str(tmp_path / "e.sdf"), str(tmp_path / "s.json")
+    os.chmod(script, 0o644)
+    entrada, salida = os.path.join(carpeta, "e.sdf"), os.path.join(carpeta, "s.json")
 
     resultado = _ejecutar_local(str(script), entrada, "-o", salida, flags=["--all"])
 

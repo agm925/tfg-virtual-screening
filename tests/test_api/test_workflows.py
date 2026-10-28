@@ -1,4 +1,6 @@
 """Tests de integracion: /workflows* (app/main.py), con JWT y Celery simulado."""
+import os
+
 import pytest
 
 from app import models
@@ -127,7 +129,7 @@ def test_ejecutar_workflow_con_selectdb_activa_modo_batch(client, mock_celery, u
             "descripcion": "",
             "grafo_json": {
                 "nodes": [{"id": "n1", "type": "selectDB", "data": {"nombre_archivo": "biblioteca.sdf"}}],
-                "edges": [],
+                "edges": [{"source": "n1", "target": "n2"}],
             },
         },
         headers=headers,
@@ -136,6 +138,35 @@ def test_ejecutar_workflow_con_selectdb_activa_modo_batch(client, mock_celery, u
     assert respuesta.status_code == 200
     assert respuesta.json()["modo"] == "batch"
     assert len(mock_celery) == 1
+
+
+def test_una_biblioteca_sin_conectar_no_activa_el_modo_batch(client, mock_celery, usuario_autenticado):
+    """
+    Una molecula -> preprocesado -> descargar, con un «Elegir biblioteca»
+    suelto en el lienzo: antes el flujo se repetia por cada registro del SDF.
+    """
+    headers = usuario_autenticado["headers"]
+    workflow_id = _crear_workflow(client, headers)
+    client.put(
+        f"/workflows/{workflow_id}",
+        json={
+            "nombre": "Biblioteca olvidada",
+            "descripcion": "",
+            "grafo_json": {
+                "nodes": [
+                    {"id": "mol", "type": "selectMol", "data": {"nombre_archivo": "x.mol2"}},
+                    {"id": "pre", "type": "preprocesado", "data": {}},
+                    {"id": "des", "type": "descargar", "data": {}},
+                    {"id": "bd",  "type": "selectDB", "data": {"nombre_archivo": "biblioteca.sdf"}},
+                ],
+                "edges": [{"source": "mol", "target": "pre"}, {"source": "pre", "target": "des"}],
+            },
+        },
+        headers=headers,
+    )
+    respuesta = client.post(f"/workflows/{workflow_id}/ejecutar", headers=headers)
+    assert respuesta.status_code == 200
+    assert respuesta.json()["modo"] == "normal"
 
 
 def test_ejecutar_workflow_ajeno_devuelve_403(client, mock_celery, usuario_autenticado, otro_usuario_autenticado):
@@ -481,3 +512,29 @@ def test_consolidar_un_cribado_de_moleculas_registra_sus_ficheros_como_privados(
         assert archivo is not None, clave
         assert archivo.propietario_id == usuario_id
         assert archivo.visibilidad == models.VisibilidadArchivo.resultado
+
+
+def test_el_motor_no_ejecuta_los_nodos_sin_conectar():
+    """
+    Un nodo suelto en el lienzo no es parte del flujo: antes se ejecutaba,
+    su fichero salia entre los resultados y, si ya no existia, el flujo
+    entero acababa en error aunque no lo usara.
+    """
+    from app.workflow_executor import WorkflowExecutor
+
+    nombre = "suelto_test_motor.mol2"
+    with open(os.path.join("uploads", nombre), "wb") as f:
+        f.write(b"@<TRIPOS>MOLECULE\nx\n")
+    grafo = {
+        "nodes": [
+            {"id": "mol", "type": "selectMol", "data": {"nombre_archivo": nombre}},
+            {"id": "des", "type": "descargar", "data": {}},
+            {"id": "bd",  "type": "selectDB",  "data": {"nombre_archivo": "ya_borrada.sdf"}},
+        ],
+        "edges": [{"source": "mol", "target": "des"}],
+    }
+
+    resultado = WorkflowExecutor(grafo, usuario_id=1).ejecutar()
+
+    assert resultado["exito"], resultado["errores"]
+    assert set(resultado["resultados"]) == {"mol", "des"}

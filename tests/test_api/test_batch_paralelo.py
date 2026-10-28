@@ -18,7 +18,7 @@ from app.workflow_executor import BatchWorkflowExecutor
 
 GRAFO_MINIMO = {
     "nodes": [{"id": "db1", "type": "selectDB", "data": {"nombre_archivo": "x.sdf"}}],
-    "edges": [],
+    "edges": [{"source": "db1", "target": "descargar1"}],
 }
 
 

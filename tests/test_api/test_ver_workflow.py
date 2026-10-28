@@ -80,7 +80,8 @@ def test_el_modo_en_lote_se_decide_con_la_copia(client, db_session, mock_celery,
     """R1: la decision se toma sobre lo mismo que se va a ejecutar."""
     headers = usuario_autenticado["headers"]
     grafo_lote = {"nodes": [{"id": "selectDB_0", "type": "selectDB",
-                             "data": {"nombre_archivo": "biblioteca.sdf"}}], "edges": []}
+                             "data": {"nombre_archivo": "biblioteca.sdf"}}],
+                  "edges": [{"source": "selectDB_0", "target": "descargar_0"}]}
     wid = _workflow(client, headers, grafo_lote)
 
     r = client.post(f"/workflows/{wid}/ejecutar", headers=headers)

@@ -22,6 +22,13 @@ from app import models  # noqa: E402
 MAX_INTENTOS = 30
 ESPERA_SEGUNDOS = 2
 
+# Ficheros de trabajo de un cribado en lote (app/workflow_executor.py): viven
+# en uploads/ solo mientras dura la ejecución. Un arranque durante un cribado
+# los registraba como biblioteca compartida; luego se borraban y quedaban en
+# «Elegir molécula» apuntando a nada, y el workflow que elegía uno fallaba
+# con «ya no está en la plataforma».
+TEMPORALES_DE_CRIBADO = ("_btmp_", "_btrozo_", "_bfrag_")
+
 
 def esperar_base_de_datos() -> None:
     for intento in range(1, MAX_INTENTOS + 1):
@@ -161,7 +168,7 @@ def migrar_rol_desarrollador() -> None:
         print(f"Aviso: no se pudo migrar el rol 'desarrollador': {e}", file=sys.stderr)
 
 
-def registrar_archivos_existentes() -> None:
+def registrar_archivos_existentes(directorio: str = None) -> None:
     """
     Da de alta en la tabla `archivos` los ficheros que ya estaban en uploads/.
 
@@ -180,7 +187,9 @@ def registrar_archivos_existentes() -> None:
     """
     from sqlalchemy.orm import sessionmaker
 
-    directorio = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+    # `directorio` solo lo cambian las pruebas: el uploads/ real es compartido.
+    directorio = directorio or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
     if not os.path.isdir(directorio):
         print("No hay carpeta uploads/: nada que registrar.")
         return
@@ -203,7 +212,8 @@ def registrar_archivos_existentes() -> None:
         nuevos = 0
         for nombre in os.listdir(directorio):
             ruta = os.path.join(directorio, nombre)
-            if not os.path.isfile(ruta) or nombre in ya_registrados:
+            if (not os.path.isfile(ruta) or nombre in ya_registrados
+                    or nombre.startswith(TEMPORALES_DE_CRIBADO)):
                 continue
             usuario_id, peticion_id = duenos.get(nombre, (None, None))
             db.add(models.Archivo(
@@ -220,6 +230,30 @@ def registrar_archivos_existentes() -> None:
         db.commit()
         print(f"Archivos registrados: {nuevos} nuevos "
               f"({len(ya_registrados)} ya estaban en el registro).")
+    finally:
+        db.close()
+
+
+def borrar_temporales_registrados() -> None:
+    """
+    Quita del registro los temporales de cribado que se colaron antes de
+    excluirlos en registrar_archivos_existentes. Solo la fila: el fichero, si
+    sigue ahí, es de una ejecución en marcha y lo borra ella al terminar.
+    Nada apunta a `archivos` por clave foránea.
+    """
+    from sqlalchemy import or_
+    from sqlalchemy.orm import sessionmaker
+
+    Sesion = sessionmaker(bind=engine)
+    db = Sesion()
+    try:
+        borrados = db.query(models.Archivo).filter(or_(*(
+            models.Archivo.nombre.startswith(prefijo, autoescape=True)
+            for prefijo in TEMPORALES_DE_CRIBADO
+        ))).delete(synchronize_session=False)
+        db.commit()
+        if borrados:
+            print(f"Temporales de cribado quitados del registro: {borrados}.")
     finally:
         db.close()
 
@@ -338,6 +372,7 @@ def main() -> None:
     crear_indices_faltantes()
     migrar_rol_desarrollador()
     registrar_archivos_existentes()
+    borrar_temporales_registrados()
     backfill_tipo_archivo()
     backfill_num_moleculas()
 

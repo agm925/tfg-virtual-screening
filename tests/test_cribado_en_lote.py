@@ -630,7 +630,7 @@ def test_consolidar_un_filtro_da_un_sdf_y_una_tabla_sin_ranking(trozo, monkeypat
 
     with open(os.path.join("uploads", salida["csv_propiedades"]), encoding="utf-8") as f:
         filas = [linea.strip().split(",") for linea in f if linea.strip()]
-    assert filas[0][:3] == ["Nombre molécula", "Estado", "MW"]
+    assert filas[0][:3] == ["Nombre molecula", "Estado", "MW"]
     assert [(fila[0], fila[1]) for fila in filas[1:]] == [
         ("MOL0", "PASS"), ("MOL1", "FAIL"), ("MOL2", "PASS"), ("MOL3", "PASS")]
 
